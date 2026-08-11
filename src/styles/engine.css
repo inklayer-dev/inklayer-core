@@ -1,0 +1,194 @@
+/**
+ * @file Minimal instance-scoped InkLayer engine styles.
+ * @description Positions Core-owned canvas and DOM overlays and defines the
+ * public CSS variable contract without styling product UI or application layout.
+ */
+
+.inklayer-engine {
+  --inklayer-author-label-background: #1677ff;
+  --inklayer-author-label-foreground: #fff;
+  --inklayer-author-label-font-size: 12px;
+  --inklayer-author-label-radius: 3px;
+  --inklayer-author-label-padding: 2px 5px;
+  --inklayer-overlay-z-index: 2;
+  --inklayer-text-layer-z-index: 1;
+  --inklayer-selection-z-index: 3;
+  --inklayer-search-highlight-background: rgb(250 204 21 / 45%);
+  --inklayer-search-active-background: rgb(249 115 22 / 60%);
+  --inklayer-search-active-outline: rgb(194 65 12 / 70%);
+  --inklayer-text-input-background: #fff;
+  --inklayer-text-input-border: #1677ff;
+  --inklayer-text-input-foreground: #111827;
+  --inklayer-text-input-focus-ring: rgb(22 119 255 / 25%);
+  --inklayer-cursor-select: default;
+  --inklayer-cursor-text-markup: text;
+  --inklayer-cursor-draw: crosshair;
+  --inklayer-cursor-note: copy;
+  --inklayer-cursor-free-text: text;
+  --inklayer-cursor-stamp: crosshair;
+
+  position: relative;
+  isolation: isolate;
+}
+
+.inklayer-engine [data-inklayer-page],
+.inklayer-engine[data-inklayer-page] {
+  position: absolute;
+  inset: 0;
+  z-index: var(--inklayer-overlay-z-index, 2);
+  touch-action: none;
+}
+
+.inklayer-engine .konvajs-content {
+  position: absolute !important;
+  inset: 0;
+  z-index: var(--inklayer-overlay-z-index, 2);
+  cursor: var(--inklayer-cursor-select, default);
+}
+
+.inklayer-engine .inklayer-text-layer {
+  position: absolute;
+  inset: 0;
+  z-index: var(--inklayer-text-layer-z-index, 1);
+  overflow: clip;
+  line-height: 1;
+  text-align: initial;
+  text-size-adjust: none;
+  transform-origin: 0 0;
+}
+
+.inklayer-engine .inklayer-search-highlight {
+  background: var(--inklayer-search-highlight-background, rgb(250 204 21 / 45%));
+  color: inherit;
+}
+
+.inklayer-engine .inklayer-search-highlight-active {
+  background: var(--inklayer-search-active-background, rgb(249 115 22 / 60%));
+  outline: 1px solid var(--inklayer-search-active-outline, rgb(194 65 12 / 70%));
+}
+
+.inklayer-engine .inklayer-text-layer :is(span, br) {
+  position: absolute;
+  color: transparent;
+  white-space: pre;
+  cursor: text;
+  user-select: text;
+  transform-origin: 0 0;
+}
+
+.inklayer-engine .inklayer-text-layer {
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+
+.inklayer-engine .inklayer-text-layer > :not(.markedContent),
+.inklayer-engine .inklayer-text-layer .markedContent span:not(.markedContent) {
+  --font-height: 0;
+  --scale-x: 1;
+  --rotate: 0deg;
+
+  z-index: 1;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+
+.inklayer-engine .inklayer-text-layer .markedContent {
+  display: contents;
+}
+
+.inklayer-engine .inklayer-text-layer ::selection {
+  color: transparent;
+  background: color-mix(in srgb, AccentColor, transparent 55%);
+}
+
+.inklayer-engine[data-inklayer-tool="text-select"] .konvajs-content,
+.inklayer-engine[data-inklayer-tool="highlight"] .konvajs-content,
+.inklayer-engine[data-inklayer-tool="strikeout"] .konvajs-content,
+.inklayer-engine[data-inklayer-tool="underline"] .konvajs-content {
+  pointer-events: none;
+}
+
+.inklayer-engine[data-inklayer-tool="text-select"] [data-inklayer-page],
+.inklayer-engine[data-inklayer-tool="highlight"] [data-inklayer-page],
+.inklayer-engine[data-inklayer-tool="strikeout"] [data-inklayer-page],
+.inklayer-engine[data-inklayer-tool="underline"] [data-inklayer-page] {
+  pointer-events: none;
+}
+
+.inklayer-engine .inklayer-author-labels {
+  position: absolute;
+  inset: 0;
+  z-index: var(--inklayer-selection-z-index, 3);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.inklayer-engine .inklayer-author-label {
+  position: absolute;
+  padding: var(--inklayer-author-label-padding, 2px 5px);
+  color: var(--inklayer-author-label-foreground, #fff);
+  font: 500 var(--inklayer-author-label-font-size, 12px) / 1.4 system-ui, sans-serif;
+  white-space: nowrap;
+  background: var(--inklayer-author-label-background, #1677ff);
+  border-radius: var(--inklayer-author-label-radius, 3px);
+  pointer-events: none;
+  transform: translateY(-100%);
+}
+
+.inklayer-engine .inklayer-text-input {
+  z-index: var(--inklayer-selection-z-index, 3);
+  box-sizing: border-box;
+  padding: 6px 8px;
+  color: var(--inklayer-text-input-foreground, #111827);
+  font: inherit;
+  resize: both;
+  background: var(--inklayer-text-input-background, #fff);
+  border: 1px solid var(--inklayer-text-input-border, #1677ff);
+  border-radius: 4px;
+  outline: none;
+}
+
+.inklayer-engine .inklayer-text-input:focus-visible {
+  box-shadow: 0 0 0 3px var(--inklayer-text-input-focus-ring, rgb(22 119 255 / 25%));
+}
+
+.inklayer-engine[data-inklayer-tool="text-select"] .konvajs-content,
+.inklayer-engine[data-inklayer-tool="highlight"] .konvajs-content,
+.inklayer-engine[data-inklayer-tool="strikeout"] .konvajs-content,
+.inklayer-engine[data-inklayer-tool="underline"] .konvajs-content {
+  cursor: var(--inklayer-cursor-text-markup, text);
+}
+
+.inklayer-engine[data-inklayer-tool="free-text"] .konvajs-content {
+  cursor: var(--inklayer-cursor-free-text, text);
+}
+
+.inklayer-engine[data-inklayer-tool="note"] .konvajs-content {
+  cursor: var(--inklayer-cursor-note, copy);
+}
+
+.inklayer-engine[data-inklayer-tool="stamp"] .konvajs-content {
+  cursor: var(--inklayer-cursor-stamp, crosshair);
+}
+
+.inklayer-engine[data-inklayer-tool="rectangle"] .konvajs-content,
+.inklayer-engine[data-inklayer-tool="circle"] .konvajs-content,
+.inklayer-engine[data-inklayer-tool="freehand"] .konvajs-content,
+.inklayer-engine[data-inklayer-tool="free-highlight"] .konvajs-content,
+.inklayer-engine[data-inklayer-tool="signature"] .konvajs-content,
+.inklayer-engine[data-inklayer-tool="line"] .konvajs-content,
+.inklayer-engine[data-inklayer-tool="arrow"] .konvajs-content,
+.inklayer-engine[data-inklayer-tool="polygon"] .konvajs-content,
+.inklayer-engine[data-inklayer-tool="polyline"] .konvajs-content,
+.inklayer-engine[data-inklayer-tool="cloud"] .konvajs-content {
+  cursor: var(--inklayer-cursor-draw, crosshair);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .inklayer-engine *,
+  .inklayer-engine *::before,
+  .inklayer-engine *::after {
+    scroll-behavior: auto !important;
+  }
+}

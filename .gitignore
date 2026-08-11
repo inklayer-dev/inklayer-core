@@ -1,0 +1,40 @@
+# See http://help.github.com/ignore-files/ for more about ignoring files.
+
+# Mac OS X
+.DS_Store
+._.*
+._*
+
+# Ignore local editor
+.project
+.settings
+.idea
+*.swp
+tags
+nbproject/*
+.vscode
+
+# Windows
+Thumbs.db
+
+# Debugging related
+npm-debug.log
+
+# Dependency packages files
+node_modules/
+node_modules
+# Output
+dist/
+dist-example/
+playwright-report/
+test-results/
+*.log
+
+# stats
+stats.json
+
+yarn.lock
+*.tgz
+
+# Local planning source
+WHITEPAPER.md

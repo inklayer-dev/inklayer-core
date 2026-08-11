@@ -1,0 +1,24 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node", "vitest/globals"],
+    "paths": {
+      "inklayer-core": ["./src/index.ts"],
+      "inklayer-core/viewer": ["./src/viewer/index.ts"],
+      "inklayer-core/annotation": ["./src/annotation/index.ts"],
+      "inklayer-core/import/pdfjs": ["./src/import/pdfjs/index.ts"],
+      "inklayer-core/export/pdf": ["./src/export/pdf/index.ts"],
+      "inklayer-core/export/excel": ["./src/export/excel/index.ts"],
+      "inklayer-core/style": ["./src/style.ts"]
+    }
+  },
+  "include": [
+    "src/**/*.ts",
+    "tests/**/*.ts",
+    "examples/vanilla/src/**/*.ts",
+    "examples/vanilla/vite.config.ts",
+    "vite.config.ts",
+    "vitest.config.ts",
+    "playwright.config.ts"
+  ]
+}

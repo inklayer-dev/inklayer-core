@@ -1,0 +1,341 @@
+/**
+ * @file Product-shell styles for the Vanilla example only.
+ * @description Presents Core controls and two demo instances while intentionally
+ * staying separate from the public engine stylesheet and its variable contract.
+ */
+
+:root {
+  color: #182230;
+  font: 14px/1.5 Inter, ui-sans-serif, system-ui, sans-serif;
+  background: #f4f6f8;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+select,
+input {
+  font: inherit;
+}
+
+.demo-shell {
+  max-width: 1180px;
+  padding: 28px;
+  margin: 0 auto;
+}
+
+.demo-header {
+  display: flex;
+  gap: 18px;
+  align-items: end;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.demo-header h1,
+.instance-card h2 {
+  margin: 0;
+}
+
+.demo-header p {
+  max-width: 650px;
+  margin: 5px 0 0;
+  color: #667085;
+}
+
+.instance-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.instance-card {
+  min-width: 0;
+  padding: 16px;
+  background: #fff;
+  border: 1px solid #d8dee8;
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgb(16 24 40 / 6%);
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.toolbar button,
+.toolbar select,
+.file-control,
+.document-tools button,
+.document-tools input,
+.thumbnail-button {
+  min-height: 34px;
+  padding: 5px 9px;
+  color: #344054;
+  background: #fff;
+  border: 1px solid #cdd5df;
+  border-radius: 7px;
+}
+
+.file-control {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.file-control input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.toolbar button:hover,
+.toolbar button:focus-visible,
+.document-tools button:hover,
+.document-tools button:focus-visible,
+.thumbnail-button:hover,
+.thumbnail-button:focus-visible {
+  color: #175cd3;
+  border-color: #84adff;
+}
+
+.document-tools {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  gap: 10px;
+  padding: 10px;
+  margin-bottom: 10px;
+  background: #f8fafc;
+  border: 1px solid #e4e7ec;
+  border-radius: 8px;
+}
+
+.document-tools section,
+.outline-items,
+.search-results {
+  display: grid;
+  gap: 5px;
+}
+
+.document-tools strong {
+  font-size: 12px;
+  color: #475467;
+}
+
+.search-form {
+  display: flex;
+  gap: 6px;
+  align-items: end;
+}
+
+.search-form label {
+  display: grid;
+  flex: 1;
+  gap: 3px;
+  font-size: 12px;
+  color: #475467;
+}
+
+.search-results {
+  max-height: 76px;
+  margin-top: 5px;
+  overflow: auto;
+}
+
+.outline-items button,
+.search-results button {
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thumbnail-items {
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  margin-bottom: 10px;
+  overflow-x: auto;
+  background: #eef2f6;
+  border-radius: 8px;
+}
+
+.thumbnail-button {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 3px;
+  justify-items: center;
+  padding: 4px;
+  background: #fff;
+}
+
+.thumbnail-button img {
+  display: block;
+  width: 62px;
+  height: auto;
+  box-shadow: 0 1px 4px rgb(16 24 40 / 18%);
+}
+
+.thumbnail-button span {
+  font-size: 11px;
+}
+
+.page-scroll {
+  max-height: 570px;
+  overflow: auto;
+  background: #e8ebef;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+}
+
+.flow-scroll {
+  position: relative;
+  max-height: 570px;
+  padding: 14px;
+  overflow: auto;
+  background: #e8ebef;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+}
+
+.flow-scroll[hidden] {
+  display: none;
+}
+
+.inklayer-page-flow-page {
+  background: #fff;
+  box-shadow: 0 2px 10px rgb(16 24 40 / 15%);
+}
+
+.page-surface {
+  position: relative;
+  width: fit-content;
+  margin: 16px auto;
+  background: #fff;
+  box-shadow: 0 2px 10px rgb(16 24 40 / 16%);
+}
+
+.pdf-canvas {
+  display: block;
+}
+
+.text-selection-menu {
+  position: fixed;
+  z-index: 20;
+  display: flex;
+  gap: 4px;
+  padding: 5px;
+  background: #101828;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgb(16 24 40 / 24%);
+  transform: translate(-50%, calc(-100% - 8px));
+}
+
+.text-selection-menu[hidden] {
+  display: none;
+}
+
+.text-selection-menu button {
+  padding: 5px 8px;
+  color: #fff;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+}
+
+.text-selection-menu button:hover,
+.text-selection-menu button:focus-visible {
+  background: rgb(255 255 255 / 14%);
+}
+
+.text-layer-host,
+.annotation-host {
+  position: absolute;
+  inset: 0;
+}
+
+.instance-status {
+  min-height: 21px;
+  margin: 10px 0 0;
+  color: #475467;
+}
+
+.instance-status[data-state="error"] {
+  color: #b42318;
+}
+
+.password-dialog {
+  width: min(360px, calc(100vw - 32px));
+  padding: 0;
+  color: #182230;
+  background: #fff;
+  border: 1px solid #d0d5dd;
+  border-radius: 12px;
+  box-shadow: 0 20px 48px rgb(16 24 40 / 24%);
+}
+
+.password-dialog::backdrop {
+  background: rgb(16 24 40 / 38%);
+}
+
+.password-form {
+  display: grid;
+  gap: 14px;
+  padding: 20px;
+}
+
+.password-form h3,
+.password-form p {
+  margin: 0;
+}
+
+.password-form label {
+  display: grid;
+  gap: 5px;
+  color: #475467;
+}
+
+.password-input {
+  min-height: 36px;
+  padding: 4px 9px;
+  border: 1px solid #98a2b3;
+  border-radius: 7px;
+}
+
+.dialog-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.dialog-actions button {
+  min-height: 34px;
+  padding: 5px 12px;
+  border: 1px solid #cdd5df;
+  border-radius: 7px;
+}
+
+@media (max-width: 820px) {
+  .demo-shell {
+    padding: 16px;
+  }
+
+  .demo-header {
+    display: block;
+  }
+
+  .instance-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .document-tools {
+    grid-template-columns: 1fr;
+  }
+}

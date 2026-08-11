@@ -1,0 +1,30 @@
+{
+  "id": "legacy-highlight-1",
+  "referenceNumber": 7,
+  "pageNumber": 2,
+  "konvaString": "{\"className\":\"Group\",\"attrs\":{\"id\":\"legacy-highlight-1\"}}",
+  "konvaClientRect": { "x": 10, "y": 20, "width": 100, "height": 18 },
+  "title": "Alice",
+  "type": 1,
+  "color": "#ffff00",
+  "subtype": "Highlight",
+  "pdfjsType": 9,
+  "date": "D:20250810120000Z",
+  "contentsObj": {
+    "text": "See #7",
+    "selectedText": "selected source",
+    "references": [{ "type": "annotation", "annotationId": "legacy-highlight-1", "label": "#7" }]
+  },
+  "comments": [{
+    "id": "comment-1",
+    "title": "Bob",
+    "date": "2025-08-10T12:30:00Z",
+    "content": "Review #7",
+    "status": "Accepted",
+    "user": { "id": "bob", "name": "Bob" },
+    "references": [{ "type": "annotation", "annotationId": "legacy-highlight-1", "label": "#7" }]
+  }],
+  "user": { "id": "alice", "name": "Alice", "avatarUrl": "https://example.invalid/alice.png" },
+  "native": false,
+  "applicationTag": { "workflow": "review" }
+}
