@@ -54,16 +54,73 @@ export interface AnnotationContent {
   references?: AnnotationReference[]
 }
 
-/** Common editable appearance properties. */
+/** Stroke paint shared by line and outlined annotation geometries. */
+export interface AnnotationStrokeAppearance {
+  /** Core-supported CSS RGB color. */
+  color: string
+  /** Width in unscaled page/Stage units. */
+  width: number
+  /** Stroke-only opacity from zero through one. */
+  opacity: number
+  /** Alternating painted and unpainted lengths; empty means solid. */
+  dash: readonly number[]
+  /** Offset into the dash pattern in page units. */
+  dashOffset: number
+  /** Stroke endpoint geometry. */
+  lineCap: 'butt' | 'round' | 'square'
+  /** Stroke corner geometry. */
+  lineJoin: 'miter' | 'round' | 'bevel'
+}
+
+/** Closed-area or background paint. */
+export interface AnnotationFillAppearance {
+  /** Core-supported CSS RGB color. */
+  color: string
+  /** Fill-only opacity from zero through one. */
+  opacity: number
+}
+
+/** Rendered text paint. */
+export interface AnnotationTextAppearance {
+  /** Core-supported CSS RGB foreground color. */
+  color: string
+  /** Text-only opacity from zero through one. */
+  opacity: number
+  /** Font size in unscaled page/Stage units. */
+  fontSize: number
+}
+
+/** Fully resolved renderer-independent appearance stored by every annotation. */
 export interface AnnotationAppearance {
-  /** CSS-compatible color string. */
-  color?: string | null
-  /** Text size in renderer-space units. */
-  fontSize?: number
-  /** Opacity from zero through one. */
+  /** Whole-annotation opacity multiplied with component opacity. */
+  opacity: number
+  /** Border, outline, or path paint; null explicitly disables it. */
+  stroke: AnnotationStrokeAppearance | null
+  /** Closed-area or background paint; null explicitly disables it. */
+  fill: AnnotationFillAppearance | null
+  /** Text paint; null when the annotation has no rendered text. */
+  text: AnnotationTextAppearance | null
+}
+
+/** Partial stroke override accepted by creation and editing commands. */
+export type AnnotationStrokeAppearanceInput = Partial<AnnotationStrokeAppearance>
+
+/** Partial fill override accepted by creation and editing commands. */
+export type AnnotationFillAppearanceInput = Partial<AnnotationFillAppearance>
+
+/** Partial text override accepted by creation and editing commands. */
+export type AnnotationTextAppearanceInput = Partial<AnnotationTextAppearance>
+
+/** Deep partial appearance override; null explicitly disables a component. */
+export interface AnnotationAppearanceInput {
+  /** Optional whole-annotation opacity override. */
   opacity?: number
-  /** Non-negative stroke width. */
-  strokeWidth?: number
+  /** Optional stroke override or explicit disable. */
+  stroke?: AnnotationStrokeAppearanceInput | null
+  /** Optional fill override or explicit disable. */
+  fill?: AnnotationFillAppearanceInput | null
+  /** Optional text override or explicit disable. */
+  text?: AnnotationTextAppearanceInput | null
 }
 
 /** Versioned renderer payload required for exact redraw. */
@@ -102,8 +159,8 @@ export interface Annotation {
   coordinateSpace: AnnotationCoordinateSpace
   /** Optional semantic text or image content. */
   content?: AnnotationContent
-  /** Optional editable appearance properties. */
-  appearance?: AnnotationAppearance
+  /** Fully resolved editable appearance. */
+  appearance: AnnotationAppearance
   /** Comments and replies in stable document order. */
   comments: AnnotationComment[]
   /** Annotation author used by collaboration permissions. */

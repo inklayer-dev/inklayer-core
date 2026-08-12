@@ -8,10 +8,17 @@ import {
   cloneAnnotation,
   type Annotation,
   type AnnotationAppearance,
+  type AnnotationAppearanceInput,
   type AnnotationBounds,
   type AnnotationContent,
   type AnnotationType
 } from '../domain/annotation'
+import {
+  getAnnotationAppearanceCapabilities,
+  mergeAnnotationAppearance,
+  resolveAnnotationAppearance,
+  type AnnotationAppearanceCapabilities
+} from '../domain/appearance'
 import type { AnnotationComment, CommentStatus } from '../domain/comment'
 import { InkLayerError } from '../domain/errors'
 import { assignAnnotationReferenceNumber } from '../domain/numbering'
@@ -42,11 +49,13 @@ import type {
 } from './events'
 import {
   createKonvaPainter,
+  type AnnotationAuthorLabelVisibility,
   type AnnotationPageAttachment,
   type AnnotationPainter
 } from './internal/painter/konva-painter'
 import {
-  buildToolRendererState
+  buildToolRendererState,
+  restyleToolRendererState
 } from '../renderer/konva/snapshot-builder'
 import type { AnnotationTool } from './tools'
 
@@ -66,7 +75,7 @@ export interface CreateAnnotationInput {
   /** Optional semantic text, selected text, image, or references. */
   content?: AnnotationContent
   /** Optional editable appearance. */
-  appearance?: AnnotationAppearance
+  appearance?: AnnotationAppearanceInput
   /** Optional points for line-oriented tools. */
   points?: readonly number[]
   /** Optional independent paths merged into one Freehand annotation. */
@@ -109,6 +118,10 @@ export interface AnnotationEngineOptions {
   onWarning?: (warning: AnnotationEngineWarning) => void
   /** Idle milliseconds merging successive Freehand strokes; defaults to 1,000. */
   freehandMergeDelayMs?: number
+  /** Initial per-type tool appearance overrides applied over Core defaults. */
+  defaultAppearances?: Partial<Record<AnnotationType, AnnotationAppearanceInput>>
+  /** Initial author/reference Tag visibility; defaults to `auto`. */
+  authorLabelVisibility?: AnnotationAuthorLabelVisibility
 }
 
 /** Public framework-independent Annotation Engine facade. */
@@ -125,6 +138,16 @@ export interface AnnotationEngine {
   getTool(): AnnotationTool
   /** Changes the current tool. */
   setTool(tool: AnnotationTool): void
+  /** Returns a detached complete appearance for a persisted annotation type. */
+  getToolAppearance(type: AnnotationType): AnnotationAppearance
+  /** Deeply updates the appearance used by future creations of one type. */
+  setToolAppearance(type: AnnotationType, appearance: AnnotationAppearanceInput): AnnotationAppearance
+  /** Returns which appearance controls are meaningful for one type. */
+  getAppearanceCapabilities(type: AnnotationType): AnnotationAppearanceCapabilities
+  /** Returns whether author/reference Tags are automatic, always visible, or hidden. */
+  getAuthorLabelVisibility(): AnnotationAuthorLabelVisibility
+  /** Replaces author/reference Tag visibility without changing annotation data. */
+  setAuthorLabelVisibility(visibility: AnnotationAuthorLabelVisibility): void
   /** Replaces the current collaboration identity. */
   setCurrentUser(user: User | null): void
   /** Replaces canonical permission configuration. */
@@ -132,11 +155,17 @@ export interface AnnotationEngine {
   /** Creates any persisted annotation type through its real snapshot builder. */
   createAnnotation(input: CreateAnnotationInput): Annotation
   /** Creates highlight, strikeout, or underline from normalized text selection. */
-  createTextMarkup(type: 'highlight' | 'strikeout' | 'underline', selection: AnnotationTextSelection): Annotation
+  createTextMarkup(
+    type: 'highlight' | 'strikeout' | 'underline',
+    selection: AnnotationTextSelection,
+    appearance?: AnnotationAppearanceInput
+  ): Annotation
   /** Opens the configured text input and creates FreeText on submit. */
   requestFreeText(pageIndex: number, bounds: AnnotationBounds): Promise<Annotation | null>
   /** Updates semantic annotation data with canonical validation. */
   updateAnnotation(id: string, updater: AnnotationUpdater): Annotation
+  /** Deeply updates one annotation appearance and its exact renderer snapshot. */
+  updateAppearance(id: string, appearance: AnnotationAppearanceInput): Annotation
   /** Applies exact validated renderer state after a transform. */
   transformAnnotation(id: string, input: TransformAnnotationInput): Annotation
   /** Appends one permission-checked canonical comment. */
@@ -193,6 +222,7 @@ class AnnotationEngineImpl implements AnnotationEngine {
   private currentUser: User | null
   private permissions: AnnotationPermissions | undefined
   private tool: AnnotationTool = 'select'
+  private readonly toolAppearances = new Map<AnnotationType, AnnotationAppearance>()
   private destroyed = false
 
   /** Creates one fully instance-owned facade and validates existing snapshots. */
@@ -221,8 +251,14 @@ class AnnotationEngineImpl implements AnnotationEngine {
     this.snapshotStrategy = options.snapshotStrategy ?? 'lenient'
     this.onWarning = options.onWarning
     this.instanceId = this.idGenerator.next()
+    for (const type of PERSISTED_ANNOTATION_TYPES) {
+      this.toolAppearances.set(type, resolveAnnotationAppearance(type, options.defaultAppearances?.[type]))
+    }
     this.painter = createKonvaPainter({
       instanceId: this.instanceId,
+      ...(options.authorLabelVisibility === undefined
+        ? {}
+        : { authorLabelVisibility: options.authorLabelVisibility }),
       getAnnotationsByPage: (pageIndex) => this.repository.getByPage(pageIndex)
         .filter((annotation) => !this.invalidSnapshotIds.has(annotation.id)),
       onSelect: (annotationId) => this.setSelection({ ids: [annotationId], primaryId: annotationId }),
@@ -241,6 +277,7 @@ class AnnotationEngineImpl implements AnnotationEngine {
         }
       },
       getTool: () => this.tool,
+      getAppearance: (type) => this.getToolAppearance(type),
       canTransform: (annotation) => this.canTransform(annotation),
       onCreate: (gesture) => {
         try {
@@ -261,6 +298,7 @@ class AnnotationEngineImpl implements AnnotationEngine {
         })
       },
       onClearSelection: () => this.setSelection({ ids: [] }),
+      onHover: (annotationId) => this.setHoveredAnnotation(annotationId),
       ...(options.freehandMergeDelayMs === undefined
         ? {}
         : { freehandMergeDelayMs: options.freehandMergeDelayMs })
@@ -307,6 +345,47 @@ class AnnotationEngineImpl implements AnnotationEngine {
     this.emit({ type: 'toolChanged', tool })
   }
 
+  /** Returns a detached complete tool appearance. */
+  public getToolAppearance(type: AnnotationType): AnnotationAppearance {
+    this.assertActive('getToolAppearance')
+    return structuredClone(this.toolAppearances.get(type) ?? resolveAnnotationAppearance(type))
+  }
+
+  /** Updates future creation and live preview appearance for one type. */
+  public setToolAppearance(
+    type: AnnotationType,
+    appearance: AnnotationAppearanceInput
+  ): AnnotationAppearance {
+    this.assertActive('setToolAppearance')
+    const next = mergeAnnotationAppearance(type, this.getToolAppearance(type), appearance)
+    this.toolAppearances.set(type, next)
+    this.painter.setTool(this.tool)
+    return structuredClone(next)
+  }
+
+  /** Returns renderer-independent controls supported by one type. */
+  public getAppearanceCapabilities(type: AnnotationType): AnnotationAppearanceCapabilities {
+    this.assertActive('getAppearanceCapabilities')
+    return getAnnotationAppearanceCapabilities(type)
+  }
+
+  /** Returns the current Tag visibility policy. */
+  public getAuthorLabelVisibility(): AnnotationAuthorLabelVisibility {
+    this.assertActive('getAuthorLabelVisibility')
+    return this.painter.getAuthorLabelVisibility()
+  }
+
+  /** Replaces the transient Tag visibility policy. */
+  public setAuthorLabelVisibility(visibility: AnnotationAuthorLabelVisibility): void {
+    this.assertActive('setAuthorLabelVisibility')
+    if (visibility !== 'auto' && visibility !== 'always' && visibility !== 'hidden') {
+      throw new InkLayerError('ANNOTATION_INVALID', 'Author-label visibility is invalid.', {
+        operation: 'setAuthorLabelVisibility'
+      })
+    }
+    this.painter.setAuthorLabelVisibility(visibility)
+  }
+
   /** Replaces the current user with a detached identity. */
   public setCurrentUser(user: User | null): void {
     this.assertActive('setCurrentUser')
@@ -333,12 +412,17 @@ class AnnotationEngineImpl implements AnnotationEngine {
     }
     const id = input.id ?? this.idGenerator.next()
     const author = this.currentUser ?? { id: 'null', name: 'Anonymous' }
+    const appearance = mergeAnnotationAppearance(
+      input.type,
+      this.getToolAppearance(input.type),
+      input.appearance
+    )
     const rendererState = buildToolRendererState({
       id,
       type: input.type,
       bounds: input.bounds,
       ...(input.content === undefined ? {} : { content: input.content }),
-      ...(input.appearance === undefined ? {} : { appearance: input.appearance }),
+      appearance,
       ...(input.points === undefined ? {} : { points: input.points }),
       ...(input.strokes === undefined ? {} : { strokes: input.strokes }),
       ...(input.pathData === undefined ? {} : { pathData: input.pathData }),
@@ -357,7 +441,7 @@ class AnnotationEngineImpl implements AnnotationEngine {
       native: false,
       rendererState,
       ...(input.content === undefined ? {} : { content: input.content }),
-      ...(input.appearance === undefined ? {} : { appearance: input.appearance })
+      appearance
     })
     annotation = assignAnnotationReferenceNumber(annotation, this.repository.getAll())
     this.repository.add(annotation)
@@ -367,7 +451,8 @@ class AnnotationEngineImpl implements AnnotationEngine {
   /** Creates a text markup annotation from normalized selection rectangles. */
   public createTextMarkup(
     type: 'highlight' | 'strikeout' | 'underline',
-    selection: AnnotationTextSelection
+    selection: AnnotationTextSelection,
+    appearance?: AnnotationAppearanceInput
   ): Annotation {
     this.assertActive('createTextMarkup')
     if (selection.rects.length === 0) {
@@ -381,7 +466,8 @@ class AnnotationEngineImpl implements AnnotationEngine {
       pageIndex: selection.pageIndex,
       bounds: unionBounds(selection.rects),
       textRects: selection.rects,
-      content: { text: '', selectedText: selection.text }
+      content: { text: '', selectedText: selection.text },
+      ...(appearance === undefined ? {} : { appearance })
     })
   }
 
@@ -426,6 +512,24 @@ class AnnotationEngineImpl implements AnnotationEngine {
     })
     this.validateSnapshot(candidate)
     return this.repository.update(id, () => candidate)
+  }
+
+  /** Deeply updates appearance while preserving the annotation geometry. */
+  public updateAppearance(id: string, appearance: AnnotationAppearanceInput): Annotation {
+    this.assertActive('updateAppearance')
+    const current = this.requireAnnotation(id, 'updateAppearance')
+    this.requirePermission('annotation.edit', current)
+    const nextAppearance = mergeAnnotationAppearance(current.type, current.appearance, appearance)
+    return this.repository.update(id, (annotation) => parseAnnotation({
+      ...annotation,
+      appearance: nextAppearance,
+      rendererState: restyleToolRendererState(
+        annotation.rendererState,
+        annotation.type,
+        nextAppearance
+      ),
+      updatedAt: this.clock.now()
+    }))
   }
 
   /** Applies exact validated renderer state after a transform. */
@@ -740,6 +844,12 @@ class AnnotationEngineImpl implements AnnotationEngine {
     }
   }
 }
+
+const PERSISTED_ANNOTATION_TYPES: readonly AnnotationType[] = [
+  'highlight', 'strikeout', 'underline', 'free-text', 'rectangle', 'circle',
+  'freehand', 'free-highlight', 'signature', 'stamp', 'note', 'line', 'arrow',
+  'polygon', 'polyline', 'cloud'
+]
 
 /** Returns the union of non-empty selection rectangles. */
 function unionBounds(rects: readonly AnnotationBounds[]): AnnotationBounds {

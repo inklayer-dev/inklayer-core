@@ -15,7 +15,7 @@ and the evidence that makes one side preferable or requires a new implementation
 | Area | React v1.2.2 | Vue v1.2.2 | Core decision |
 |---|---|---|---|
 | Viewer public shape | React hook returning state and snapshot values; no explicit `reload` | Vue composable returning refs plus `reload` | Command-oriented engine with `load`, `cancelLoad`, snapshot subscription, and idempotent `destroy` |
-| PDF.js worker | Top-level Vite `?url` import and global assignment | Same | Explicit `workerSrc`; no module-top DOM/global side effect |
+| PDF.js worker | Top-level Vite `?url` import and global assignment | Same | Bundled version-matched Worker, optional `workerSrc` override, and no module-top DOM/global side effect |
 | Concurrent loading | Effect generation guard; effect cleanup destroys active task | Generation guard; explicitly destroys prior task at reload start | Preserve generation guard and await deterministic cleanup of old task/document/viewer links |
 | Range transport | HEAD `Content-Length`, unchecked ranged GET | Same | New transport validates statuses and `Content-Range`, supports headers/credentials/AbortSignal |
 | Viewer cleanup | `viewer.cleanup()`, null refs, loading-task destroy | Same, but catches viewer cleanup errors | New lifecycle owns and releases Viewer, LinkService document, PDF document, task, fetch, and listeners |

@@ -13,6 +13,7 @@ import type {
   AnnotationType,
   KonvaRendererState
 } from './annotation'
+import { getDefaultAnnotationAppearance, validateResolvedAppearance } from './appearance'
 import type { AnnotationComment, CommentStatus } from './comment'
 import { InkLayerError } from './errors'
 import { isValidReferenceNumber } from './numbering'
@@ -55,8 +56,8 @@ export function parseAnnotation(input: unknown): Annotation {
     const rendererState = parseRendererState(value['rendererState'])
     const content = value['content'] === undefined ? undefined : parseContent(value['content'])
     const appearance = value['appearance'] === undefined
-      ? undefined
-      : parseAppearance(value['appearance'])
+      ? getDefaultAnnotationAppearance(type)
+      : parseAppearance(value['appearance'], type)
     const updatedAt = value['updatedAt'] === undefined
       ? undefined
       : requireNullableString(value['updatedAt'], 'updatedAt', 256)
@@ -81,7 +82,7 @@ export function parseAnnotation(input: unknown): Annotation {
       native,
       rendererState,
       ...(content === undefined ? {} : { content }),
-      ...(appearance === undefined ? {} : { appearance }),
+      appearance,
       ...(updatedAt === undefined ? {} : { updatedAt }),
       ...(referenceNumber === undefined ? {} : { referenceNumber }),
       ...(source === undefined ? {} : { source }),
@@ -146,26 +147,54 @@ function parseContent(input: unknown): AnnotationContent {
 }
 
 /** Parses optional appearance properties and their numeric ranges. */
-function parseAppearance(input: unknown): AnnotationAppearance {
+function parseAppearance(input: unknown, type: AnnotationType): AnnotationAppearance {
   const value = requireRecord(input, 'appearance')
-  const opacity = optionalFiniteNumber(value['opacity'], 'appearance.opacity')
-  if (opacity !== undefined && (opacity < 0 || opacity > 1)) {
-    throw invalid('Appearance opacity must be between 0 and 1.', 'parseAppearance')
+  const appearance: AnnotationAppearance = {
+    opacity: requireFiniteNumber(value['opacity'], 'appearance.opacity'),
+    stroke: value['stroke'] === null ? null : parseStrokeAppearance(value['stroke']),
+    fill: value['fill'] === null ? null : parseFillAppearance(value['fill']),
+    text: value['text'] === null ? null : parseTextAppearance(value['text'])
   }
-  const fontSize = optionalFiniteNumber(value['fontSize'], 'appearance.fontSize')
-  const strokeWidth = optionalFiniteNumber(value['strokeWidth'], 'appearance.strokeWidth')
-  if (fontSize !== undefined && fontSize < 0) throw invalid('Font size cannot be negative.', 'parseAppearance')
-  if (strokeWidth !== undefined && strokeWidth < 0) throw invalid('Stroke width cannot be negative.', 'parseAppearance')
-  const color = value['color'] === null
-    ? null
-    : value['color'] === undefined
-      ? undefined
-      : requireString(value['color'], 'appearance.color', 1024)
+  try {
+    validateResolvedAppearance(type, appearance)
+  } catch (cause) {
+    throw invalid('Annotation appearance is invalid for its type.', 'parseAppearance', cause)
+  }
+  return appearance
+}
+
+/** Parses one complete canonical stroke component. */
+function parseStrokeAppearance(input: unknown): NonNullable<AnnotationAppearance['stroke']> {
+  const value = requireRecord(input, 'appearance.stroke')
+  const dash = value['dash']
+  if (!Array.isArray(dash)) throw invalid('Appearance stroke dash must be an array.', 'parseAppearance')
   return {
-    ...(color === undefined ? {} : { color }),
-    ...(fontSize === undefined ? {} : { fontSize }),
-    ...(opacity === undefined ? {} : { opacity }),
-    ...(strokeWidth === undefined ? {} : { strokeWidth })
+    color: requireString(value['color'], 'appearance.stroke.color', 1024),
+    width: requireFiniteNumber(value['width'], 'appearance.stroke.width'),
+    opacity: requireFiniteNumber(value['opacity'], 'appearance.stroke.opacity'),
+    dash: dash.map((part, index) => requireFiniteNumber(part, `appearance.stroke.dash[${index}]`)),
+    dashOffset: requireFiniteNumber(value['dashOffset'], 'appearance.stroke.dashOffset'),
+    lineCap: requireEnum(value['lineCap'], new Set(['butt', 'round', 'square'] as const), 'appearance.stroke.lineCap'),
+    lineJoin: requireEnum(value['lineJoin'], new Set(['miter', 'round', 'bevel'] as const), 'appearance.stroke.lineJoin')
+  }
+}
+
+/** Parses one complete canonical fill component. */
+function parseFillAppearance(input: unknown): NonNullable<AnnotationAppearance['fill']> {
+  const value = requireRecord(input, 'appearance.fill')
+  return {
+    color: requireString(value['color'], 'appearance.fill.color', 1024),
+    opacity: requireFiniteNumber(value['opacity'], 'appearance.fill.opacity')
+  }
+}
+
+/** Parses one complete canonical text component. */
+function parseTextAppearance(input: unknown): NonNullable<AnnotationAppearance['text']> {
+  const value = requireRecord(input, 'appearance.text')
+  return {
+    color: requireString(value['color'], 'appearance.text.color', 1024),
+    opacity: requireFiniteNumber(value['opacity'], 'appearance.text.opacity'),
+    fontSize: requireFiniteNumber(value['fontSize'], 'appearance.text.fontSize')
   }
 }
 
@@ -320,9 +349,6 @@ function requireFiniteNumber(value: unknown, path: string): number {
 }
 
 /** Parses an optional finite number. */
-function optionalFiniteNumber(value: unknown, path: string): number | undefined {
-  return value === undefined ? undefined : requireFiniteNumber(value, path)
-}
 
 /** Requires a non-negative safe integer. */
 function requireNonNegativeInteger(value: unknown, path: string): number {

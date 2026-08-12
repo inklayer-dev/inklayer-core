@@ -1,6 +1,6 @@
 # InkLayer Core Final Implementation Report
 
-Date: 2026-08-11
+Date: 2026-08-11; verification status refreshed 2026-08-12
 Status: **Complete — Phase 7, boundary correction, and extended Viewer verified**
 Runtime used for the final gate: macOS arm64, Node 24.18.0
 
@@ -27,9 +27,10 @@ Only `inklayer-core` was changed. The implementation adds or updates:
   CSS contract, legacy compatibility, future framework integration, performance,
   implementation progress, and this report.
 
-`inklayer-react` and `inklayer-vue` were read and tested as references and have
-clean worktrees. No package was published, no release was created, and nothing was
-pushed.
+`inklayer-react` and `inklayer-vue` were read and tested as references and had
+clean worktrees during the implementation. No package was published and no
+release was created. The baseline was later committed as `1b68cde` and pushed to
+`origin/main`; remaining release-candidate work is tracked in `docs/roadmap.md`.
 
 ## Public API and package exports
 
@@ -57,7 +58,7 @@ to an internal Konva Painter. Viewer owns PDF.js resources. Native import and
 format exporters translate only at explicit boundaries. Legacy storage fields are
 isolated under `compat/legacy`.
 
-The source graph contains 48 production implementation files with no cycle,
+The source graph contains 55 production implementation files with no cycle,
 framework dependency, or forbidden dependency edge. Two type-only cycles found by
 the Phase 7 audit were removed by relocating shared event and target types.
 
@@ -102,12 +103,12 @@ Actual result:
 
 - production and test TypeScript checks passed in strict mode;
 - ESLint passed with unused-disable reporting;
-- comment audit passed for 87 maintained code files;
-- dependency audit passed for 48 source files with no cycles or forbidden edges;
-- Vitest: 22 files passed, 91 tests passed;
+- comment audit passed for 97 maintained code files;
+- dependency audit passed for 55 source files with no cycles or forbidden edges;
+- Vitest: 24 files passed, 106 tests passed;
 - Playwright Chromium: 2 tests passed;
 - library and Vanilla production builds passed;
-- package check passed for 20 export targets and 152 packed files;
+- package check passed for 20 export targets and 172 packed files;
 - temporary tarball consumer typecheck, Vite production build, CSS import, every
   entry import, and Node root import passed.
 
@@ -135,7 +136,7 @@ Final transitive Core entry sizes from `node --expose-gc scripts/benchmark.mjs`:
 | PDF export | 29,543 |
 | Excel export | 16,741 |
 
-The package dry run contains 152 files and excludes source/tests. A real tarball is
+The package dry run contains 172 files and excludes source/tests. A real tarball is
 installed into a fresh temporary consumer during `npm run check:consumer`.
 
 ## Vanilla E2E and browser evidence
@@ -194,7 +195,8 @@ addressed before declaring broader production compatibility.
 ### Scope
 
 - [x] Only `inklayer-core` modified; React/Vue remain clean.
-- [x] No publish, push, or release.
+- [x] No publish or release was performed by the implementation run; the reviewed
+  baseline was pushed afterward as `1b68cde`.
 
 ### Architecture
 

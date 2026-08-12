@@ -5,6 +5,7 @@
  */
 
 import type { Annotation } from '../../src/domain/annotation'
+import { getDefaultAnnotationAppearance } from '../../src/domain/appearance'
 
 /** Creates one complete canonical annotation with shallow field overrides. */
 export function createTestAnnotation(overrides: Partial<Annotation> = {}): Annotation {
@@ -19,6 +20,7 @@ export function createTestAnnotation(overrides: Partial<Annotation> = {}): Annot
     author: { id: 'alice', name: 'Alice' },
     createdAt: '2025-08-10T12:00:00Z',
     native: false,
+    appearance: getDefaultAnnotationAppearance(overrides.type ?? 'rectangle'),
     rendererState: {
       engine: 'konva',
       schemaVersion: 1,

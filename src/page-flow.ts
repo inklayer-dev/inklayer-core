@@ -8,7 +8,12 @@
 import type { AnnotationEngine } from './annotation/annotation-engine'
 import { InkLayerError } from './domain/errors'
 import type { PdfViewerEngine, PdfViewerScale, PdfZoomState } from './viewer/types'
-import { resolvePdfViewerScale, stepPdfViewerScale } from './viewer/zoom'
+import {
+  createPdfZoomGestureController,
+  resolvePdfViewerScale,
+  stepPdfViewerScale,
+  type PdfZoomGestureController
+} from './viewer/zoom'
 
 /** Continuous page-flow construction options. */
 export interface PdfPageFlowOptions {
@@ -28,6 +33,10 @@ export interface PdfPageFlowOptions {
   overscan?: string
   /** Receives zero-based current-page changes. */
   onCurrentPageChanged?: (pageIndex: number) => void
+  /** Receives resolved scale changes from toolbar commands or gestures. */
+  onScaleChanged?: (state: PdfZoomState) => void
+  /** Enables two-touch and Ctrl/Meta+wheel zoom; defaults to true. */
+  enablePinchZoom?: boolean
   /** Receives structured asynchronous mount failures. */
   onError?: (error: InkLayerError) => void
 }
@@ -84,6 +93,10 @@ class PdfPageFlowControllerImpl implements PdfPageFlowController {
   private currentPage = 0
   private destroyed = false
   private scrollListener: (() => void) | null = null
+  private zoomGesture: PdfZoomGestureController | null = null
+  private gestureScale: number
+  private pendingGesture: { scale: number; anchor: { clientX: number; clientY: number } } | null = null
+  private gestureCommit: Promise<void> | null = null
 
   /** Validates browser and ready-document requirements. */
   public constructor(options: PdfPageFlowOptions) {
@@ -95,6 +108,7 @@ class PdfPageFlowControllerImpl implements PdfPageFlowController {
     this.options = options
     this.scaleValue = options.scale ?? 1
     this.scale = typeof this.scaleValue === 'number' ? validateScale(this.scaleValue) : 1
+    this.gestureScale = this.scale
     this.pixelRatio = validatePixelRatio(options.pixelRatio
       ?? Math.min(globalThis.devicePixelRatio || 1, 2))
   }
@@ -136,6 +150,20 @@ class PdfPageFlowControllerImpl implements PdfPageFlowController {
       this.resizeObserver.observe(container)
     }
     await this.mountPage(0)
+    if (this.zoomGesture === null && this.options.enablePinchZoom !== false) {
+      this.gestureScale = this.scale
+      this.zoomGesture = createPdfZoomGestureController({
+        container,
+        getScale: () => this.gestureScale,
+        setScale: (scale, anchor) => {
+          this.gestureScale = scale
+          this.queueGestureScale(scale, anchor)
+        },
+        centerAtAnchor: false,
+        minScale: this.minScale,
+        maxScale: this.maxScale
+      })
+    }
   }
 
   /** Returns current visibility-derived page identity. */
@@ -158,9 +186,11 @@ class PdfPageFlowControllerImpl implements PdfPageFlowController {
     const pageIndex = this.currentPage
     this.scaleValue = scale
     this.scale = nextScale
+    this.gestureScale = nextScale
     this.releasePages()
     await this.initialize(false)
     this.scrollToPage(pageIndex)
+    this.options.onScaleChanged?.(this.getScale())
   }
 
   /** Returns a detached scale state for framework toolbar projection. */
@@ -194,6 +224,9 @@ class PdfPageFlowControllerImpl implements PdfPageFlowController {
     this.destroyed = true
     this.resizeObserver?.disconnect()
     this.resizeObserver = null
+    this.zoomGesture?.destroy()
+    this.zoomGesture = null
+    this.pendingGesture = null
     this.releasePages()
     const container = this.options.container
     container.replaceChildren()
@@ -201,6 +234,36 @@ class PdfPageFlowControllerImpl implements PdfPageFlowController {
     container.style.removeProperty('display')
     container.style.removeProperty('gap')
     container.style.removeProperty('align-items')
+  }
+
+  /** Coalesces high-frequency gesture frames while retaining the newest anchor. */
+  private queueGestureScale(
+    scale: number,
+    anchor: { clientX: number; clientY: number }
+  ): void {
+    this.pendingGesture = { scale, anchor }
+    if (this.gestureCommit !== null) return
+    this.gestureCommit = this.flushGestureScale().finally(() => {
+      this.gestureCommit = null
+      if (this.pendingGesture !== null && !this.destroyed) {
+        this.queueGestureScale(this.pendingGesture.scale, this.pendingGesture.anchor)
+      }
+    })
+  }
+
+  /** Rebuilds at the latest gesture scale and restores the page point under its midpoint. */
+  private async flushGestureScale(): Promise<void> {
+    while (this.pendingGesture !== null && !this.destroyed) {
+      const request = this.pendingGesture
+      this.pendingGesture = null
+      const anchor = capturePageAnchor(this.options.container, this.shells, request.anchor)
+      try {
+        await this.setScale(request.scale)
+        if (anchor !== null) restorePageAnchor(this.options.container, this.shells, anchor)
+      } catch (cause) {
+        this.options.onError?.(normalizePageFlowError(cause, this.currentPage))
+      }
+    }
   }
 
   /** Mounts intersecting pages and frees pages beyond the overscan margin. */
@@ -374,6 +437,63 @@ function createPageShell(
   }
   root.append(canvas, textLayer, annotationLayer)
   return { pageIndex, root, canvas, textLayer, annotationLayer, mounted: false, generation: 0 }
+}
+
+/** Stable document-space point captured under a viewport gesture midpoint. */
+interface PageAnchor {
+  pageIndex: number
+  xRatio: number
+  yRatio: number
+  clientX: number
+  clientY: number
+}
+
+/** Finds the page and relative point underneath a pinch/wheel anchor. */
+function capturePageAnchor(
+  container: HTMLDivElement,
+  shells: ReadonlyMap<number, PageShell>,
+  point: { clientX: number; clientY: number }
+): PageAnchor | null {
+  const candidates = [...shells.values()]
+  const shell = candidates.find((entry) => {
+    const bounds = entry.root.getBoundingClientRect()
+    return point.clientX >= bounds.left && point.clientX <= bounds.right
+      && point.clientY >= bounds.top && point.clientY <= bounds.bottom
+  }) ?? candidates.reduce<PageShell | null>((nearest, entry) => {
+    if (nearest === null) return entry
+    const current = entry.root.getBoundingClientRect()
+    const previous = nearest.root.getBoundingClientRect()
+    const currentDistance = Math.abs((current.top + current.bottom) / 2 - point.clientY)
+    const previousDistance = Math.abs((previous.top + previous.bottom) / 2 - point.clientY)
+    return currentDistance < previousDistance ? entry : nearest
+  }, null)
+  if (shell === null) return null
+  const bounds = shell.root.getBoundingClientRect()
+  if (bounds.width <= 0 || bounds.height <= 0) return null
+  const containerBounds = container.getBoundingClientRect()
+  return {
+    pageIndex: shell.pageIndex,
+    xRatio: Math.min(1, Math.max(0, (point.clientX - bounds.left) / bounds.width)),
+    yRatio: Math.min(1, Math.max(0, (point.clientY - bounds.top) / bounds.height)),
+    clientX: point.clientX - containerBounds.left,
+    clientY: point.clientY - containerBounds.top
+  }
+}
+
+/** Scrolls after an async page rebuild so the same page-space point stays under the fingers. */
+function restorePageAnchor(
+  container: HTMLDivElement,
+  shells: ReadonlyMap<number, PageShell>,
+  anchor: PageAnchor
+): void {
+  const shell = shells.get(anchor.pageIndex)
+  if (shell === undefined) return
+  const containerBounds = container.getBoundingClientRect()
+  const bounds = shell.root.getBoundingClientRect()
+  const targetClientX = containerBounds.left + anchor.clientX
+  const targetClientY = containerBounds.top + anchor.clientY
+  container.scrollLeft += bounds.left + bounds.width * anchor.xRatio - targetClientX
+  container.scrollTop += bounds.top + bounds.height * anchor.yRatio - targetClientY
 }
 
 /** Validates a bounded document scale. */

@@ -11,6 +11,7 @@ import type {
   AnnotationType,
   KonvaRendererState
 } from '../../domain/annotation'
+import { parseAnnotationColor } from '../../domain/color'
 import { parseAndValidateKonvaSnapshot } from './snapshot'
 
 /** Geometry and content accepted by every tool snapshot builder. */
@@ -24,7 +25,7 @@ export interface ToolSnapshotInput {
   /** Semantic text or image content. */
   content?: AnnotationContent
   /** Editable visual properties. */
-  appearance?: AnnotationAppearance
+  appearance: AnnotationAppearance
   /** Optional path points for line-based tools. */
   points?: readonly number[]
   /** Optional independent strokes belonging to one freehand annotation. */
@@ -39,7 +40,7 @@ export interface ToolSnapshotInput {
 export function buildToolRendererState(input: ToolSnapshotInput): KonvaRendererState {
   const root = {
     className: 'Group',
-    attrs: { id: input.id },
+    attrs: { id: input.id, opacity: input.appearance.opacity },
     children: buildChildren(input)
   }
   const serialized = JSON.stringify(root)
@@ -47,9 +48,67 @@ export function buildToolRendererState(input: ToolSnapshotInput): KonvaRendererS
   return { engine: 'konva', schemaVersion: 1, serialized }
 }
 
+/** Reapplies semantic appearance to an existing exact snapshot without changing geometry. */
+export function restyleToolRendererState(
+  rendererState: KonvaRendererState,
+  type: AnnotationType,
+  appearance: AnnotationAppearance
+): KonvaRendererState {
+  const validated = parseAndValidateKonvaSnapshot(rendererState.serialized, {
+    operation: 'restyleToolRendererState'
+  })
+  const root = structuredClone(validated.root) as unknown as MutableKonvaNode
+  root.attrs['opacity'] = appearance.opacity
+  for (const child of root.children ?? []) restyleChild(child, type, appearance)
+  const serialized = JSON.stringify(root)
+  parseAndValidateKonvaSnapshot(serialized, { operation: 'restyleToolRendererState' })
+  return { engine: 'konva', schemaVersion: 1, serialized }
+}
+
+/** Mutable internal form used only while rebuilding validated JSON. */
+interface MutableKonvaNode {
+  className: string
+  attrs: Record<string, unknown>
+  children?: MutableKonvaNode[]
+}
+
+/** Replaces persisted paint attrs while retaining one child node's exact geometry. */
+function restyleChild(
+  node: MutableKonvaNode,
+  type: AnnotationType,
+  appearance: AnnotationAppearance
+): void {
+  for (const key of PAINT_ATTRS) delete node.attrs[key]
+  if (type === 'highlight') Object.assign(node.attrs, fillAttrs(appearance))
+  else if (type === 'strikeout' || type === 'underline') {
+    Object.assign(node.attrs, {
+      fill: appearance.stroke === null ? undefined : colorWithOpacity(
+        appearance.stroke.color,
+        appearance.stroke.opacity
+      )
+    })
+  } else if (node.className === 'Text') Object.assign(node.attrs, textAttrs(appearance))
+  else if (node.className === 'Rect' && (type === 'note' || type === 'free-text')) {
+    Object.assign(node.attrs, strokeAttrs(appearance), fillAttrs(appearance))
+  } else {
+    Object.assign(node.attrs, strokeAttrs(appearance))
+    if (type === 'rectangle' || type === 'circle' || type === 'polygon' || type === 'cloud') {
+      Object.assign(node.attrs, fillAttrs(appearance))
+    }
+  }
+  for (const child of node.children ?? []) restyleChild(child, type, appearance)
+}
+
+const PAINT_ATTRS = [
+  'stroke', 'strokeWidth', 'strokeOpacity', 'fill', 'fillOpacity', 'opacity',
+  'dash', 'dashOffset', 'lineCap', 'lineJoin', 'fontSize'
+] as const
+
 /** Builds verified Konva child nodes for one canonical tool. */
 function buildChildren(input: ToolSnapshotInput): readonly Record<string, unknown>[] {
-  const style = createStyleAttrs(input.appearance)
+  const stroke = strokeAttrs(input.appearance)
+  const fill = fillAttrs(input.appearance)
+  const text = textAttrs(input.appearance)
   const { x, y, width, height } = input.bounds
   switch (input.type) {
     case 'highlight':
@@ -59,24 +118,27 @@ function buildChildren(input: ToolSnapshotInput): readonly Record<string, unknow
       return (input.textRects ?? [input.bounds]).map((rect) => ({
         className: 'Rect',
         attrs: {
-          ...markupBounds(markupType, rect, input.appearance?.strokeWidth ?? 2),
-          ...style,
-          fill: defaultColor(markupType),
-          opacity: markupType === 'highlight' ? (style['opacity'] ?? 0.35) : (style['opacity'] ?? 1)
+          ...markupBounds(markupType, rect, input.appearance.stroke?.width ?? 1),
+          ...(markupType === 'highlight' ? fill : {
+            fill: input.appearance.stroke === null ? undefined : colorWithOpacity(
+              input.appearance.stroke.color,
+              input.appearance.stroke.opacity
+            )
+          })
         }
       }))
     }
     case 'free-text':
-      return [{
-        className: 'Text',
-        attrs: { x, y, width, height, text: input.content?.text ?? '', ...style, fill: style['fill'] ?? '#000000' }
-      }]
+      return [
+        { className: 'Rect', attrs: { x, y, width, height, ...stroke, ...fill } },
+        { className: 'Text', attrs: { x, y, width, height, text: input.content?.text ?? '', ...text } }
+      ]
     case 'rectangle':
-      return [{ className: 'Rect', attrs: { x, y, width, height, ...style } }]
+      return [{ className: 'Rect', attrs: { x, y, width, height, ...stroke, ...fill } }]
     case 'circle':
       return [{
         className: 'Ellipse',
-        attrs: { x: x + width / 2, y: y + height / 2, radiusX: width / 2, radiusY: height / 2, ...style }
+        attrs: { x: x + width / 2, y: y + height / 2, radiusX: width / 2, radiusY: height / 2, ...stroke, ...fill }
       }]
     case 'freehand':
     case 'free-highlight':
@@ -88,36 +150,33 @@ function buildChildren(input: ToolSnapshotInput): readonly Record<string, unknow
         className: 'Line',
         attrs: {
           points,
-          ...style,
-          lineCap: 'round',
-          lineJoin: 'round',
-          opacity: input.type === 'free-highlight' ? (style['opacity'] ?? 0.35) : (style['opacity'] ?? 1)
+          ...stroke
         }
       }))
     }
     case 'stamp':
       return [{
         className: 'Image',
-        attrs: { x, y, width, height, src: input.content?.image ?? '', ...style }
+        attrs: { x, y, width, height, src: input.content?.image ?? '', ...stroke }
       }]
     case 'note':
       return [
-        { className: 'Rect', attrs: { x, y, width, height, fill: style['fill'] ?? '#ffdc5e', ...style } },
-        { className: 'Text', attrs: { x, y, width, height, text: input.content?.text ?? '', fill: '#222222' } }
+        { className: 'Rect', attrs: { x, y, width, height, ...stroke, ...fill } },
+        { className: 'Text', attrs: { x, y, width, height, text: input.content?.text ?? '', ...text } }
       ]
     case 'line':
-      return [{ className: 'Line', attrs: { points: input.points ?? [x, y, x + width, y + height], ...style } }]
+      return [{ className: 'Line', attrs: { points: input.points ?? [x, y, x + width, y + height], ...stroke } }]
     case 'arrow':
       return [{
         className: 'Arrow',
-        attrs: { points: input.points ?? [x, y, x + width, y + height], pointerLength: 10, pointerWidth: 10, ...style }
+        attrs: { points: input.points ?? [x, y, x + width, y + height], pointerLength: 10, pointerWidth: 10, ...stroke }
       }]
     case 'polygon':
       return [{
-        className: 'Line', attrs: { points: input.points ?? rectanglePoints(input.bounds, true), closed: true, ...style }
+        className: 'Line', attrs: { points: input.points ?? rectanglePoints(input.bounds, true), closed: true, ...stroke, ...fill }
       }]
     case 'polyline':
-      return [{ className: 'Line', attrs: { points: input.points ?? rectanglePoints(input.bounds, false), ...style } }]
+      return [{ className: 'Line', attrs: { points: input.points ?? rectanglePoints(input.bounds, false), ...stroke } }]
     case 'cloud':
       return [{
         className: 'Path',
@@ -127,25 +186,45 @@ function buildChildren(input: ToolSnapshotInput): readonly Record<string, unknow
           data: input.pathData ?? (input.points === undefined
             ? rectanglePath(width, height)
             : cloudPathFromPoints(input.points, input.bounds)),
-          ...style
+          ...stroke,
+          ...fill
         }
       }]
   }
 }
 
 /** Converts canonical appearance to shared Konva attributes. */
-function createStyleAttrs(appearance: AnnotationAppearance | undefined): Record<string, unknown> {
-  return {
-    stroke: appearance?.color ?? '#ff0000',
-    strokeWidth: appearance?.strokeWidth ?? 2,
-    ...(appearance?.opacity === undefined ? {} : { opacity: appearance.opacity }),
-    ...(appearance?.fontSize === undefined ? {} : { fontSize: appearance.fontSize })
+function strokeAttrs(appearance: AnnotationAppearance): Record<string, unknown> {
+  const stroke = appearance.stroke
+  return stroke === null ? {} : {
+    stroke: colorWithOpacity(stroke.color, stroke.opacity),
+    strokeWidth: stroke.width,
+    dash: [...stroke.dash],
+    dashOffset: stroke.dashOffset,
+    lineCap: stroke.lineCap,
+    lineJoin: stroke.lineJoin
   }
 }
 
-/** Returns the default text-markup color. */
-function defaultColor(type: 'highlight' | 'strikeout' | 'underline'): string {
-  return type === 'highlight' ? '#ffff00' : '#ff0000'
+/** Converts canonical fill appearance to Konva attributes. */
+function fillAttrs(appearance: AnnotationAppearance): Record<string, unknown> {
+  const fill = appearance.fill
+  return fill === null ? {} : { fill: colorWithOpacity(fill.color, fill.opacity) }
+}
+
+/** Converts canonical text appearance to Konva attributes. */
+function textAttrs(appearance: AnnotationAppearance): Record<string, unknown> {
+  const text = appearance.text
+  return text === null ? {} : {
+    fill: colorWithOpacity(text.color, text.opacity),
+    fontSize: text.fontSize
+  }
+}
+
+/** Converts validated CSS RGB paint and independent component alpha to RGBA. */
+function colorWithOpacity(color: string, opacity: number): string {
+  const [red, green, blue] = parseAnnotationColor(color)
+  return `rgba(${Math.round(red * 255)}, ${Math.round(green * 255)}, ${Math.round(blue * 255)}, ${opacity})`
 }
 
 /** Converts a selection rectangle to highlight, strikeout, or underline geometry. */

@@ -73,6 +73,24 @@ describe('PDF zoom', () => {
     }))
     expect(scale).toBe(detachedScale)
   })
+
+  it('can delegate async anchor restoration to a page-flow owner', () => {
+    let scale = 1
+    const container = createGestureContainer()
+    const controller = createPdfZoomGestureController({
+      container,
+      getScale: () => scale,
+      setScale: (next) => { scale = next },
+      centerAtAnchor: false
+    })
+    container.dispatchEvent(gestureEvent('wheel', {
+      ctrlKey: true, metaKey: false, deltaY: -20, clientX: 110, clientY: 70
+    }))
+    expect(scale).toBe(1.22)
+    expect(container.scrollLeft).toBe(0)
+    expect(container.scrollTop).toBe(0)
+    controller.destroy()
+  })
 })
 
 /** Creates one EventTarget-backed scroll viewport without a browser DOM. */

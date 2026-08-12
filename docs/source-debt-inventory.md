@@ -159,8 +159,8 @@ state at module evaluation.
 Evidence: `inklayer-react/src/hooks/usePdfViewer.ts:13-15` and
 `inklayer-vue/src/composables/usePdfViewer.ts:21-22`.
 
-Core treatment: explicit version-matched `workerSrc`, conflict detection, and
-Node/SSR-safe root import.
+Core treatment: bundled version-matched Worker with optional `workerSrc`
+override, conflict detection, and Node/SSR-safe root import.
 
 ### P1-04 — Framework Stores are engine dependencies
 

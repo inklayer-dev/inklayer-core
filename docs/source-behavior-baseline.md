@@ -12,8 +12,8 @@ preserve or deliberately replace. A source file existing is not treated as proof
 of a working behavior; tests and executable paths are cited separately.
 
 The existing framework repositories remain the compatibility reference, but the
-Core target behavior is governed by `WHITEPAPER.md` when a legacy implementation
-conflicts with the new engine contract.
+Core target behavior follows its documented architecture and public contracts
+when a legacy implementation conflicts with the new engine contract.
 
 ## 2. Current product capability inventory
 

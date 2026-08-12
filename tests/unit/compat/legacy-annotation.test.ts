@@ -13,6 +13,7 @@ import {
 } from '../../../src/compat/legacy/legacy-annotation'
 import type { InkLayerError } from '../../../src/domain/errors'
 import { createTestAnnotation } from '../../helpers/annotation'
+import { resolveAnnotationAppearance } from '../../../src/domain/appearance'
 
 /** Reads the maintained legacy fixture as untrusted JSON. */
 async function readLegacyFixture(): Promise<unknown> {
@@ -58,7 +59,7 @@ describe('legacy annotation compatibility', () => {
     const onWarning = vi.fn()
     serializeLegacyAnnotation(createTestAnnotation({
       updatedAt: '2025-08-10T13:00:00Z',
-      appearance: { color: '#000000', opacity: 0.5 }
+      appearance: resolveAnnotationAppearance('rectangle', { opacity: 0.5, stroke: { color: '#000000' } })
     }), { onWarning })
     expect(onWarning).toHaveBeenCalledWith(expect.objectContaining({ code: 'LEGACY_FIELD_OMITTED' }))
   })

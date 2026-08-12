@@ -20,8 +20,8 @@ TextLayer selection and annotation transforms remain Core responsibilities;
   `createTextMarkup` and `clearTextSelection`;
 - subscribe to typed Viewer/Annotation events and project them into component
   state;
-- supply current user, permissions, translations for UI labels, worker asset URL,
-  persistence, and download/upload policy;
+- supply current user, permissions, translations for UI labels, persistence, and
+  download/upload policy; override `workerSrc` only for self-hosting or CSP;
 - import `inklayer-core/style` and optionally override variables on each engine
   root;
 - destroy engines during component unmount.

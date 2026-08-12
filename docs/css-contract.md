@@ -43,7 +43,9 @@ Override them on one engine root to avoid affecting another instance.
 
 Core CSS styles only renderer wrappers, Konva placement, author labels,
 temporary FreeText input, cursor state, pointer routing, and stacking. Toolbars,
-sidebars, dialogs, application layout, and brand themes belong to consumers.
+sidebars, dialogs, application layout, scrollbar appearance, and brand themes
+belong to consumers. `.inklayer-page-flow` is a stable styling hook, but Core
+does not prescribe scrollbar width, colors, hover treatment, or platform theme.
 The `text-select` tool disables page Canvas hit routing so the PDF.js TextLayer
 can create a native browser selection; `select` restores annotation manipulation.
 

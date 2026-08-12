@@ -15,6 +15,13 @@ export {
   cloneAnnotation,
   type Annotation,
   type AnnotationAppearance,
+  type AnnotationAppearanceInput,
+  type AnnotationFillAppearance,
+  type AnnotationFillAppearanceInput,
+  type AnnotationStrokeAppearance,
+  type AnnotationStrokeAppearanceInput,
+  type AnnotationTextAppearance,
+  type AnnotationTextAppearanceInput,
   type AnnotationBounds,
   type AnnotationContent,
   type AnnotationCoordinateSpace,
@@ -22,6 +29,15 @@ export {
   type AnnotationType,
   type KonvaRendererState
 } from './domain/annotation'
+export {
+  getAnnotationAppearanceCapabilities,
+  getDefaultAnnotationAppearance,
+  mergeAnnotationAppearance,
+  resolveAnnotationAppearance,
+  validateResolvedAppearance,
+  type AnnotationAppearanceCapabilities
+} from './domain/appearance'
+export type { AnnotationAuthorLabelVisibility } from './annotation/internal/painter/konva-painter'
 export {
   createAnnotationComment,
   removeAnnotationComment,

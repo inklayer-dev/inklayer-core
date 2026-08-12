@@ -15,18 +15,38 @@
 ## Viewer
 
 ```ts
-const viewer = createPdfViewerEngine({ workerSrc })
+const viewer = createPdfViewerEngine()
 const handle = await viewer.load({ url, range: 'auto' })
 // or: await viewer.load({ data: bytes })
 await viewer.cancelLoad()
 await viewer.destroy()
 ```
 
-`workerSrc` is explicit and must match the installed PDF.js version. `load()` is
-generation-guarded; a newer load wins. URL Range supports `true`, `false`, and
-`'auto'`. Automatic fallback occurs only for confirmed lack of range support,
-not ordinary network/HTTP failures. Root and Viewer imports are SSR-safe because
-PDF.js is dynamically loaded by `load()`.
+Core ships and resolves a version-matched PDF.js Worker. Applications do not need
+to download or configure it; `workerSrc` is an optional override for self-hosting
+or a custom Content Security Policy. `load()` is generation-guarded; a newer load
+wins. URL Range supports `true`, `false`, and `'auto'`. Automatic fallback occurs
+only for confirmed lack of range support, not ordinary network/HTTP failures.
+Root and Viewer imports are SSR-safe because PDF.js is dynamically loaded by
+`load()`.
+
+Viewer state exposes structured loading progress:
+
+```ts
+const unsubscribe = viewer.subscribe((event) => {
+  if (event.type !== 'loadProgress') return
+  const { phase, loaded, total, percentage, range } = event.progress
+  renderLoadingState({ phase, loaded, total, percentage, range })
+})
+
+console.log(viewer.getSnapshot().progress)
+```
+
+The phase is `probing`, `downloading`, or `parsing`. Unknown totals and
+percentages are `null`. Range progress counts unique validated byte intervals,
+including the initial probe, without double-counting overlapping requests. A
+Range-backed document may become ready before every byte is transferred, so Core
+does not fabricate a final 100 percent event. Loading UI remains adapter-owned.
 
 Password-gated loading pauses in `awaiting-password` and emits only safe request
 metadata. Adapters call `submitPassword(requestId, password)` or
@@ -59,6 +79,7 @@ const flow = await createPdfPageFlow({
   annotations,
   container: scrollElement,
   onCurrentPageChanged: setCurrentPage,
+  onScaleChanged: setZoomState,
   onError: reportCoreError
 })
 flow.scrollToPage(4, 'smooth')
@@ -73,6 +94,9 @@ and mode controls. `createPdfPageFlow` requires a ready Viewer and a browser wit
 `IntersectionObserver` and `createImageBitmap`.
 Adaptive page-flow presets are re-resolved by `ResizeObserver`, while toolbar
 steps leave preset mode and operate on the current resolved numeric scale.
+`PdfPageFlow` also attaches Core's two-touch and Ctrl/Meta+wheel recognizer to
+its scroll container. Gesture frames are coalesced during asynchronous page
+rerendering, and the document point under the midpoint remains anchored.
 
 Document features are generation-scoped and require a loaded document:
 
@@ -150,7 +174,7 @@ const printable = await buildSecureRasterPrintPdf({
   viewer,
   annotations,
   pixelRatio: 2,
-  onProgress: ({ completedPages, totalPages }) => updateProgress(completedPages, totalPages)
+  onProgress: (completedPages, totalPages) => updateProgress(completedPages, totalPages)
 })
 await printPdfBlob(printable)
 ```
@@ -169,19 +193,45 @@ the vector PDF exporter continues to fail closed.
 const engine = createAnnotationEngine({
   root,
   currentUser: { id: 'alice', name: 'Alice' },
-  freehandMergeDelayMs: 1000
+  freehandMergeDelayMs: 1000,
+  authorLabelVisibility: 'auto',
+  defaultAppearances: {
+    highlight: { fill: { color: '#b4fa56', opacity: 0.5 } },
+    rectangle: { stroke: { color: '#ff6b6b', width: 2 } }
+  }
 })
 
 await engine.attachPage({ pageIndex: 0, container, width, height, scale })
 engine.setTool('rectangle')
+engine.setToolAppearance('rectangle', {
+  stroke: { color: '#1677ff', width: 3, dash: [8, 4] },
+  fill: { color: '#e6f4ff', opacity: 0.2 }
+})
 const annotation = engine.createAnnotation({
   type: 'rectangle',
   pageIndex: 0,
   bounds: { x: 10, y: 20, width: 100, height: 50 }
 })
 engine.setSelection({ ids: [annotation.id], primaryId: annotation.id })
+engine.updateAppearance(annotation.id, { stroke: { width: 5 } })
+engine.setAuthorLabelVisibility('always')
 engine.destroy()
 ```
+
+`AnnotationAppearance` is the complete persisted V1 value. It is independent
+from Konva and separates whole-annotation opacity from `stroke`, `fill`, and
+`text`; a component is `null` when disabled. Creation and editing APIs accept
+`AnnotationAppearanceInput`, a deep partial where `undefined` inherits and
+`null` explicitly disables a component. Dash styles use page-unit arrays such
+as `[8, 4]`, so render adapters do not translate vague names like `dashed`.
+Use `getAppearanceCapabilities(type)` to build only controls meaningful for the
+selected type. `hitStrokeWidth` is internal interaction state and is never part
+of appearance or persisted snapshots.
+
+Author/reference Tags are transient renderer state. `auto` displays a Tag for
+the hovered or selected annotation, `always` displays every attached Tag, and
+`hidden` suppresses Tags even during hover and selection. Canvas hover is owned
+by Core; sidebars can share it through `setHoveredAnnotation(id)`.
 
 All 16 persisted types are supported. `text-select` routes pointer input to the
 PDF TextLayer while `select` enables existing-annotation manipulation.

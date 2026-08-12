@@ -5,6 +5,7 @@
  */
 
 import type { Annotation, AnnotationBounds, AnnotationType } from '../../domain/annotation'
+import { resolveAnnotationAppearance } from '../../domain/appearance'
 import type { AnnotationComment } from '../../domain/comment'
 import { parseAnnotation } from '../../domain/validation'
 import { pdfPointToStage, pdfRectToStageBounds } from '../../geometry/coordinates'
@@ -82,11 +83,17 @@ function decodeAnnotation(
       ? { selectedText: input.contentsObj?.str ?? '' }
       : {})
   }
-  const appearance = {
-    color: colorToHex(input.color),
+  const color = colorToHex(input.color)
+  const appearance = resolveAnnotationAppearance(type, {
     ...(input.opacity === undefined ? {} : { opacity: input.opacity }),
-    ...(input.fontSize === undefined ? {} : { fontSize: input.fontSize })
-  }
+    ...(type === 'highlight' ? { fill: { color } }
+      : type === 'free-text' ? { text: {
+          color,
+          ...(input.fontSize === undefined ? {} : { fontSize: input.fontSize })
+        } }
+        : type === 'note' ? { fill: { color } }
+          : { stroke: { color } })
+  })
   const rendererState = buildToolRendererState({
     id: input.id,
     type,

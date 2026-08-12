@@ -98,6 +98,42 @@ describe('Annotation Engine tools', () => {
     engine.destroy()
   })
 
+  it('resolves per-type tool appearance and restyles an existing snapshot', () => {
+    const engine = createAnnotationEngine(createOptions({
+      defaultAppearances: { highlight: { fill: { color: '#00ff00' } } }
+    }))
+    expect(engine.getToolAppearance('highlight')).toMatchObject({
+      stroke: null,
+      fill: { color: '#00ff00', opacity: 0.5 }
+    })
+    expect(engine.getAppearanceCapabilities('highlight')).toMatchObject({
+      stroke: false, fill: true, text: false
+    })
+    engine.setToolAppearance('rectangle', {
+      stroke: { color: '#1677ff', width: 4, dash: [8, 4] },
+      fill: { color: '#e6f4ff', opacity: 0.2 }
+    })
+    const created = engine.createAnnotation({
+      type: 'rectangle', pageIndex: 0, bounds: { x: 1, y: 2, width: 30, height: 40 }
+    })
+    expect(created.appearance).toMatchObject({
+      stroke: { color: '#1677ff', width: 4, dash: [8, 4] },
+      fill: { color: '#e6f4ff', opacity: 0.2 }
+    })
+    const before = parseAndValidateKonvaSnapshot(created.rendererState.serialized).root
+    const updated = engine.updateAppearance(created.id, { stroke: { width: 7 } })
+    const after = parseAndValidateKonvaSnapshot(updated.rendererState.serialized).root
+    expect(updated.appearance.stroke?.width).toBe(7)
+    expect(after.children?.[0]?.attrs).toMatchObject({
+      x: before.children?.[0]?.attrs['x'],
+      y: before.children?.[0]?.attrs['y'],
+      strokeWidth: 7
+    })
+    expect(() => engine.setToolAppearance('highlight', { stroke: { color: '#000000' } }))
+      .toThrow(RangeError)
+    engine.destroy()
+  })
+
   it('emits detached add, update, selection, transform, delete, and tool events', () => {
     const engine = createAnnotationEngine(createOptions())
     const events: string[] = []

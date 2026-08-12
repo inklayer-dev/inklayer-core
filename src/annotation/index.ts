@@ -24,7 +24,10 @@ export {
   type AnnotationToolDefinition,
   type AnnotationTransformMode
 } from './tools'
-export type { AnnotationPageAttachment } from './internal/painter/konva-painter'
+export type {
+  AnnotationAuthorLabelVisibility,
+  AnnotationPageAttachment
+} from './internal/painter/konva-painter'
 export {
   parseAndValidateKonvaSnapshot,
   type KonvaAttributeValue,
@@ -37,3 +40,21 @@ export type { IdGenerator } from '../ports/id-generator'
 export type { Logger } from '../ports/logger'
 export type { TextInputProvider, TextInputRequest, TextInputResult } from '../ports/text-input'
 export { createBrowserTextInputProvider } from '../platform/browser/text-input'
+export type {
+  AnnotationAppearance,
+  AnnotationAppearanceInput,
+  AnnotationFillAppearance,
+  AnnotationFillAppearanceInput,
+  AnnotationStrokeAppearance,
+  AnnotationStrokeAppearanceInput,
+  AnnotationTextAppearance,
+  AnnotationTextAppearanceInput
+} from '../domain/annotation'
+export {
+  getAnnotationAppearanceCapabilities,
+  getDefaultAnnotationAppearance,
+  mergeAnnotationAppearance,
+  resolveAnnotationAppearance,
+  validateResolvedAppearance,
+  type AnnotationAppearanceCapabilities
+} from '../domain/appearance'

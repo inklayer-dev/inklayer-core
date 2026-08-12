@@ -136,6 +136,10 @@
   transform: translateY(-100%);
 }
 
+.inklayer-engine .inklayer-author-label[hidden] {
+  display: none;
+}
+
 .inklayer-engine .inklayer-text-input {
   z-index: var(--inklayer-selection-z-index, 3);
   box-sizing: border-box;

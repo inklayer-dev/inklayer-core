@@ -16,6 +16,7 @@ const runtime = vi.hoisted(() => ({
   groups: new Map<string, {
     triggerTransformMove: () => void
     triggerTransform: () => void
+    triggerHover: (hovered: boolean) => void
     destroyed: boolean
     draggable: boolean
   }>(),
@@ -155,12 +156,15 @@ vi.mock('konva', () => {
     private opacityValue = 1
     private transformMoveListener: (() => void) | undefined
     private transformListener: (() => void) | undefined
+    private enterListener: (() => void) | undefined
+    private leaveListener: (() => void) | undefined
 
     /** Creates a group from serialized renderer state. */
     public constructor(private readonly serialized: string, id: string) {
       const record = {
         triggerTransformMove: () => this.transformMoveListener?.(),
         triggerTransform: () => this.transformListener?.(),
+        triggerHover: (hovered: boolean) => hovered ? this.enterListener?.() : this.leaveListener?.(),
         destroyed: false,
         draggable: false
       }
@@ -171,6 +175,7 @@ vi.mock('konva', () => {
     private readonly record: {
       triggerTransformMove: () => void
       triggerTransform: () => void
+      triggerHover: (hovered: boolean) => void
       destroyed: boolean
       draggable: boolean
     }
@@ -194,7 +199,11 @@ vi.mock('konva', () => {
 
     /** Registers selection or transform listeners. */
     public on(events: string, listener: () => void): void {
-      if (events.includes('transformend')) {
+      if (events.includes('mouseenter')) {
+        this.enterListener = listener
+      } else if (events.includes('mouseleave')) {
+        this.leaveListener = listener
+      } else if (events.includes('transformend')) {
         this.transformListener = listener
       } else if (events.includes('transform')) {
         this.transformMoveListener = listener
@@ -370,6 +379,32 @@ function createRoot(): HTMLElement {
 }
 
 describe('Konva painter ownership', () => {
+  it('applies auto, always, and hidden Tag policies with Canvas hover and selection', async () => {
+    runtime.groups.clear()
+    const engine = createAnnotationEngine({
+      root: createRoot(), currentUser: { id: 'a', name: 'A' }
+    })
+    const container = createContainer()
+    await engine.attachPage({ pageIndex: 0, container, width: 200, height: 300 })
+    const annotation = engine.createAnnotation({
+      type: 'rectangle', pageIndex: 0, bounds: { x: 10, y: 20, width: 30, height: 40 }
+    })
+    const label = container.fakeChildren[0]?.children[0] as unknown as HTMLElement
+    expect(engine.getAuthorLabelVisibility()).toBe('auto')
+    expect(label.hidden).toBe(true)
+    runtime.groups.get(annotation.id)?.triggerHover(true)
+    expect(label.hidden).toBe(false)
+    runtime.groups.get(annotation.id)?.triggerHover(false)
+    expect(label.hidden).toBe(true)
+    engine.setSelection({ ids: [annotation.id], primaryId: annotation.id })
+    expect(label.hidden).toBe(false)
+    engine.setAuthorLabelVisibility('hidden')
+    expect(label.hidden).toBe(true)
+    engine.setAuthorLabelVisibility('always')
+    expect(label.hidden).toBe(false)
+    engine.destroy()
+  })
+
   it('projects FreeText input requests into the attached page overlay', async () => {
     runtime.stages.splice(0)
     const requestText = vi.fn(async () => ({ value: null }))

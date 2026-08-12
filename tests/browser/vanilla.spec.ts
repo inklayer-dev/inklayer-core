@@ -33,6 +33,11 @@ test('runs the complete Vanilla engine flow without console errors', async ({ pa
   await expect(alice.locator('.scale-value')).not.toHaveText('100%')
   await alice.locator('.scale-select').selectOption('page-actual')
   await expect(alice.locator('.scale-value')).toHaveText('100%')
+  await alice.locator('.page-scroll').dispatchEvent('wheel', {
+    ctrlKey: true, deltaY: -10, clientX: 250, clientY: 300
+  })
+  await expect(alice.locator('.scale-value')).not.toHaveText('100%')
+  await alice.locator('.scale-select').selectOption('page-actual')
   await expect(alice.getByRole('button', { name: 'Print', exact: true })).toBeVisible()
   await bob.getByRole('button', { name: 'Password PDF' }).click()
   const passwordDialog = bob.getByRole('dialog', { name: 'Open protected PDF' })
@@ -64,6 +69,11 @@ test('runs the complete Vanilla engine flow without console errors', async ({ pa
   await expect(alice.locator('.scale-value')).toHaveText(/%$/)
   await alice.locator('.scale-select').selectOption('page-actual')
   await expect(alice.locator('.scale-value')).toHaveText('100%')
+  await alice.locator('.flow-scroll').dispatchEvent('wheel', {
+    ctrlKey: true, deltaY: -10, clientX: 250, clientY: 300
+  })
+  await expect(alice.locator('.scale-value')).not.toHaveText('100%')
+  await alice.locator('.scale-select').selectOption('page-actual')
   await expect(alice.locator('[data-inklayer-flow-page="0"]')).toHaveAttribute(
     'data-inklayer-flow-mounted', 'true'
   )
@@ -143,11 +153,21 @@ test('runs the complete Vanilla engine flow without console errors', async ({ pa
   await page.mouse.move(canvas.x + 170, canvas.y + 180, { steps: 5 })
   await page.mouse.up()
   await expect(alice.locator('.inklayer-author-label')).toHaveCount(1)
+  await expect(alice.locator('.inklayer-author-label')).toBeHidden()
+  await page.mouse.move(canvas.x + 60, canvas.y + 130)
+  await expect(alice.locator('.inklayer-author-label')).toBeVisible()
+  await alice.locator('.tag-visibility').selectOption('hidden')
+  await expect(alice.locator('.inklayer-author-label')).toBeHidden()
+  await alice.locator('.tag-visibility').selectOption('always')
+  await expect(alice.locator('.inklayer-author-label')).toBeVisible()
+  await alice.locator('.tag-visibility').selectOption('auto')
   await alice.locator('.tool-select').selectOption('select')
+  await page.mouse.click(canvas.x + 60, canvas.y + 130)
+  await expect(alice.locator('.inklayer-author-label')).toBeVisible()
   const labelBeforeDrag = await alice.locator('.inklayer-author-label').boundingBox()
-  await page.mouse.move(canvas.x + 110, canvas.y + 130)
+  await page.mouse.move(canvas.x + 60, canvas.y + 130)
   await page.mouse.down()
-  await page.mouse.move(canvas.x + 145, canvas.y + 155, { steps: 6 })
+  await page.mouse.move(canvas.x + 95, canvas.y + 155, { steps: 6 })
   await page.mouse.up()
   const labelAfterDrag = await alice.locator('.inklayer-author-label').boundingBox()
   if (labelBeforeDrag === null || labelAfterDrag === null) {
@@ -155,7 +175,7 @@ test('runs the complete Vanilla engine flow without console errors', async ({ pa
   }
   expect(labelAfterDrag.x - labelBeforeDrag.x).toBeGreaterThan(25)
   expect(labelAfterDrag.y - labelBeforeDrag.y).toBeGreaterThan(15)
-  await page.mouse.click(canvas.x + 145, canvas.y + 155)
+  await page.mouse.click(canvas.x + 95, canvas.y + 155)
   await alice.getByRole('button', { name: 'Add comment' }).click()
   await expect(alice.locator('.instance-status')).toHaveText('Comment added to rectangle')
   await expect(bob.locator('.inklayer-author-label')).toHaveCount(0)

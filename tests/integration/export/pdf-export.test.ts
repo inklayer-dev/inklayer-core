@@ -17,6 +17,7 @@ import {
 import { describe, expect, it } from 'vitest'
 
 import type { Annotation, AnnotationType } from '../../../src/domain/annotation'
+import { resolveAnnotationAppearance } from '../../../src/domain/appearance'
 import { buildAnnotatedPdf, buildPrintablePdf } from '../../../src/export/pdf'
 import { buildToolRendererState } from '../../../src/renderer/konva/snapshot-builder'
 import { createTestAnnotation } from '../../helpers/annotation'
@@ -132,6 +133,13 @@ async function createSourcePdf(): Promise<Uint8Array> {
 function exportAnnotation(type: AnnotationType, index: number): Annotation {
   const id = `annotation-${type}`
   const bounds = { x: 10 + index, y: 20 + index, width: 100, height: 50 }
+  const appearance = resolveAnnotationAppearance(type, {
+    opacity: 0.5,
+    ...(type === 'highlight' || type === 'note' ? { fill: { color: '#00ff00' } }
+      : type === 'free-text' ? { text: { color: '#00ff00', fontSize: 14 } }
+        : type === 'stamp' ? {}
+          : { stroke: { color: '#00ff00', width: 2 } })
+  })
   return createTestAnnotation({
     id,
     type,
@@ -140,9 +148,9 @@ function exportAnnotation(type: AnnotationType, index: number): Annotation {
       text: `Body ${type}`,
       ...(type.includes('light') ? { selectedText: 'Selected' } : {})
     },
-    appearance: { color: '#00ff00', opacity: 0.5, strokeWidth: 2, fontSize: 14 },
+    appearance,
     rendererState: buildToolRendererState({
-      id, type, bounds, content: { text: `Body ${type}` }, appearance: { color: '#00ff00' },
+      id, type, bounds, content: { text: `Body ${type}` }, appearance,
       points: [bounds.x, bounds.y, bounds.x + bounds.width, bounds.y + bounds.height],
       ...(type === 'freehand' ? {
         strokes: [

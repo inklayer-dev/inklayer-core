@@ -1,15 +1,16 @@
 # InkLayer Core Implementation Progress
 
-> Last updated: 2026-08-11
-> Overall status: **complete locally — extended Viewer and secure raster print delivered**
+> Last updated: 2026-08-12
+> Overall status: **first complete Core baseline delivered; release-candidate work tracked in `docs/roadmap.md`**
 
 ## Scope controls
 
 - Only `inklayer-core/**` has been modified.
 - `inklayer-react` and `inklayer-vue` were read and tested without source changes.
-- No package was published, no release was created, and nothing was pushed.
-- `WHITEPAPER.md` and `.gitignore` were already untracked in `inklayer-core` at
-  the start of the audit; Phase 1 extended `.gitignore` for generated output.
+- No package was published and no release was created. The complete baseline was
+  committed as `1b68cde` and pushed to `origin/main` on 2026-08-11.
+- `WHITEPAPER.md` remains an ignored local implementation contract; maintained
+  public planning continues in `docs/roadmap.md`.
 
 ## Phase status
 
@@ -511,8 +512,9 @@ publishing or pushing.
   instance-scoped engine CSS;
 - format libraries remain on secondary entries and are dynamically loaded by the
   Vanilla example, so they do not enter Viewer or initial application code;
-- the package remains at local version `0.1.0`; no publish, release, push, or
-  reference-framework mutation was performed.
+- the package remained at local version `0.1.0`; that Phase 7 run performed no
+  publish, release, push, or reference-framework mutation. The reviewed baseline
+  was pushed later as recorded at the top of this document.
 
 ### Residual risks
 
@@ -552,10 +554,10 @@ publishing or pushing.
 
 ### Verification
 
-- `npm run check` passed on Node 24.18.0: strict typecheck, ESLint, documentation
-  checks for 87 maintained files, a 48-file acyclic dependency graph, 22 Vitest
-  files with 91 tests, two Chromium E2E tests, both builds, 20 export targets,
-  152 packed files, and fresh tarball-consumer validation;
+- The latest `npm run check` passed on Node 24.18.0: strict typecheck, ESLint,
+  documentation checks for 97 maintained files, a 55-file acyclic dependency
+  graph, 24 Vitest files with 106 tests, two Chromium E2E tests, both builds,
+  20 export targets, 172 packed files, and fresh tarball-consumer validation;
 - the browser E2E performs a real mouse selection over PDF.js TextLayer text,
   creates a Highlight, verifies outline/search/thumbnail behavior, and proves
   one-to-one selected-annotation dragging with a clean console;

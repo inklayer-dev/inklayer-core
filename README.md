@@ -105,9 +105,9 @@ secure raster print preparation, local PDF loading, all annotation tools,
 tool-specific transforms, comments, zoom, reload, PDF/Excel export, and
 destroy/remount without React or Vue.
 
-See [`WHITEPAPER.md`](./WHITEPAPER.md) for the implementation contract and
-[`docs/implementation-progress.md`](./docs/implementation-progress.md) for the
-current verified status.
+See [`docs/implementation-progress.md`](./docs/implementation-progress.md) for
+completed implementation history and [`docs/roadmap.md`](./docs/roadmap.md) for
+the current ordered work and acceptance criteria.
 
 Detailed contracts: [architecture](./docs/architecture.md),
 [public API](./docs/api.md), [data model](./docs/data-model.md),

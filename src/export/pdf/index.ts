@@ -221,7 +221,7 @@ function prepareAnnotations(
         pageIndex: annotation.pageIndex,
         operation: 'buildAnnotatedPdf'
       })
-      parseAnnotationColor(annotation.appearance?.color)
+      parseAnnotationColor(primaryAppearanceColor(annotation))
       ids.add(annotation.id)
       prepared.push({ annotation, snapshot })
     } catch (cause) {
@@ -267,6 +267,7 @@ function writeAnnotation(
   const pageBox = pdfPageBox(page)
   const dictionary = baseDictionary(document, page, annotation, pageBox)
   writeTypeGeometry(document, dictionary, annotation, snapshot, pageBox)
+  writeAppearanceGeometry(document, dictionary, annotation)
   const reference = document.context.register(dictionary)
   annots.push(reference)
   for (const comment of annotation.comments) {
@@ -287,6 +288,28 @@ function writeAnnotation(
   }
 }
 
+/** Writes PDF border/fill entries that have direct semantic equivalents. */
+function writeAppearanceGeometry(
+  document: PDFDocument,
+  dictionary: PDFDict,
+  annotation: Annotation
+): void {
+  const stroke = annotation.appearance.stroke
+  if (stroke !== null) {
+    const borderStyle = document.context.obj({
+      W: stroke.width,
+      S: stroke.dash.length === 0 ? 'S' : 'D',
+      ...(stroke.dash.length === 0 ? {} : { D: [...stroke.dash] })
+    })
+    dictionary.set(PDFName.of('BS'), borderStyle)
+  }
+  const fill = annotation.appearance.fill
+  if (fill !== null && (annotation.type === 'rectangle' || annotation.type === 'circle'
+    || annotation.type === 'polygon' || annotation.type === 'cloud')) {
+    dictionary.set(PDFName.of('IC'), pdfNumberArray(document, parseAnnotationColor(fill.color)))
+  }
+}
+
 /** Creates common PDF annotation dictionary entries. */
 function baseDictionary(
   document: PDFDocument,
@@ -294,7 +317,7 @@ function baseDictionary(
   annotation: Annotation,
   pageBox: PdfPageBox
 ): PDFDict {
-  const color = parseAnnotationColor(annotation.appearance?.color)
+  const color = parseAnnotationColor(primaryAppearanceColor(annotation))
   return document.context.obj({
     Type: 'Annot',
     Subtype: subtypeFor(annotation.type),
@@ -304,7 +327,7 @@ function baseDictionary(
     Contents: PDFHexString.fromText(annotation.content?.text ?? ''),
     M: PDFHexString.fromText(toPdfDate(annotation.updatedAt ?? annotation.createdAt)),
     C: pdfNumberArray(document, color),
-    CA: annotation.appearance?.opacity ?? 1,
+    CA: annotation.appearance.opacity * primaryComponentOpacity(annotation),
     F: 4,
     P: page.ref
   })
@@ -331,8 +354,8 @@ function writeTypeGeometry(
   } else if (annotation.type === 'polygon' || annotation.type === 'polyline') {
     dictionary.set(PDFName.of('Vertices'), pdfNumberArray(document, firstSnapshotPoints(snapshot, annotation, pageBox)))
   } else if (annotation.type === 'free-text') {
-    const color = parseAnnotationColor(annotation.appearance?.color ?? '#000000')
-    const size = annotation.appearance?.fontSize ?? 12
+    const color = parseAnnotationColor(annotation.appearance.text?.color ?? '#000000')
+    const size = annotation.appearance.text?.fontSize ?? 12
     dictionary.set(PDFName.of('DA'), PDFHexString.fromText(
       `/Helv ${size} Tf ${color[0]} ${color[1]} ${color[2]} rg`
     ))
@@ -340,6 +363,30 @@ function writeTypeGeometry(
     dictionary.set(PDFName.of('InkLayerFontSize'), PDFNumber.of(size))
     dictionary.set(PDFName.of('InkLayerTextWidth'), PDFNumber.of(annotation.bounds.width))
   }
+}
+
+/** Selects the semantic paint represented by PDF's common C entry. */
+function primaryAppearanceColor(annotation: Annotation): string {
+  if (annotation.type === 'highlight' || annotation.type === 'note') {
+    return annotation.appearance.fill?.color ?? '#000000'
+  }
+  if (annotation.type === 'free-text') return annotation.appearance.text?.color ?? '#000000'
+  return annotation.appearance.stroke?.color
+    ?? annotation.appearance.fill?.color
+    ?? annotation.appearance.text?.color
+    ?? '#000000'
+}
+
+/** Projects component opacity into PDF's single common opacity entry. */
+function primaryComponentOpacity(annotation: Annotation): number {
+  if (annotation.type === 'highlight' || annotation.type === 'note') {
+    return annotation.appearance.fill?.opacity ?? 1
+  }
+  if (annotation.type === 'free-text') return annotation.appearance.text?.opacity ?? 1
+  return annotation.appearance.stroke?.opacity
+    ?? annotation.appearance.fill?.opacity
+    ?? annotation.appearance.text?.opacity
+    ?? 1
 }
 
 /** Maps canonical kinds to interoperable PDF annotation subtypes. */

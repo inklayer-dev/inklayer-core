@@ -18,7 +18,8 @@ const DANGEROUS_KEYS = new Set(['__proto__', 'prototype', 'constructor'])
 const NUMERIC_ATTR_KEYS = new Set([
   'x', 'y', 'width', 'height', 'radius', 'radiusX', 'radiusY', 'scaleX', 'scaleY',
   'rotation', 'opacity', 'strokeWidth', 'fontSize', 'lineHeight', 'padding',
-  'pointerLength', 'pointerWidth', 'cornerRadius', 'tension', 'dashOffset'
+  'pointerLength', 'pointerWidth', 'cornerRadius', 'tension', 'dashOffset',
+  'fillOpacity', 'strokeHitEnabled', 'hitStrokeWidth'
 ])
 
 /** JSON values allowed inside validated Konva attrs. */

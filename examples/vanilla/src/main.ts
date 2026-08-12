@@ -13,6 +13,7 @@ import {
   CORE_VERSION,
   createAnnotationEngine,
   createPdfPageFlow,
+  createPdfZoomGestureController,
   createPdfViewerEngine,
   downloadBlob,
   printPdfBlob,
@@ -26,8 +27,9 @@ import {
   type PdfPasswordRequest,
   type PdfPageFlowController,
   type PdfTextSelection,
+  type PdfViewerEngine,
   type PdfViewerScale,
-  type PdfViewerEngine
+  type PdfZoomGestureController
 } from 'inklayer-core'
 import { importPdfJsAnnotations } from 'inklayer-core/import/pdfjs'
 import 'inklayer-core/style'
@@ -63,6 +65,8 @@ class DemoInstance {
   private readonly annotationHost: HTMLDivElement
   private readonly status: HTMLElement
   private readonly toolSelect: HTMLSelectElement
+  private readonly appearanceColor: HTMLInputElement
+  private readonly appearanceWidth: HTMLInputElement
   private readonly textSelectionMenu: HTMLDivElement
   private viewer: PdfViewerEngine
   private annotations: AnnotationEngine
@@ -73,11 +77,16 @@ class DemoInstance {
   private renderTask: { cancel(): void; promise: Promise<unknown> } | null = null
   private thumbnailUrls: string[] = []
   private unsubscribeViewer: () => void
+  private unsubscribeAnnotations: () => void
   private pageFlow: PdfPageFlowController | null = null
   private sourcePdf = samplePdf
   private sourceName = 'generated sample'
   private passwordRequestId: string | null = null
   private resizeObserver: ResizeObserver | null = null
+  private singlePageGesture: PdfZoomGestureController | null = null
+  private gestureScale = 1
+  private pendingGestureScale: number | null = null
+  private gestureScaleCommit: Promise<void> | null = null
 
   /** Creates DOM and Core instances for one isolated card. */
   public constructor(parent: HTMLElement, label: string, accent: string) {
@@ -91,6 +100,8 @@ class DemoInstance {
     this.annotationHost = requireElement(this.host, '.annotation-host')
     this.status = requireElement(this.host, '.instance-status')
     this.toolSelect = requireElement(this.host, '.tool-select')
+    this.appearanceColor = requireElement(this.host, '.appearance-color')
+    this.appearanceWidth = requireElement(this.host, '.appearance-width')
     this.textSelectionMenu = requireElement(this.host, '.text-selection-menu')
     this.viewer = createPdfViewerEngine()
     this.viewer.setWatermark({
@@ -105,6 +116,13 @@ class DemoInstance {
       currentUser: { id: label.toLowerCase(), name: label }
     })
     this.annotations.setTool('text-select')
+    this.annotations.setAuthorLabelVisibility('auto')
+    this.updateAppearanceControls()
+    this.unsubscribeAnnotations = this.annotations.subscribe((event) => {
+      if (event.type === 'selectionChanged' || event.type === 'annotationUpdated') {
+        this.updateAppearanceControls()
+      }
+    })
     this.unsubscribeViewer = this.viewer.subscribe((event) => {
       if (event.type === 'passwordRequired') this.showPasswordRequest(event.request)
       if (event.type === 'textSelectionChanged') this.handleTextSelectionChange(event.selection)
@@ -119,6 +137,7 @@ class DemoInstance {
       }
     })
     this.bindControls()
+    this.attachSinglePageGesture()
     if (typeof ResizeObserver === 'function') {
       const pageScroll = requireElement<HTMLDivElement>(this.host, '.page-scroll')
       this.resizeObserver = new ResizeObserver(() => {
@@ -204,9 +223,12 @@ class DemoInstance {
     this.renderTask?.cancel()
     this.renderTask = null
     this.unsubscribeViewer()
+    this.unsubscribeAnnotations()
     this.releaseThumbnailUrls()
     this.resizeObserver?.disconnect()
     this.resizeObserver = null
+    this.singlePageGesture?.destroy()
+    this.singlePageGesture = null
     this.annotations.destroy()
     await this.viewer.destroy()
     this.host.remove()
@@ -347,12 +369,23 @@ class DemoInstance {
     this.toolSelect.addEventListener('change', () => {
       const tool = this.toolSelect.value as AnnotationTool
       this.annotations.setTool(tool)
+      if (tool !== 'select') this.annotations.setSelection({ ids: [] })
+      this.updateAppearanceControls()
       if ((tool === 'highlight' || tool === 'strikeout' || tool === 'underline')
         && this.viewer.getTextSelection() !== null) {
         this.applyTextMarkup(tool)
       } else {
         if (tool !== 'text-select') this.textSelectionMenu.hidden = true
         this.setStatus(`Tool: ${tool}`)
+      }
+    })
+    this.appearanceColor.addEventListener('input', () => this.applyAppearanceControl())
+    this.appearanceWidth.addEventListener('input', () => this.applyAppearanceControl())
+    requireElement<HTMLSelectElement>(this.host, '.tag-visibility').addEventListener('change', (event) => {
+      const visibility = (event.currentTarget as HTMLSelectElement).value
+      if (visibility === 'auto' || visibility === 'always' || visibility === 'hidden') {
+        this.annotations.setAuthorLabelVisibility(visibility)
+        this.setStatus(`Annotation tags: ${visibility}`)
       }
     })
     this.textSelectionMenu.addEventListener('pointerdown', (event) => event.preventDefault())
@@ -426,6 +459,73 @@ class DemoInstance {
     })
   }
 
+  /** Connects the manual single-page surface to Core's shared pinch/wheel recognizer. */
+  private attachSinglePageGesture(): void {
+    const container = requireElement<HTMLDivElement>(this.host, '.page-scroll')
+    this.singlePageGesture = createPdfZoomGestureController({
+      container,
+      getScale: () => this.gestureScale,
+      setScale: (scale) => {
+        this.gestureScale = scale
+        this.pendingGestureScale = scale
+        this.queueSinglePageGestureScale()
+      },
+      minScale: 0.1,
+      maxScale: 10
+    })
+  }
+
+  /** Coalesces manual-page gesture frames while a prior PDF render is pending. */
+  private queueSinglePageGestureScale(): void {
+    if (this.gestureScaleCommit !== null) return
+    this.gestureScaleCommit = (async () => {
+      while (this.pendingGestureScale !== null) {
+        const scale = this.pendingGestureScale
+        this.pendingGestureScale = null
+        await this.setViewerScale(scale)
+      }
+    })().catch((cause: unknown) => this.reportError(cause)).finally(() => {
+      this.gestureScaleCommit = null
+      if (this.pendingGestureScale !== null) this.queueSinglePageGestureScale()
+    })
+  }
+
+  /** Reflects the selected tool or annotation's semantic V1 appearance. */
+  private updateAppearanceControls(): void {
+    const selectedId = this.annotations.repository.getSelection().primaryId
+    const selected = selectedId === undefined ? undefined : this.annotations.repository.getById(selectedId)
+    const type = selected?.type ?? persistedTool(this.annotations.getTool())
+    if (type === null) {
+      this.appearanceColor.disabled = true
+      this.appearanceWidth.disabled = true
+      return
+    }
+    const appearance = selected?.appearance ?? this.annotations.getToolAppearance(type)
+    const capabilities = this.annotations.getAppearanceCapabilities(type)
+    this.appearanceColor.disabled = appearance.stroke === null
+      && appearance.fill === null && appearance.text === null
+    this.appearanceColor.value = appearance.stroke?.color
+      ?? appearance.fill?.color ?? appearance.text?.color ?? '#000000'
+    this.appearanceWidth.disabled = !capabilities.stroke || appearance.stroke === null
+    this.appearanceWidth.value = String(appearance.stroke?.width ?? 2)
+  }
+
+  /** Applies demo controls through Core APIs to future creation or the primary selection. */
+  private applyAppearanceControl(): void {
+    const selectedId = this.annotations.repository.getSelection().primaryId
+    const selected = selectedId === undefined ? undefined : this.annotations.repository.getById(selectedId)
+    const type = selected?.type ?? persistedTool(this.annotations.getTool())
+    if (type === null) return
+    const current = selected?.appearance ?? this.annotations.getToolAppearance(type)
+    const color = this.appearanceColor.value
+    const width = Number.parseFloat(this.appearanceWidth.value)
+    const override = current.stroke !== null
+      ? { stroke: { color, ...(Number.isFinite(width) && width > 0 ? { width } : {}) } }
+      : current.fill !== null ? { fill: { color } } : { text: { color } }
+    if (selectedId === undefined) this.annotations.setToolAppearance(type, override)
+    else this.annotations.updateAppearance(selectedId, override)
+  }
+
   /** Switches from the single-page surface to Core-owned virtual page flow. */
   private async showContinuous(): Promise<void> {
     if (this.pageFlow !== null) return
@@ -442,9 +542,16 @@ class DemoInstance {
       onCurrentPageChanged: (pageIndex) => {
         this.currentPageIndex = pageIndex
         this.setStatus(`Continuous · page ${pageIndex + 1}/${this.document?.numPages ?? 0}`)
+      },
+      onScaleChanged: (state) => {
+        this.scaleValue = state.value
+        this.scale = state.scale
+        this.gestureScale = state.scale
+        this.updateScaleControls()
       }
     })
     this.scale = this.pageFlow.getScale().scale
+    this.gestureScale = this.scale
     this.updateScaleControls()
     this.pageFlow.scrollToPage(this.currentPageIndex)
     this.setStatus(`Continuous · page ${this.currentPageIndex + 1}/${this.document?.numPages ?? 0}`)
@@ -456,6 +563,7 @@ class DemoInstance {
     const scaleState = this.pageFlow.getScale()
     this.scaleValue = scaleState.value
     this.scale = scaleState.scale
+    this.gestureScale = this.scale
     this.pageFlow.destroy()
     this.pageFlow = null
     requireElement<HTMLDivElement>(this.host, '.flow-scroll').hidden = true
@@ -641,6 +749,7 @@ class DemoInstance {
       await this.renderCurrentPage()
     }
     this.updateScaleControls()
+    this.gestureScale = this.scale
   }
 
   /** Steps from the resolved scale and leaves adaptive mode predictably. */
@@ -680,6 +789,15 @@ function instanceMarkup(label: string): string {
     <h2>${label}</h2>
     <div class="toolbar" aria-label="${label} annotation controls">
       <label>Tool <select class="tool-select">${tools}</select></label>
+      <label>Color <input class="appearance-color" type="color" value="#ff6b6b"></label>
+      <label>Width <input class="appearance-width" type="range" min="1" max="20" step="1" value="2"></label>
+      <label>Tags
+        <select class="tag-visibility">
+          <option value="auto" selected>Hover / selected</option>
+          <option value="always">Always</option>
+          <option value="hidden">Hidden</option>
+        </select>
+      </label>
       <button class="add-sample" type="button">Add sample</button>
       <button class="comment" type="button">Add comment</button>
       <button class="delete" type="button">Delete</button>
@@ -773,6 +891,11 @@ function parseScaleValue(value: string): PdfViewerScale {
 function isAdaptiveScale(value: PdfViewerScale): boolean {
   return value === 'auto' || value === 'page-fit'
     || value === 'page-width' || value === 'page-height'
+}
+
+/** Narrows transient tools away from persisted annotation types. */
+function persistedTool(tool: AnnotationTool): Annotation['type'] | null {
+  return tool === 'select' || tool === 'text-select' ? null : tool
 }
 
 /** Returns the owner document for DOM creation in one demo instance. */

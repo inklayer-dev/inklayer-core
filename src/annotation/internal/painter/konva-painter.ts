@@ -5,7 +5,8 @@
  */
 
 import type Konva from 'konva'
-import type { Annotation } from '../../../domain/annotation'
+import type { Annotation, AnnotationAppearance } from '../../../domain/annotation'
+import { parseAnnotationColor } from '../../../domain/color'
 import { InkLayerError } from '../../../domain/errors'
 import { parseAndValidateKonvaSnapshot } from '../../../renderer/konva/snapshot'
 import { ANNOTATION_TOOL_DEFINITIONS } from '../../tools'
@@ -29,6 +30,8 @@ export interface AnnotationPageAttachment {
 export interface KonvaPainterOptions {
   /** Unique engine instance identifier used for event namespaces. */
   instanceId: string
+  /** Initial Tag visibility; defaults to selected-or-hovered auto mode. */
+  authorLabelVisibility?: AnnotationAuthorLabelVisibility
   /** Returns current annotations for one page attachment. */
   getAnnotationsByPage: (pageIndex: number) => readonly Annotation[]
   /** Handles annotation selection initiated from a Konva node. */
@@ -37,6 +40,8 @@ export interface KonvaPainterOptions {
   onTransform: (annotationId: string, bounds: Annotation['bounds'], serialized: string) => void
   /** Returns the current Annotation Engine tool. */
   getTool: () => AnnotationTool
+  /** Returns the complete current appearance used by creation previews. */
+  getAppearance: (type: Annotation['type']) => AnnotationAppearance
   /** Returns whether the current identity may directly transform an annotation. */
   canTransform: (annotation: Annotation) => boolean
   /** Creates an annotation after an instance-owned pointer gesture. */
@@ -45,6 +50,8 @@ export interface KonvaPainterOptions {
   onRequestFreeText: (pageIndex: number, bounds: Annotation['bounds']) => void
   /** Clears selection after a background click in select mode. */
   onClearSelection: () => void
+  /** Publishes Canvas hover so labels and product adapters share one state. */
+  onHover: (annotationId: string | null) => void
   /** Idle interval that merges successive Freehand strokes; defaults to 1,000ms. */
   freehandMergeDelayMs?: number
 }
@@ -145,11 +152,18 @@ export interface AnnotationPainter {
   setTool(tool: AnnotationTool): void
   /** Applies transient hover styling to one annotation. */
   setHovered(annotationId: string | null): void
+  /** Returns the current author-label visibility policy. */
+  getAuthorLabelVisibility(): AnnotationAuthorLabelVisibility
+  /** Replaces the transient author-label visibility policy. */
+  setAuthorLabelVisibility(visibility: AnnotationAuthorLabelVisibility): void
   /** Renders one attached annotation page without selection affordances. */
   renderPageRaster(pageIndex: number, pixelRatio?: number): HTMLCanvasElement
   /** Destroys every attached page idempotently. */
   destroy(): void
 }
+
+/** Core-owned author/reference Tag visibility policy. */
+export type AnnotationAuthorLabelVisibility = 'auto' | 'always' | 'hidden'
 
 /** Creates an instance-owned Konva painter without importing Konva at root load. */
 export function createKonvaPainter(options: KonvaPainterOptions): AnnotationPainter {
@@ -164,11 +178,13 @@ class KonvaPainter implements AnnotationPainter {
   private KonvaModule: typeof Konva | null = null
   private selectionIds: readonly string[] = []
   private hoveredId: string | null = null
+  private authorLabelVisibility: AnnotationAuthorLabelVisibility
   private destroyed = false
 
   /** Creates one painter with instance-local registries. */
   public constructor(options: KonvaPainterOptions) {
     this.options = options
+    this.authorLabelVisibility = options.authorLabelVisibility ?? 'auto'
   }
 
   /** Attaches a fully owned Stage, Layer, Transformer, and labels overlay. */
@@ -286,6 +302,7 @@ class KonvaPainter implements AnnotationPainter {
     const node = KonvaRuntime.Node.create(annotation.rendererState.serialized)
     if (node.getClassName() !== 'Group') throw new Error('Validated Konva root did not create a Group.')
     const group = node as Konva.Group
+    configureHitRegions(group, resources.stage.scaleX())
     group.draggable(this.options.getTool() === 'select'
       && ANNOTATION_TOOL_DEFINITIONS[annotation.type].draggable
       && this.options.canTransform(annotation))
@@ -295,6 +312,8 @@ class KonvaPainter implements AnnotationPainter {
       event.cancelBubble = true
       if (this.options.getTool() === 'select') this.options.onSelect(annotation.id)
     })
+    group.on(`mouseenter${namespace}`, () => this.options.onHover(annotation.id))
+    group.on(`mouseleave${namespace}`, () => this.options.onHover(null))
     group.on(`dragmove${namespace} transform${namespace}`, () => {
       this.updateAuthorLabelPosition(resources, annotation.id, group)
       positionPointControls(resources)
@@ -308,7 +327,7 @@ class KonvaPainter implements AnnotationPainter {
     resources.images.set(annotation.id, hydrateImageNodes(group, resources))
     resources.layer.add(group)
     this.renderAuthorLabel(resources, annotation)
-    this.applyHover(group, annotation.id === this.hoveredId)
+    this.applyHover(group, annotation, annotation.id === this.hoveredId)
     this.applySelection()
     resources.layer.batchDraw()
   }
@@ -371,9 +390,24 @@ class KonvaPainter implements AnnotationPainter {
   public setHovered(annotationId: string | null): void {
     this.hoveredId = annotationId
     for (const resources of this.pages.values()) {
-      for (const [id, node] of resources.nodes) this.applyHover(node, id === annotationId)
+      for (const [id, node] of resources.nodes) {
+        const annotation = resources.annotations.get(id)
+        if (annotation !== undefined) this.applyHover(node, annotation, id === annotationId)
+      }
+      this.refreshAuthorLabelVisibility(resources)
       resources.layer.batchDraw()
     }
+  }
+
+  /** Returns the current Tag policy. */
+  public getAuthorLabelVisibility(): AnnotationAuthorLabelVisibility {
+    return this.authorLabelVisibility
+  }
+
+  /** Replaces the Tag policy without rebuilding annotations. */
+  public setAuthorLabelVisibility(visibility: AnnotationAuthorLabelVisibility): void {
+    this.authorLabelVisibility = visibility
+    for (const resources of this.pages.values()) this.refreshAuthorLabelVisibility(resources)
   }
 
   /** Captures one page while excluding Transformer and edit controls. */
@@ -430,13 +464,14 @@ class KonvaPainter implements AnnotationPainter {
       const usesPointControls = tool === 'select' && primary !== undefined
         && this.createPointControls(resources, primary)
       resources.transformer.nodes(tool === 'select' && !usesPointControls ? nodes : [])
+      this.refreshAuthorLabelVisibility(resources)
       resources.layer.batchDraw()
     }
   }
 
   /** Applies non-persistent visual hover feedback. */
-  private applyHover(node: Konva.Group, hovered: boolean): void {
-    node.opacity(hovered ? 0.82 : 1)
+  private applyHover(node: Konva.Group, annotation: Annotation, hovered: boolean): void {
+    node.opacity(annotation.appearance.opacity * (hovered ? 0.82 : 1))
   }
 
   /** Creates or replaces one author label owned by the page overlay. */
@@ -450,6 +485,24 @@ class KonvaPainter implements AnnotationPainter {
       : `#${annotation.referenceNumber} ${annotation.author.name}`
     this.positionAuthorLabel(resources, label, annotation.bounds.x, annotation.bounds.y)
     resources.labels.append(label)
+    this.applyAuthorLabelVisibility(label, annotation.id)
+  }
+
+  /** Applies policy precedence: hidden, always, then selected-or-hovered auto. */
+  private applyAuthorLabelVisibility(label: HTMLElement, annotationId: string): void {
+    const visible = this.authorLabelVisibility === 'always'
+      || (this.authorLabelVisibility === 'auto'
+        && (this.hoveredId === annotationId || this.selectionIds.includes(annotationId)))
+    label.hidden = !visible
+  }
+
+  /** Refreshes all labels on one attached page after transient state changes. */
+  private refreshAuthorLabelVisibility(resources: PageResources): void {
+    for (const child of resources.labels.children) {
+      const label = child as HTMLElement
+      const annotationId = label.dataset['annotationId']
+      if (annotationId !== undefined) this.applyAuthorLabelVisibility(label, annotationId)
+    }
   }
 
   /** Tracks one author label continuously during direct manipulation. */
@@ -524,10 +577,11 @@ class KonvaPainter implements AnnotationPainter {
     group: Konva.Group
   ): void {
     const hovered = annotationId === this.hoveredId
-    group.opacity(1)
+    const annotation = resources.annotations.get(annotationId)
+    group.opacity(annotation?.appearance.opacity ?? 1)
     const bounds = group.getClientRect({ relativeTo: resources.stage })
-    const serialized = group.toJSON()
-    this.applyHover(group, hovered)
+    const serialized = serializeWithoutHitRegions(group)
+    if (annotation !== undefined) this.applyHover(group, annotation, hovered)
     this.options.onTransform(annotationId, {
       x: bounds.x,
       y: bounds.y,
@@ -620,7 +674,11 @@ class KonvaPainter implements AnnotationPainter {
           : 'Line'
     if (resources.gesturePreview?.getClassName() !== desiredClass) {
       clearGesturePreview(resources)
-      resources.gesturePreview = createGesturePreview(KonvaRuntime, desiredClass)
+      resources.gesturePreview = createGesturePreview(
+        KonvaRuntime,
+        desiredClass,
+        this.options.getAppearance(gesture.type)
+      )
       resources.layer.add(resources.gesturePreview)
     }
     const preview = resources.gesturePreview
@@ -745,12 +803,42 @@ class KonvaPainter implements AnnotationPainter {
   }
 }
 
+/** Serializes canonical state without transient enlarged hit-width attrs. */
+function serializeWithoutHitRegions(group: Konva.Group): string {
+  const shapes = group.find('Line, Arrow, Path, Rect') as unknown as Konva.Shape[]
+  const values = shapes.map((shape) => shape.getAttr('hitStrokeWidth') as number | undefined)
+  shapes.forEach((shape) => shape.setAttr('hitStrokeWidth', undefined))
+  try {
+    return group.toJSON()
+  } finally {
+    shapes.forEach((shape, index) => {
+      const value = values[index]
+      if (value !== undefined) shape.hitStrokeWidth(value)
+    })
+  }
+}
+
 /** Creates the minimal Konva shape class needed by one gesture preview. */
 function createGesturePreview(
   runtime: typeof Konva,
-  className: 'Rect' | 'Ellipse' | 'Arrow' | 'Line'
+  className: 'Rect' | 'Ellipse' | 'Arrow' | 'Line',
+  appearance: AnnotationAppearance
 ): Konva.Shape {
-  const common = { listening: false, stroke: '#ff0000', strokeWidth: 2, opacity: 0.68 }
+  const stroke = appearance.stroke
+  const fill = appearance.fill
+  const common = {
+    listening: false,
+    opacity: appearance.opacity,
+    ...(stroke === null ? {} : {
+      stroke: colorWithOpacity(stroke.color, stroke.opacity),
+      strokeWidth: stroke.width,
+      dash: [...stroke.dash],
+      dashOffset: stroke.dashOffset,
+      lineCap: stroke.lineCap,
+      lineJoin: stroke.lineJoin
+    }),
+    ...(fill === null ? {} : { fill: colorWithOpacity(fill.color, fill.opacity) })
+  }
   switch (className) {
     case 'Rect': return new runtime.Rect(common)
     case 'Ellipse': return new runtime.Ellipse({ ...common, radiusX: 0, radiusY: 0 })
@@ -758,6 +846,27 @@ function createGesturePreview(
       ...common, points: [], pointerLength: 10, pointerWidth: 10
     })
     case 'Line': return new runtime.Line({ ...common, points: [], lineCap: 'round', lineJoin: 'round' })
+  }
+}
+
+/** Converts semantic component opacity to a Konva-compatible RGBA color. */
+function colorWithOpacity(color: string, opacity: number): string {
+  const [red, green, blue] = parseAnnotationColor(color)
+  return `rgba(${Math.round(red * 255)}, ${Math.round(green * 255)}, ${Math.round(blue * 255)}, ${opacity})`
+}
+
+/** Enlarges only the interactive hit region while preserving visual paint and persistence. */
+function configureHitRegions(group: Konva.Group, scale: number): void {
+  const minimumPageWidth = 16 / Math.max(scale, 0.01)
+  for (const shape of group.find('Line, Arrow, Path, Rect')) {
+    const className = shape.getClassName()
+    const visibleWidth = typeof (shape as Konva.Shape).strokeWidth === 'function'
+      ? (shape as Konva.Shape).strokeWidth()
+      : 0
+    const thinRect = className === 'Rect' && typeof shape.height === 'function' && shape.height() <= 6
+    if (className === 'Line' || className === 'Arrow' || className === 'Path' || thinRect) {
+      ;(shape as Konva.Shape).hitStrokeWidth(Math.max(visibleWidth, minimumPageWidth))
+    }
   }
 }
 

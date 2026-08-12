@@ -36,6 +36,8 @@ export interface PdfZoomGestureOptions {
   minScale?: number
   /** Maximum permitted numeric scale; defaults to 10. */
   maxScale?: number
+  /** Whether the controller adjusts container scroll synchronously; defaults to true. */
+  centerAtAnchor?: boolean
 }
 
 /** Disposable gesture recognizer owned by one Viewer surface. */
@@ -120,7 +122,9 @@ export function createPdfZoomGestureController(
     ))
     if (nextScale === previousScale) return
     options.setScale(nextScale, anchor)
-    centerZoomAt(container, previousScale, options.getScale(), anchor)
+    if (options.centerAtAnchor !== false) {
+      centerZoomAt(container, previousScale, options.getScale(), anchor)
+    }
   }
 
   const handleWheel = (event: WheelEvent): void => {

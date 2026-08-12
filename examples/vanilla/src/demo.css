@@ -69,6 +69,7 @@ input {
 
 .toolbar button,
 .toolbar select,
+.toolbar input,
 .file-control,
 .document-tools button,
 .document-tools input,
@@ -79,6 +80,25 @@ input {
   background: #fff;
   border: 1px solid #cdd5df;
   border-radius: 7px;
+}
+
+.toolbar label {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  font-size: 12px;
+  color: #475467;
+}
+
+.toolbar input[type='color'] {
+  width: 34px;
+  min-height: 34px;
+  padding: 3px;
+}
+
+.toolbar input[type='range'] {
+  width: 82px;
+  padding: 0;
 }
 
 .file-control {

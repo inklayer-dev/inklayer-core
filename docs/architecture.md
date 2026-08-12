@@ -50,7 +50,7 @@ flowchart TB
 
 `npm run check:dependencies` resolves all local TypeScript imports, rejects
 cycles and forbidden layer edges, and rejects framework packages. The current
-graph covers 48 production implementation files with no cycles.
+graph covers 55 production implementation files with no cycles.
 
 ## Ownership and lifecycle
 

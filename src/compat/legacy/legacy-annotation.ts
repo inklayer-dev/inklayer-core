@@ -5,6 +5,7 @@
  */
 
 import type { Annotation, AnnotationType } from '../../domain/annotation'
+import { getDefaultAnnotationAppearance, resolveAnnotationAppearance } from '../../domain/appearance'
 import type { AnnotationComment } from '../../domain/comment'
 import { InkLayerError } from '../../domain/errors'
 import { parseAnnotation } from '../../domain/validation'
@@ -94,7 +95,9 @@ export function parseLegacyAnnotation(
       legacyUnknown: unknownFields
     },
     ...(content === undefined ? {} : { content }),
-    ...(color === undefined ? {} : { appearance: { color } }),
+    appearance: resolveAnnotationAppearance(type, color === undefined || color === null
+      ? undefined
+      : legacyColorOverride(type, color)),
     ...(referenceNumber === undefined ? {} : { referenceNumber })
   }
   return parseAnnotation(annotation)
@@ -132,6 +135,7 @@ export function serializeLegacyAnnotation(
     })
   }
   const unknown = getLegacyUnknown(value)
+  const color = primaryAppearanceColor(value)
   return {
     ...unknown,
     id: value.id,
@@ -140,7 +144,7 @@ export function serializeLegacyAnnotation(
     konvaClientRect: { ...value.bounds },
     title: getLegacyTitle(value),
     type: legacyType,
-    ...(value.appearance?.color === undefined ? {} : { color: value.appearance.color }),
+    ...(color === undefined ? {} : { color }),
     subtype: value.source?.subtype ?? defaultSubtype(value.type),
     pdfjsType: value.source?.pdfjsType ?? 0,
     date: value.createdAt,
@@ -234,9 +238,27 @@ function getLegacyTitle(annotation: Annotation): string {
 
 /** Returns whether appearance contains properties absent from the old payload. */
 function hasNonColorAppearance(annotation: Annotation): boolean {
-  const appearance = annotation.appearance
-  return appearance !== undefined
-    && (appearance.fontSize !== undefined || appearance.opacity !== undefined || appearance.strokeWidth !== undefined)
+  const color = primaryAppearanceColor(annotation)
+  const expected = resolveAnnotationAppearance(
+    annotation.type,
+    color === undefined ? undefined : legacyColorOverride(annotation.type, color)
+  )
+  return JSON.stringify(annotation.appearance) !== JSON.stringify(expected)
+}
+
+/** Routes the old single color field to the meaningful V1 appearance component. */
+function legacyColorOverride(type: AnnotationType, color: string): object {
+  if (type === 'highlight' || type === 'note') return { fill: { color } }
+  if (type === 'free-text') return { text: { color } }
+  return { stroke: { color } }
+}
+
+/** Returns the best single-color projection supported by historical payloads. */
+function primaryAppearanceColor(annotation: Annotation): string | undefined {
+  const appearance = annotation.appearance ?? getDefaultAnnotationAppearance(annotation.type)
+  if (annotation.type === 'highlight' || annotation.type === 'note') return appearance.fill?.color
+  if (annotation.type === 'free-text') return appearance.text?.color
+  return appearance.stroke?.color ?? appearance.fill?.color ?? appearance.text?.color
 }
 
 /** Returns a safe default legacy subtype for new canonical annotations. */
