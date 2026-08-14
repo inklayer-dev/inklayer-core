@@ -44,15 +44,54 @@ function createOptions(overrides: Partial<AnnotationEngineOptions> = {}): Annota
 
 /** Returns tool-specific creation fields required by image and line tools. */
 function toolFields(type: AnnotationType): Partial<Parameters<ReturnType<typeof createAnnotationEngine>['createAnnotation']>[0]> {
-  if (type === 'stamp') return { content: { text: '', image: 'data:image/png;base64,AA==' } }
+  if (type === 'stamp') return { content: { text: '', image: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z2S8AAAAASUVORK5CYII=' } }
   if (type === 'free-text' || type === 'note') return { content: { text: 'Hello' } }
-  if (['freehand', 'free-highlight', 'signature', 'line', 'arrow', 'polygon', 'polyline'].includes(type)) {
+  if (['freehand', 'free-highlight', 'line', 'arrow', 'polygon', 'polyline'].includes(type)) {
     return { points: [10, 20, 100, 70] }
   }
+  if (type === 'signature') return { points: [10, 20, 100, 70] }
   return {}
 }
 
 describe('Annotation Engine tools', () => {
+  it('publishes default and overridden interactive creation modes', () => {
+    const engine = createAnnotationEngine(createOptions({
+      creationModes: { rectangle: 'continuous' }
+    }))
+    expect(engine.getCreationMode('highlight')).toBe('continuous')
+    expect(engine.getCreationMode('rectangle')).toBe('continuous')
+    expect(engine.getCreationMode('stamp')).toBe('once')
+    expect(() => createAnnotationEngine(createOptions({
+      creationModes: { circle: 'invalid' as 'once' }
+    }))).toThrowError(expect.objectContaining<Partial<InkLayerError>>({ code: 'ANNOTATION_INVALID' }))
+    engine.destroy()
+  })
+
+  it('owns image placement assets and exposes active cursor readiness state', () => {
+    const root = createRoot()
+    const engine = createAnnotationEngine(createOptions({ root }))
+    const asset = {
+      image: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z2S8AAAAASUVORK5CYII=',
+      width: 120,
+      height: 50,
+      text: 'Approved'
+    }
+    engine.setTool('stamp')
+    expect(root.dataset['inklayerImageAsset']).toBe('missing')
+    engine.setImageAsset('stamp', asset)
+    expect(root.dataset['inklayerImageAsset']).toBe('ready')
+    expect(engine.getImageAsset('stamp')).toEqual(asset)
+    const detached = engine.getImageAsset('stamp')
+    if (detached !== null) detached.width = 1
+    expect(engine.getImageAsset('stamp')?.width).toBe(120)
+    engine.setImageAsset('stamp', null)
+    expect(engine.getImageAsset('stamp')).toBeNull()
+    expect(() => engine.setImageAsset('signature', { ...asset, width: 0 })).toThrowError(
+      expect.objectContaining<Partial<InkLayerError>>({ code: 'ANNOTATION_INVALID' })
+    )
+    engine.destroy()
+  })
+
   it('creates every persisted type with validated exact Konva state', () => {
     const engine = createAnnotationEngine(createOptions())
     const types = Object.keys(ANNOTATION_TOOL_DEFINITIONS) as AnnotationType[]
@@ -72,6 +111,32 @@ describe('Annotation Engine tools', () => {
       expect(annotation.referenceNumber).toBe(types.indexOf(type) + 1)
     }
     expect(engine.repository.getAll()).toHaveLength(16)
+    engine.destroy()
+  })
+
+  it('supports explicit image and ink Signature variants without fallback geometry', () => {
+    const engine = createAnnotationEngine(createOptions())
+    const image = engine.createAnnotation({
+      type: 'signature', pageIndex: 0, bounds: { x: 10, y: 20, width: 80, height: 30 },
+      content: {
+        text: '',
+        signature: { kind: 'image', image: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z2S8AAAAASUVORK5CYII=' }
+      }
+    })
+    const ink = engine.createAnnotation({
+      type: 'signature', pageIndex: 0, bounds: { x: 1, y: 2, width: 30, height: 20 },
+      strokes: [[1, 2, 10, 8], [15, 10, 30, 22]]
+    })
+    expect(JSON.parse(image.rendererState.serialized)).toMatchObject({
+      children: [{ className: 'Image', attrs: { src: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z2S8AAAAASUVORK5CYII=' } }]
+    })
+    expect(ink.content?.signature).toEqual({
+      kind: 'ink', strokes: [[1, 2, 10, 8], [15, 10, 30, 22]]
+    })
+    expect(JSON.parse(ink.rendererState.serialized).children).toHaveLength(2)
+    expect(() => engine.createAnnotation({
+      type: 'signature', pageIndex: 0, bounds: { x: 0, y: 0, width: 10, height: 10 }
+    })).toThrowError(expect.objectContaining<Partial<InkLayerError>>({ code: 'ANNOTATION_INVALID' }))
     engine.destroy()
   })
 
@@ -158,6 +223,29 @@ describe('Annotation Engine tools', () => {
     engine.destroy()
   })
 
+  it('emits selection origins and coordinates independent hover sources', () => {
+    const engine = createAnnotationEngine(createOptions())
+    const first = engine.createAnnotation({
+      type: 'rectangle', pageIndex: 0, bounds: { x: 0, y: 0, width: 10, height: 10 }
+    })
+    const second = engine.createAnnotation({
+      type: 'rectangle', pageIndex: 0, bounds: { x: 20, y: 0, width: 10, height: 10 }
+    })
+    const events: Array<{ type: string; source?: string | null; annotationId?: string | null; isClick?: boolean }> = []
+    engine.subscribe((event) => events.push(event))
+    engine.setSelection({ ids: [first.id], primaryId: first.id }, 'sidebar', true)
+    engine.setHoveredAnnotation(first.id, 'sidebar-pointer')
+    engine.setHoveredAnnotation(second.id, 'canvas')
+    engine.setHoveredAnnotation(null, 'canvas')
+    expect(events).toEqual([
+      expect.objectContaining({ type: 'selectionChanged', source: 'sidebar', isClick: true }),
+      expect.objectContaining({ type: 'hoverChanged', source: 'sidebar-pointer', annotationId: first.id }),
+      expect.objectContaining({ type: 'hoverChanged', source: 'canvas', annotationId: second.id }),
+      expect.objectContaining({ type: 'hoverChanged', source: 'sidebar-pointer', annotationId: first.id })
+    ])
+    engine.destroy()
+  })
+
   it('enforces owner permissions for edits and deletion', () => {
     const engine = createAnnotationEngine(createOptions({ permissions: { mode: 'owner-only' } }))
     const annotation = engine.createAnnotation({
@@ -214,6 +302,63 @@ describe('Annotation Engine tools', () => {
     await expect(result).resolves.toBeNull()
   })
 
+  it('edits existing FreeText through the input port and synchronizes renderer text', async () => {
+    const requestText = vi.fn(async () => ({ value: 'Edited text' }))
+    const engine = createAnnotationEngine(createOptions({ textInputProvider: { requestText } }))
+    const annotation = engine.createAnnotation({
+      type: 'free-text', pageIndex: 0,
+      bounds: { x: 10, y: 20, width: 100, height: 30 },
+      content: { text: 'Original text' }
+    })
+    const updated = await engine.requestEditText(annotation.id)
+    const snapshot = parseAndValidateKonvaSnapshot(updated?.rendererState.serialized ?? '{}').root
+    expect(requestText).toHaveBeenCalledWith(expect.objectContaining({
+      pageIndex: 0,
+      initialValue: 'Original text',
+      pageBounds: annotation.bounds
+    }))
+    expect(updated?.content?.text).toBe('Edited text')
+    expect(snapshot.children?.find((child) => child.className === 'Text')?.attrs['text'])
+      .toBe('Edited text')
+    engine.destroy()
+  })
+
+  it('keeps content and appearance snapshots canonical during semantic updates', () => {
+    const engine = createAnnotationEngine(createOptions())
+    const note = engine.createAnnotation({
+      type: 'note', pageIndex: 0, bounds: { x: 1, y: 2, width: 24, height: 24 },
+      content: { text: 'Before' }
+    })
+    const updated = engine.updateAnnotation(note.id, (current) => ({
+      ...current,
+      content: { text: 'After' },
+      appearance: {
+        ...current.appearance,
+        text: current.appearance.text === null
+          ? null
+          : { ...current.appearance.text, fontSize: 18 }
+      }
+    }))
+    const snapshot = parseAndValidateKonvaSnapshot(updated.rendererState.serialized).root
+    const text = snapshot.children?.find((child) => child.className === 'Text')
+    expect(text?.attrs).toMatchObject({ text: 'After', fontSize: 18 })
+    expect(() => engine.updateAnnotation(note.id, (current) => ({
+      ...current, bounds: { ...current.bounds, x: 99 }
+    }))).toThrowError(expect.objectContaining<Partial<InkLayerError>>({ code: 'ANNOTATION_INVALID' }))
+    engine.destroy()
+  })
+
+  it('rejects text editing for annotations without editable text surfaces', async () => {
+    const engine = createAnnotationEngine(createOptions())
+    const rectangle = engine.createAnnotation({
+      type: 'rectangle', pageIndex: 0, bounds: { x: 0, y: 0, width: 10, height: 10 }
+    })
+    await expect(engine.requestEditText(rectangle.id)).rejects.toMatchObject({
+      code: 'ANNOTATION_INVALID'
+    })
+    engine.destroy()
+  })
+
   it('applies comment permissions without changing exact renderer state', () => {
     const engine = createAnnotationEngine(createOptions({ permissions: { mode: 'owner-only' } }))
     const annotation = engine.createAnnotation({
@@ -234,6 +379,26 @@ describe('Annotation Engine tools', () => {
     const withoutComment = engine.deleteComment(annotation.id, 'comment-1')
     expect(withoutComment.comments).toEqual([])
     expect(withoutComment.rendererState).toEqual(rendererState)
+    engine.destroy()
+  })
+
+  it('restores deleted comments and annotations from bounded command history', () => {
+    const engine = createAnnotationEngine(createOptions())
+    const annotation = engine.createAnnotation({
+      type: 'rectangle', pageIndex: 0, bounds: { x: 0, y: 0, width: 10, height: 10 }
+    })
+    engine.addComment(annotation.id, {
+      id: 'comment-1', title: 'Alice', content: 'Restore me', date: null,
+      author: { id: 'alice', name: 'Alice' }
+    })
+    engine.deleteComment(annotation.id, 'comment-1')
+    expect(engine.canUndoDeletion()).toBe(true)
+    expect(engine.undoLastDeletion()?.comments).toMatchObject([{ id: 'comment-1' }])
+    engine.deleteAnnotation(annotation.id)
+    expect(engine.repository.getById(annotation.id)).toBeUndefined()
+    expect(engine.undoLastDeletion()).toMatchObject({ id: annotation.id })
+    expect(engine.repository.getById(annotation.id)).toBeDefined()
+    expect(engine.canUndoDeletion()).toBe(false)
     engine.destroy()
   })
 })

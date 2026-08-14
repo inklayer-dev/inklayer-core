@@ -44,20 +44,28 @@ import { parseAndValidateKonvaSnapshot } from '../renderer/konva/snapshot'
 import type {
   AnnotationEngineEvent,
   AnnotationEngineListener,
+  AnnotationHoverSource,
+  AnnotationSelectionSource,
   AnnotationEngineWarning,
   AnnotationTextSelection
 } from './events'
 import {
   createKonvaPainter,
-  type AnnotationAuthorLabelVisibility,
-  type AnnotationPageAttachment,
   type AnnotationPainter
 } from './internal/painter/konva-painter'
+import type {
+  AnnotationAuthorLabelVisibility,
+  AnnotationImageAsset,
+  AnnotationImageTool,
+  AnnotationInteractionTheme,
+  AnnotationPageAttachment
+} from './contracts'
 import {
   buildToolRendererState,
-  restyleToolRendererState
+  restyleToolRendererState,
+  updateToolRendererContent
 } from '../renderer/konva/snapshot-builder'
-import type { AnnotationTool } from './tools'
+import { ANNOTATION_TOOL_DEFINITIONS, type AnnotationCreationMode, type AnnotationTool } from './tools'
 
 /** Snapshot strategy used when existing repository data contains unsafe Konva JSON. */
 export type AnnotationSnapshotStrategy = 'strict' | 'lenient'
@@ -120,8 +128,14 @@ export interface AnnotationEngineOptions {
   freehandMergeDelayMs?: number
   /** Initial per-type tool appearance overrides applied over Core defaults. */
   defaultAppearances?: Partial<Record<AnnotationType, AnnotationAppearanceInput>>
+  /** Initial images prepared by application UI for Signature or Stamp placement. */
+  imageAssets?: Partial<Record<AnnotationImageTool, AnnotationImageAsset>>
+  /** Per-type override for one-shot versus continuous interactive creation. */
+  creationModes?: Partial<Record<AnnotationType, AnnotationCreationMode>>
   /** Initial author/reference Tag visibility; defaults to `auto`. */
   authorLabelVisibility?: AnnotationAuthorLabelVisibility
+  /** Canvas-only selection affordance theme; product UI remains framework-owned. */
+  interactionTheme?: AnnotationInteractionTheme
 }
 
 /** Public framework-independent Annotation Engine facade. */
@@ -136,8 +150,14 @@ export interface AnnotationEngine {
   detachPage(pageIndex: number): void
   /** Returns the current transient or persisted tool. */
   getTool(): AnnotationTool
+  /** Returns the effective interactive creation lifecycle for one persisted tool. */
+  getCreationMode(type: AnnotationType): AnnotationCreationMode
   /** Changes the current tool. */
   setTool(tool: AnnotationTool): void
+  /** Returns a detached image currently prepared for Signature or Stamp placement. */
+  getImageAsset(type: AnnotationImageTool): AnnotationImageAsset | null
+  /** Sets or clears the image used by subsequent pointer placement for one tool. */
+  setImageAsset(type: AnnotationImageTool, asset: AnnotationImageAsset | null): void
   /** Returns a detached complete appearance for a persisted annotation type. */
   getToolAppearance(type: AnnotationType): AnnotationAppearance
   /** Deeply updates the appearance used by future creations of one type. */
@@ -162,6 +182,10 @@ export interface AnnotationEngine {
   ): Annotation
   /** Opens the configured text input and creates FreeText on submit. */
   requestFreeText(pageIndex: number, bounds: AnnotationBounds): Promise<Annotation | null>
+  /** Opens the configured text input to edit an existing FreeText or Note. */
+  requestEditText(id: string): Promise<Annotation | null>
+  /** Replaces semantic content and synchronizes content-backed renderer nodes. */
+  updateContent(id: string, content: AnnotationContent | undefined): Annotation
   /** Updates semantic annotation data with canonical validation. */
   updateAnnotation(id: string, updater: AnnotationUpdater): Annotation
   /** Deeply updates one annotation appearance and its exact renderer snapshot. */
@@ -182,10 +206,14 @@ export interface AnnotationEngine {
   deleteComment(annotationId: string, commentId: string): Annotation
   /** Deletes one annotation when permitted. */
   deleteAnnotation(id: string): Annotation | undefined
+  /** Returns whether one deletion transaction can be restored. */
+  canUndoDeletion(): boolean
+  /** Restores the most recent deleted annotation or comment. */
+  undoLastDeletion(): Annotation | null
   /** Replaces repository selection. */
-  setSelection(selection: AnnotationSelection): void
+  setSelection(selection: AnnotationSelection, source?: AnnotationSelectionSource, isClick?: boolean): void
   /** Applies transient hover feedback. */
-  setHoveredAnnotation(id: string | null): void
+  setHoveredAnnotation(id: string | null, source?: AnnotationHoverSource): void
   /** Scrolls an attached annotation container into view and selects it. */
   navigateToAnnotation(id: string): boolean
   /** Renders one attached annotation overlay without edit affordances. */
@@ -223,6 +251,13 @@ class AnnotationEngineImpl implements AnnotationEngine {
   private permissions: AnnotationPermissions | undefined
   private tool: AnnotationTool = 'select'
   private readonly toolAppearances = new Map<AnnotationType, AnnotationAppearance>()
+  private readonly imageAssets = new Map<AnnotationImageTool, AnnotationImageAsset>()
+  private readonly creationModes = new Map<AnnotationType, AnnotationCreationMode>()
+  private readonly imageCursorColor: string
+  private readonly imageCursorGenerations = new Map<AnnotationImageTool, number>()
+  private readonly deletionHistory: DeletionTransaction[] = []
+  private readonly hoverBySource = new Map<AnnotationHoverSource, string>()
+  private pendingSelectionContext: { source: AnnotationSelectionSource; isClick: boolean } | null = null
   private destroyed = false
 
   /** Creates one fully instance-owned facade and validates existing snapshots. */
@@ -250,18 +285,34 @@ class AnnotationEngineImpl implements AnnotationEngine {
     this.textInputProvider = options.textInputProvider ?? createBrowserTextInputProvider()
     this.snapshotStrategy = options.snapshotStrategy ?? 'lenient'
     this.onWarning = options.onWarning
+    this.imageCursorColor = options.interactionTheme?.accentColor ?? '#1677ff'
     this.instanceId = this.idGenerator.next()
     for (const type of PERSISTED_ANNOTATION_TYPES) {
       this.toolAppearances.set(type, resolveAnnotationAppearance(type, options.defaultAppearances?.[type]))
+      const creationMode = options.creationModes?.[type]
+        ?? ANNOTATION_TOOL_DEFINITIONS[type].creationMode
+      if (creationMode !== 'once' && creationMode !== 'continuous') {
+        throw new InkLayerError('ANNOTATION_INVALID', `${type} creation mode is invalid.`, {
+          operation: 'createAnnotationEngine'
+        })
+      }
+      this.creationModes.set(type, creationMode)
+    }
+    for (const type of IMAGE_TOOLS) {
+      const asset = options.imageAssets?.[type]
+      if (asset !== undefined) this.imageAssets.set(type, normalizeImageAsset(type, asset))
     }
     this.painter = createKonvaPainter({
       instanceId: this.instanceId,
       ...(options.authorLabelVisibility === undefined
         ? {}
         : { authorLabelVisibility: options.authorLabelVisibility }),
+      ...(options.interactionTheme === undefined ? {} : { interactionTheme: options.interactionTheme }),
       getAnnotationsByPage: (pageIndex) => this.repository.getByPage(pageIndex)
         .filter((annotation) => !this.invalidSnapshotIds.has(annotation.id)),
-      onSelect: (annotationId) => this.setSelection({ ids: [annotationId], primaryId: annotationId }),
+      onSelect: (annotationId) => this.setSelection(
+        { ids: [annotationId], primaryId: annotationId }, 'canvas', true
+      ),
       onTransform: (annotationId, bounds, serialized) => {
         try {
           this.transformAnnotation(annotationId, { bounds, serialized })
@@ -278,27 +329,36 @@ class AnnotationEngineImpl implements AnnotationEngine {
       },
       getTool: () => this.tool,
       getAppearance: (type) => this.getToolAppearance(type),
+      getImageAsset: (type) => this.getImageAsset(type),
       canTransform: (annotation) => this.canTransform(annotation),
       onCreate: (gesture) => {
         try {
-          this.createAnnotation({
+          const annotation = this.createAnnotation({
             type: gesture.type,
             pageIndex: gesture.pageIndex,
             bounds: gesture.bounds,
+            ...(gesture.content === undefined ? {} : { content: gesture.content }),
             ...(gesture.points === undefined ? {} : { points: gesture.points }),
             ...(gesture.strokes === undefined ? {} : { strokes: gesture.strokes })
           })
+          this.completeInteractiveCreation(annotation)
         } catch (cause) {
           this.emit({ type: 'error', error: normalizeAnnotationEngineError(cause, 'pointerCreate') })
         }
       },
+      onImageAssetRequired: (tool) => this.emit({ type: 'imageAssetRequired', tool }),
       onRequestFreeText: (pageIndex, bounds) => {
         void this.requestFreeText(pageIndex, bounds).catch((cause: unknown) => {
           this.emit({ type: 'error', error: normalizeAnnotationEngineError(cause, 'requestFreeText') })
         })
       },
-      onClearSelection: () => this.setSelection({ ids: [] }),
-      onHover: (annotationId) => this.setHoveredAnnotation(annotationId),
+      onRequestEditText: (annotationId) => {
+        void this.requestEditText(annotationId).catch((cause: unknown) => {
+          this.emit({ type: 'error', error: normalizeAnnotationEngineError(cause, 'requestEditText') })
+        })
+      },
+      onClearSelection: () => this.setSelection({ ids: [] }, 'canvas', true),
+      onHover: (annotationId) => this.setHoveredAnnotation(annotationId, 'canvas'),
       ...(options.freehandMergeDelayMs === undefined
         ? {}
         : { freehandMergeDelayMs: options.freehandMergeDelayMs })
@@ -307,6 +367,12 @@ class AnnotationEngineImpl implements AnnotationEngine {
     this.root.classList.add('inklayer-engine')
     this.root.dataset['inklayerInstance'] = this.instanceId
     this.root.dataset['inklayerTool'] = this.tool
+    this.syncImageAssetState()
+    for (const type of IMAGE_TOOLS) {
+      const asset = this.imageAssets.get(type)
+      if (asset !== undefined) this.updateImageCursor(type, asset)
+    }
+    this.attachKeyboardInteractions()
     this.unsubscribeRepository = this.repository.subscribe((event) => this.handleRepositoryEvent(event))
   }
 
@@ -335,14 +401,110 @@ class AnnotationEngineImpl implements AnnotationEngine {
     return this.tool
   }
 
+  /** Returns the configured once-or-continuous lifecycle for one interaction tool. */
+  public getCreationMode(type: AnnotationType): AnnotationCreationMode {
+    this.assertActive('getCreationMode')
+    return this.creationModes.get(type) ?? ANNOTATION_TOOL_DEFINITIONS[type].creationMode
+  }
+
   /** Changes the current tool and root-scoped state. */
   public setTool(tool: AnnotationTool): void {
     this.assertActive('setTool')
     if (this.tool === tool) return
     this.tool = tool
     this.root.dataset['inklayerTool'] = tool
+    this.syncImageAssetState()
     this.painter.setTool(tool)
     this.emit({ type: 'toolChanged', tool })
+  }
+
+  /** Returns the current detached pointer-placement image for one asset tool. */
+  public getImageAsset(type: AnnotationImageTool): AnnotationImageAsset | null {
+    this.assertActive('getImageAsset')
+    const asset = this.imageAssets.get(type)
+    return asset === undefined ? null : { ...asset }
+  }
+
+  /** Replaces or clears the image used by future pointer placements. */
+  public setImageAsset(type: AnnotationImageTool, asset: AnnotationImageAsset | null): void {
+    this.assertActive('setImageAsset')
+    if (asset === null) this.imageAssets.delete(type)
+    else this.imageAssets.set(type, normalizeImageAsset(type, asset))
+    this.syncImageAssetState()
+    this.updateImageCursor(type, asset)
+  }
+
+  /** Exposes whether the active image tool can place immediately for Core CSS cursors. */
+  private syncImageAssetState(): void {
+    if (this.tool === 'signature' || this.tool === 'stamp') {
+      this.root.dataset['inklayerImageAsset'] = this.imageAssets.has(this.tool) ? 'ready' : 'missing'
+    } else {
+      delete this.root.dataset['inklayerImageAsset']
+    }
+  }
+
+  /** Builds an instance-scoped thumbnail cursor without leaking product UI state. */
+  private updateImageCursor(type: AnnotationImageTool, asset: AnnotationImageAsset | null): void {
+    const generation = (this.imageCursorGenerations.get(type) ?? 0) + 1
+    this.imageCursorGenerations.set(type, generation)
+    const style = this.root.style
+    if (style === undefined) return
+    const property = `--inklayer-cursor-${type}-asset`
+    if (asset === null) {
+      style.removeProperty(property)
+      return
+    }
+    const document = this.root.ownerDocument
+    if (document === null || document === undefined) return
+    const image = document.createElement('img')
+    image.onload = () => {
+      if (this.destroyed || generation !== this.imageCursorGenerations.get(type)) return
+      const naturalWidth = image.naturalWidth || asset.width
+      const naturalHeight = image.naturalHeight || asset.height
+      const scale = Math.min(1, 88 / Math.max(naturalWidth, naturalHeight))
+      const width = Math.max(12, Math.round(naturalWidth * scale))
+      const height = Math.max(12, Math.round(naturalHeight * scale))
+      const padding = 8
+      const canvas = document.createElement('canvas')
+      canvas.width = width + padding * 2
+      canvas.height = height + padding * 2
+      const context = canvas.getContext('2d')
+      if (context === null) return
+      context.shadowColor = 'rgba(0, 0, 0, 0.25)'
+      context.shadowBlur = 8
+      context.shadowOffsetY = 2
+      context.fillStyle = 'rgba(255, 255, 255, 0.92)'
+      context.fillRect(padding, padding, width, height)
+      context.shadowColor = 'transparent'
+      context.globalAlpha = 0.92
+      context.drawImage(image, padding, padding, width, height)
+      context.globalAlpha = 1
+      context.strokeStyle = this.imageCursorColor
+      context.lineWidth = 2
+      context.strokeRect(padding + 1, padding + 1, width - 2, height - 2)
+      const centerX = Math.round(canvas.width / 2)
+      const centerY = Math.round(canvas.height / 2)
+      context.fillStyle = 'rgba(255, 255, 255, 0.86)'
+      context.beginPath()
+      context.arc(centerX, centerY, 7, 0, Math.PI * 2)
+      context.fill()
+      context.fillStyle = this.imageCursorColor
+      context.beginPath()
+      context.arc(centerX, centerY, 4, 0, Math.PI * 2)
+      context.fill()
+      style.setProperty(
+        property,
+        `url("${canvas.toDataURL('image/png')}") ${centerX} ${centerY}, copy`
+      )
+    }
+    image.src = asset.image
+  }
+
+  /** Selects a user-created annotation and applies its configured tool lifecycle. */
+  private completeInteractiveCreation(annotation: Annotation): Annotation {
+    if (this.getCreationMode(annotation.type) === 'once') this.setTool('select')
+    this.setSelection({ ids: [annotation.id], primaryId: annotation.id }, 'canvas', true)
+    return annotation
   }
 
   /** Returns a detached complete tool appearance. */
@@ -410,6 +572,13 @@ class AnnotationEngineImpl implements AnnotationEngine {
         operation: 'createAnnotation', pageIndex: input.pageIndex
       })
     }
+    const content = normalizeCreationContent(input)
+    if (input.type === 'signature' && content?.signature === undefined) {
+      throw new InkLayerError('ANNOTATION_INVALID', 'Signature creation requires image or ink content.', {
+        operation: 'createAnnotation', pageIndex: input.pageIndex
+      })
+    }
+    validateImageContent(input.type, content, input.pageIndex)
     const id = input.id ?? this.idGenerator.next()
     const author = this.currentUser ?? { id: 'null', name: 'Anonymous' }
     const appearance = mergeAnnotationAppearance(
@@ -421,7 +590,7 @@ class AnnotationEngineImpl implements AnnotationEngine {
       id,
       type: input.type,
       bounds: input.bounds,
-      ...(input.content === undefined ? {} : { content: input.content }),
+      ...(content === undefined ? {} : { content }),
       appearance,
       ...(input.points === undefined ? {} : { points: input.points }),
       ...(input.strokes === undefined ? {} : { strokes: input.strokes }),
@@ -440,7 +609,7 @@ class AnnotationEngineImpl implements AnnotationEngine {
       createdAt: this.clock.now(),
       native: false,
       rendererState,
-      ...(input.content === undefined ? {} : { content: input.content }),
+      ...(content === undefined ? {} : { content }),
       appearance
     })
     annotation = assignAnnotationReferenceNumber(annotation, this.repository.getAll())
@@ -461,14 +630,14 @@ class AnnotationEngineImpl implements AnnotationEngine {
       })
     }
     this.emit({ type: 'textSelected', selection: cloneTextSelection(selection) })
-    return this.createAnnotation({
+    return this.completeInteractiveCreation(this.createAnnotation({
       type,
       pageIndex: selection.pageIndex,
       bounds: unionBounds(selection.rects),
       textRects: selection.rects,
       content: { text: '', selectedText: selection.text },
       ...(appearance === undefined ? {} : { appearance })
-    })
+    }))
   }
 
   /** Requests instance-owned text input and creates FreeText after submission. */
@@ -489,12 +658,54 @@ class AnnotationEngineImpl implements AnnotationEngine {
         signal: controller.signal
       })
       if (result.value === null || this.destroyed) return null
-      return this.createAnnotation({
+      return this.completeInteractiveCreation(this.createAnnotation({
         type: 'free-text', pageIndex, bounds: pageBounds, content: { text: result.value }
-      })
+      }))
     } finally {
       this.inputControllers.delete(controller)
     }
+  }
+
+  /** Requests instance-owned text input and updates an existing text annotation. */
+  public async requestEditText(id: string): Promise<Annotation | null> {
+    this.assertActive('requestEditText')
+    const annotation = this.requireAnnotation(id, 'requestEditText')
+    this.requirePermission('annotation.edit', annotation)
+    if (annotation.type !== 'free-text' && annotation.type !== 'note') {
+      throw new InkLayerError('ANNOTATION_INVALID', 'Only FreeText and Note support direct text editing.', {
+        operation: 'requestEditText', annotationId: id, pageIndex: annotation.pageIndex
+      })
+    }
+    const attachment = this.pageAttachments.get(annotation.pageIndex)
+    const scale = attachment?.scale ?? 1
+    const controller = new AbortController()
+    this.inputControllers.add(controller)
+    try {
+      const result = await this.textInputProvider.requestText({
+        root: attachment?.container ?? this.root,
+        pageIndex: annotation.pageIndex,
+        pageBounds: { ...annotation.bounds },
+        scale,
+        bounds: scaleBounds(annotation.bounds, scale),
+        initialValue: annotation.content?.text ?? '',
+        signal: controller.signal
+      })
+      if (result.value === null || this.destroyed) return null
+      return this.updateContent(id, { ...(annotation.content ?? { text: '' }), text: result.value })
+    } finally {
+      this.inputControllers.delete(controller)
+    }
+  }
+
+  /** Replaces semantic content and keeps the exact renderer snapshot in sync. */
+  public updateContent(id: string, content: AnnotationContent | undefined): Annotation {
+    this.assertActive('updateContent')
+    return this.updateAnnotation(id, (annotation) => {
+      if (content !== undefined) return { ...annotation, content }
+      const withoutContent: Partial<Annotation> = { ...annotation }
+      delete withoutContent.content
+      return withoutContent as Annotation
+    })
   }
 
   /** Applies one permission-checked semantic update. */
@@ -503,13 +714,34 @@ class AnnotationEngineImpl implements AnnotationEngine {
     const current = this.requireAnnotation(id, 'updateAnnotation')
     this.requirePermission('annotation.edit', current)
     const updated = updater(current)
-    const candidate = parseAnnotation({
+    let candidate = parseAnnotation({
       ...updated,
       updatedAt: this.clock.now(),
       ...(current.referenceNumber === undefined
         ? { referenceNumber: undefined }
         : { referenceNumber: current.referenceNumber })
     })
+    assertUpdateInvariants(current, candidate)
+    if (!structurallyEqual(current.appearance, candidate.appearance)) {
+      candidate = {
+        ...candidate,
+        rendererState: restyleToolRendererState(
+          current.rendererState,
+          current.type,
+          candidate.appearance
+        )
+      }
+    }
+    if (!structurallyEqual(current.content, candidate.content)) {
+      candidate = {
+        ...candidate,
+        rendererState: updateToolRendererContent(
+          candidate.rendererState,
+          candidate.type,
+          candidate.content
+        )
+      }
+    }
     this.validateSnapshot(candidate)
     return this.repository.update(id, () => candidate)
   }
@@ -607,11 +839,14 @@ class AnnotationEngineImpl implements AnnotationEngine {
     const annotation = this.requireAnnotation(annotationId, 'deleteComment')
     const comment = this.requireComment(annotation, commentId, 'deleteComment')
     this.requirePermission('comment.delete', annotation, comment)
-    return this.repository.update(annotationId, (current) => parseAnnotation({
+    const commentIndex = annotation.comments.findIndex((entry) => entry.id === commentId)
+    const updated = this.repository.update(annotationId, (current) => parseAnnotation({
       ...current,
       comments: current.comments.filter((entry) => entry.id !== commentId),
       updatedAt: this.clock.now()
     }))
+    this.pushDeletion({ kind: 'comment', annotationId, comment, index: commentIndex })
+    return updated
   }
 
   /** Deletes one permission-checked annotation. */
@@ -620,20 +855,73 @@ class AnnotationEngineImpl implements AnnotationEngine {
     const annotation = this.repository.getById(id)
     if (annotation === undefined) return undefined
     this.requirePermission('annotation.delete', annotation)
-    return this.repository.remove(id)
+    const removed = this.repository.remove(id)
+    if (removed !== undefined) this.pushDeletion({ kind: 'annotation', annotation: removed })
+    return removed
+  }
+
+  /** Returns whether the bounded deletion history contains a transaction. */
+  public canUndoDeletion(): boolean {
+    this.assertActive('canUndoDeletion')
+    return this.deletionHistory.length > 0
+  }
+
+  /** Restores the most recent deletion while preserving canonical identity and ordering. */
+  public undoLastDeletion(): Annotation | null {
+    this.assertActive('undoLastDeletion')
+    const transaction = this.deletionHistory.pop()
+    if (transaction === undefined) return null
+    if (transaction.kind === 'annotation') {
+      if (this.repository.getById(transaction.annotation.id) !== undefined) return null
+      this.repository.add(transaction.annotation)
+      return cloneAnnotation(transaction.annotation)
+    }
+    const annotation = this.repository.getById(transaction.annotationId)
+    if (annotation === undefined || annotation.comments.some((entry) => entry.id === transaction.comment.id)) {
+      return null
+    }
+    return this.repository.update(transaction.annotationId, (current) => {
+      const comments = [...current.comments]
+      comments.splice(Math.min(transaction.index, comments.length), 0, transaction.comment)
+      return parseAnnotation({ ...current, comments, updatedAt: this.clock.now() })
+    })
   }
 
   /** Replaces canonical selection after repository validation. */
-  public setSelection(selection: AnnotationSelection): void {
+  public setSelection(
+    selection: AnnotationSelection,
+    source: AnnotationSelectionSource = 'programmatic',
+    isClick = false
+  ): void {
     this.assertActive('setSelection')
-    this.repository.setSelection(selection)
+    this.pendingSelectionContext = { source, isClick }
+    try {
+      this.repository.setSelection(selection)
+    } finally {
+      this.pendingSelectionContext = null
+    }
   }
 
-  /** Applies transient renderer hover state. */
-  public setHoveredAnnotation(id: string | null): void {
+  /** Coordinates transient hover channels without allowing one source to clear another. */
+  public setHoveredAnnotation(
+    id: string | null,
+    source: AnnotationHoverSource = 'programmatic'
+  ): void {
     this.assertActive('setHoveredAnnotation')
-    if (id !== null && this.repository.getById(id) === undefined) return
-    this.painter.setHovered(id)
+    if (id !== null && this.repository.getById(id) === undefined) {
+      throw new InkLayerError('ANNOTATION_INVALID', 'Hovered annotation does not exist.', {
+        operation: 'setHoveredAnnotation', annotationId: id
+      })
+    }
+    this.hoverBySource.delete(source)
+    if (id !== null) this.hoverBySource.set(source, id)
+    const effective = [...this.hoverBySource.entries()].at(-1)
+    this.painter.setHovered(effective?.[1] ?? null)
+    this.emit({
+      type: 'hoverChanged',
+      annotationId: effective?.[1] ?? null,
+      source: effective?.[0] ?? null
+    })
   }
 
   /** Navigates to an attached page and selects one annotation. */
@@ -644,7 +932,7 @@ class AnnotationEngineImpl implements AnnotationEngine {
     const container = this.pageAttachments.get(annotation.pageIndex)?.container
     if (container === undefined) return false
     container.scrollIntoView({ block: 'center', inline: 'nearest' })
-    this.setSelection({ ids: [id], primaryId: id })
+    this.setSelection({ ids: [id], primaryId: id }, 'navigation')
     return true
   }
 
@@ -661,6 +949,10 @@ class AnnotationEngineImpl implements AnnotationEngine {
   public destroy(): void {
     if (this.destroyed) return
     this.destroyed = true
+    for (const type of IMAGE_TOOLS) {
+      this.imageCursorGenerations.set(type, (this.imageCursorGenerations.get(type) ?? 0) + 1)
+    }
+    this.detachKeyboardInteractions()
     for (const controller of this.inputControllers) controller.abort()
     this.inputControllers.clear()
     this.unsubscribeRepository()
@@ -670,10 +962,61 @@ class AnnotationEngineImpl implements AnnotationEngine {
     if (this.root.dataset['inklayerInstance'] === this.instanceId) {
       delete this.root.dataset['inklayerInstance']
       delete this.root.dataset['inklayerTool']
+      delete this.root.dataset['inklayerImageAsset']
+      this.root.style?.removeProperty('--inklayer-cursor-signature-asset')
+      this.root.style?.removeProperty('--inklayer-cursor-stamp-asset')
       this.root.classList.remove('inklayer-engine')
     }
     this.emit({ type: 'destroyed' })
     this.listeners.clear()
+    this.deletionHistory.splice(0)
+  }
+
+  /** Keeps a bounded, framework-neutral history of destructive commands. */
+  private pushDeletion(transaction: DeletionTransaction): void {
+    this.deletionHistory.push(structuredClone(transaction))
+    if (this.deletionHistory.length > 100) this.deletionHistory.shift()
+  }
+
+  /** Registers root-scoped keyboard commands when the host implements EventTarget. */
+  private attachKeyboardInteractions(): void {
+    if (typeof this.root.addEventListener !== 'function') return
+    if (typeof this.root.setAttribute === 'function') {
+      if (!this.root.hasAttribute('tabindex')) this.root.setAttribute('tabindex', '0')
+      this.root.setAttribute('role', 'application')
+      this.root.setAttribute('aria-label', 'PDF annotation canvas')
+    }
+    this.root.addEventListener('keydown', this.handleRootKeyDown)
+    this.root.addEventListener('keyup', this.handleRootKeyUp)
+  }
+
+  /** Releases root keyboard handlers. */
+  private detachKeyboardInteractions(): void {
+    if (typeof this.root.removeEventListener !== 'function') return
+    this.root.removeEventListener('keydown', this.handleRootKeyDown)
+    this.root.removeEventListener('keyup', this.handleRootKeyUp)
+  }
+
+  private readonly handleRootKeyDown = (event: KeyboardEvent): void => {
+    if (isEditableEventTarget(event.target)) return
+    if (this.painter.handleKeyboard(event.key)) {
+      event.preventDefault()
+    } else if (event.key === 'Escape') {
+      this.setTool('select')
+      this.setSelection({ ids: [] }, 'canvas')
+      event.preventDefault()
+    } else if (event.key === 'Delete' || event.key === 'Backspace') {
+      for (const id of this.repository.getSelection().ids) this.deleteAnnotation(id)
+      event.preventDefault()
+    } else if (event.key === 'Alt' || event.key === 'Meta') {
+      this.painter.setAuthorLabelShortcutVisible(true)
+    }
+  }
+
+  private readonly handleRootKeyUp = (event: KeyboardEvent): void => {
+    if (event.key === 'Alt' || event.key === 'Meta') {
+      this.painter.setAuthorLabelShortcutVisible(false)
+    }
   }
 
   /** Maps repository mutations to rendering and public canonical events. */
@@ -694,6 +1037,9 @@ class AnnotationEngineImpl implements AnnotationEngine {
         this.emit({ type: 'annotationUpdated', annotation: event.annotation, previous: event.previous })
         break
       case 'remove':
+        for (const [source, id] of this.hoverBySource) {
+          if (id === event.annotation.id) this.hoverBySource.delete(source)
+        }
         this.invalidSnapshotIds.delete(event.annotation.id)
         this.painter.remove(event.annotation.id, event.annotation.pageIndex)
         this.emit({ type: 'annotationDeleted', annotation: event.annotation })
@@ -706,7 +1052,12 @@ class AnnotationEngineImpl implements AnnotationEngine {
         break
       case 'selection':
         this.painter.setSelection(event.selection.ids)
-        this.emit({ type: 'selectionChanged', selection: event.selection })
+        this.emit({
+          type: 'selectionChanged',
+          selection: event.selection,
+          source: this.pendingSelectionContext?.source ?? 'repository',
+          isClick: this.pendingSelectionContext?.isClick ?? false
+        })
         break
       case 'destroy':
         break
@@ -851,6 +1202,18 @@ const PERSISTED_ANNOTATION_TYPES: readonly AnnotationType[] = [
   'polygon', 'polyline', 'cloud'
 ]
 
+const IMAGE_TOOLS: readonly AnnotationImageTool[] = ['signature', 'stamp']
+
+type DeletionTransaction =
+  | { kind: 'annotation'; annotation: Annotation }
+  | { kind: 'comment'; annotationId: string; comment: AnnotationComment; index: number }
+
+/** Excludes text-entry controls from global annotation keyboard commands. */
+function isEditableEventTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false
+  return target.matches('input, textarea, select, [contenteditable="true"]')
+}
+
 /** Returns the union of non-empty selection rectangles. */
 function unionBounds(rects: readonly AnnotationBounds[]): AnnotationBounds {
   const first = rects[0]
@@ -896,10 +1259,11 @@ function validateCreationInput(input: CreateAnnotationInput): void {
   }
   if (input.strokes !== undefined) {
     const pointCount = input.strokes.reduce((count, stroke) => count + stroke.length, 0)
-    if (input.type !== 'freehand' || input.strokes.length === 0 || pointCount > 100_000
+    if ((input.type !== 'freehand' && input.type !== 'signature')
+      || input.strokes.length === 0 || pointCount > 100_000
       || input.strokes.some((stroke) => stroke.length < 4 || stroke.length % 2 !== 0
         || stroke.some((point) => !Number.isFinite(point)))) {
-      throw new InkLayerError('ANNOTATION_INVALID', 'Freehand strokes are invalid or oversized.', {
+      throw new InkLayerError('ANNOTATION_INVALID', 'Annotation strokes are invalid or oversized.', {
         operation: 'createAnnotation', pageIndex: input.pageIndex
       })
     }
@@ -910,6 +1274,69 @@ function validateCreationInput(input: CreateAnnotationInput): void {
     })
   }
   input.textRects?.forEach(validateBounds)
+}
+
+/** Normalizes gesture geometry into the explicit persisted Signature model. */
+function normalizeCreationContent(input: CreateAnnotationInput): AnnotationContent | undefined {
+  if (input.type !== 'signature' || input.content?.signature !== undefined) return input.content
+  const strokes = input.strokes ?? (input.points === undefined ? undefined : [input.points])
+  if (strokes === undefined) return input.content
+  return {
+    ...(input.content ?? { text: '' }),
+    signature: { kind: 'ink', strokes: strokes.map((stroke) => [...stroke]) }
+  }
+}
+
+/** Restricts image-backed V1 annotations to browser/PDF-export-compatible payloads. */
+function validateImageContent(
+  type: AnnotationType,
+  content: AnnotationContent | undefined,
+  pageIndex: number
+): void {
+  const source = type === 'stamp'
+    ? content?.image
+    : type === 'signature' && content?.signature?.kind === 'image'
+      ? content.signature.image
+      : undefined
+  if (source === undefined) return
+  validateImageSource(source, pageIndex, 'createAnnotation')
+}
+
+/** Validates and detaches one application-provided image placement asset. */
+function normalizeImageAsset(
+  type: AnnotationImageTool,
+  asset: AnnotationImageAsset
+): AnnotationImageAsset {
+  validateImageSource(asset.image, undefined, 'setImageAsset')
+  if (!Number.isFinite(asset.width) || !Number.isFinite(asset.height)
+    || asset.width <= 0 || asset.height <= 0
+    || asset.width > 1_000_000 || asset.height > 1_000_000) {
+    throw new InkLayerError('ANNOTATION_INVALID', `${type} image dimensions are invalid.`, {
+      operation: 'setImageAsset'
+    })
+  }
+  if (asset.text !== undefined && asset.text.length > 10_000) {
+    throw new InkLayerError('ANNOTATION_INVALID', `${type} image text is oversized.`, {
+      operation: 'setImageAsset'
+    })
+  }
+  return { ...asset }
+}
+
+/** Restricts image payloads to the browser and PDF-export V1 raster contract. */
+function validateImageSource(
+  source: string,
+  pageIndex: number | undefined,
+  operation: string
+): void {
+  if (!/^data:image\/(?:png|jpeg);base64,[A-Za-z0-9+/=\s]+$/.test(source)
+    || source.length > 10_000_000) {
+    throw new InkLayerError(
+      'ANNOTATION_INVALID',
+      'Image annotations require a PNG or JPEG data URL no larger than 10MB.',
+      { operation, ...(pageIndex === undefined ? {} : { pageIndex }) }
+    )
+  }
 }
 
 /** Clones normalized text selection containers. */
@@ -925,6 +1352,29 @@ function scaleBounds(bounds: AnnotationBounds, scale: number): AnnotationBounds 
     width: bounds.width * scale,
     height: bounds.height * scale
   }
+}
+
+/** Rejects generic updates that bypass canonical geometry and identity commands. */
+function assertUpdateInvariants(current: Annotation, candidate: Annotation): void {
+  const unchanged = current.id === candidate.id
+    && current.schemaVersion === candidate.schemaVersion
+    && current.type === candidate.type
+    && current.pageIndex === candidate.pageIndex
+    && current.coordinateSpace === candidate.coordinateSpace
+    && structurallyEqual(current.bounds, candidate.bounds)
+    && structurallyEqual(current.rendererState, candidate.rendererState)
+  if (!unchanged) {
+    throw new InkLayerError(
+      'ANNOTATION_INVALID',
+      'Generic annotation updates cannot change identity, type, page, bounds, coordinate space, or renderer state.',
+      { operation: 'updateAnnotation', annotationId: current.id, pageIndex: current.pageIndex }
+    )
+  }
+}
+
+/** Compares detached canonical JSON-compatible values without retaining references. */
+function structurallyEqual(first: unknown, second: unknown): boolean {
+  return JSON.stringify(first) === JSON.stringify(second)
 }
 
 /** Clones engine event containers before listener delivery. */
@@ -946,12 +1396,18 @@ function cloneEngineEvent(event: AnnotationEngineEvent): AnnotationEngineEvent {
         selection: {
           ids: [...event.selection.ids],
           ...(event.selection.primaryId === undefined ? {} : { primaryId: event.selection.primaryId })
-        }
+        },
+        source: event.source,
+        isClick: event.isClick
       }
+    case 'hoverChanged':
+      return { ...event }
     case 'textSelected':
       return { type: 'textSelected', selection: cloneTextSelection(event.selection) }
     case 'toolChanged':
       return { type: 'toolChanged', tool: event.tool }
+    case 'imageAssetRequired':
+      return { type: 'imageAssetRequired', tool: event.tool }
     case 'warning':
       return { type: 'warning', warning: { ...event.warning } }
     case 'error':

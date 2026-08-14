@@ -195,6 +195,10 @@ const engine = createAnnotationEngine({
   currentUser: { id: 'alice', name: 'Alice' },
   freehandMergeDelayMs: 1000,
   authorLabelVisibility: 'auto',
+  creationModes: {
+    rectangle: 'once',
+    highlight: 'continuous'
+  },
   defaultAppearances: {
     highlight: { fill: { color: '#b4fa56', opacity: 0.5 } },
     rectangle: { stroke: { color: '#ff6b6b', width: 2 } }
@@ -215,6 +219,13 @@ const annotation = engine.createAnnotation({
 engine.setSelection({ ids: [annotation.id], primaryId: annotation.id })
 engine.updateAppearance(annotation.id, { stroke: { width: 5 } })
 engine.setAuthorLabelVisibility('always')
+engine.setImageAsset('signature', {
+  image: signaturePngDataUrl,
+  width: 180,
+  height: 60,
+  text: 'Alice signature'
+})
+engine.setTool('signature') // the next page click centers and places the image
 engine.destroy()
 ```
 
@@ -237,8 +248,21 @@ All 16 persisted types are supported. `text-select` routes pointer input to the
 PDF TextLayer while `select` enables existing-annotation manipulation.
 Highlight/underline/strikeout accept
 normalized text selection through `createTextMarkup`. FreeText uses
-`requestFreeText` and the configured `TextInputProvider`. Stamp creation requires
-image content. Selection is transient and never persisted as an annotation type.
+`requestFreeText` and the configured `TextInputProvider`. Signature and Stamp
+pointer placement use `setImageAsset`; application UI creates/selects the PNG or
+JPEG data URL, while Core owns page placement, transforms, rendering, print and
+export. If an image tool has no prepared asset, clicking emits
+`imageAssetRequired` so an adapter can open its picker. Selection is transient
+and never persisted as an annotation type.
+
+Every successful user interaction selects its newly created annotation, so an
+`auto` author Tag behaves consistently across shapes, text markup, FreeText,
+Signature and Stamp. Core then applies the type's creation mode: shape, ink,
+text, image and path tools default to `once` and return to Select; Highlight,
+Underline and Strikeout default to `continuous` and remain active. Override a
+default through `creationModes`. Direct `createAnnotation()` calls remain
+side-effect free for imports and batch work; `createTextMarkup()` and
+`requestFreeText()` are interaction commands and therefore apply this lifecycle.
 
 Comments, workflow status, updates, transforms, deletes, navigation, hover,
 selection, permissions, and typed events are facade operations. The repository
@@ -253,7 +277,9 @@ markup. Pointer feedback is continuous and constrained to the page.
 
 Successive Freehand strokes on the same attached page are merged into one
 annotation until `freehandMergeDelayMs` elapses; each stroke remains independent
-in Konva state and PDF `InkList` import/export. Free-highlight snaps paths within
+in Konva state and PDF `InkList` import/export. Its once-only selection/tool
+transition happens after that merge interval, not after the first stroke.
+Free-highlight snaps paths within
 two degrees of horizontal or vertical on pointer release. Polygon, Polyline, and
 Cloud previews remain open while points are collected; Polygon and Cloud close
 only when the double-click/double-tap commit succeeds.

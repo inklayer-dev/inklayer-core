@@ -9,6 +9,11 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { InkLayerError } from '../../../../src/domain/errors'
 import { parseAndValidateKonvaSnapshot } from '../../../../src/renderer/konva/snapshot'
+import {
+  buildToolRendererState,
+  restyleToolRendererState
+} from '../../../../src/renderer/konva/snapshot-builder'
+import { resolveAnnotationAppearance } from '../../../../src/domain/appearance'
 
 /** Reads the maintained rectangle snapshot fixture. */
 async function readSnapshotFixture(): Promise<string> {
@@ -64,5 +69,25 @@ describe('Konva snapshot validation', () => {
     }), { maxDataUrlLength: 5 })).toThrowError(
       expect.objectContaining<Partial<InkLayerError>>({ code: 'KONVA_SNAPSHOT_INVALID' })
     )
+  })
+
+  it('never paints a browser-only border around image Signature or Stamp nodes', () => {
+    const image = 'data:image/png;base64,AA=='
+    for (const [type, content] of [
+      ['signature', { text: 'Signature', signature: { kind: 'image', image } }],
+      ['stamp', { text: 'Stamp', image }]
+    ] as const) {
+      const appearance = resolveAnnotationAppearance(type)
+      const state = buildToolRendererState({
+        id: type, type, bounds: { x: 1, y: 2, width: 30, height: 20 }, content, appearance
+      })
+      const restyled = restyleToolRendererState(state, type, appearance)
+      for (const rendererState of [state, restyled]) {
+        const child = parseAndValidateKonvaSnapshot(rendererState.serialized).root.children?.[0]
+        expect(child?.className).toBe('Image')
+        expect(child?.attrs['stroke']).toBeUndefined()
+        expect(child?.attrs['strokeWidth']).toBeUndefined()
+      }
+    }
   })
 })

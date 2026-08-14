@@ -35,11 +35,22 @@ Override them on one engine root to avoid affecting another instance.
 | `--inklayer-text-input-foreground` | `#111827` | FreeText editor text |
 | `--inklayer-text-input-focus-ring` | `rgb(22 119 255 / 25%)` | Keyboard focus indicator |
 | `--inklayer-cursor-select` | `default` | Existing-annotation selection cursor |
-| `--inklayer-cursor-text-markup` | `text` | Highlight/underline/strikeout cursor |
-| `--inklayer-cursor-draw` | `crosshair` | Shape, line, ink, and path cursors |
+| `--inklayer-cursor-text-markup` | embedded SVG | Highlight/underline/strikeout cursor |
+| `--inklayer-cursor-shape` | `crosshair` | Shape, line, and path cursors |
+| `--inklayer-cursor-freehand` | embedded SVG | Freehand pen cursor |
+| `--inklayer-cursor-free-highlight` | embedded SVG | Free-highlight marker cursor |
 | `--inklayer-cursor-note` | `copy` | Note placement cursor |
 | `--inklayer-cursor-free-text` | `text` | FreeText placement cursor |
-| `--inklayer-cursor-stamp` | `crosshair` | Stamp placement cursor |
+| `--inklayer-cursor-signature` | `copy` | Prepared Signature image placement cursor |
+| `--inklayer-cursor-stamp` | `copy` | Prepared Stamp image placement cursor |
+| `--inklayer-cursor-image-missing` | `not-allowed` | Signature/Stamp cursor before an image is prepared |
+
+After `setImageAsset`, Core creates the instance-local
+`--inklayer-cursor-signature-asset` or `--inklayer-cursor-stamp-asset` runtime
+value. It is a bounded thumbnail of the actual image with an outline, shadow and
+center hotspot; it is removed when the asset is cleared or the engine is
+destroyed. These two generated variables are runtime state rather than consumer
+configuration.
 
 Core CSS styles only renderer wrappers, Konva placement, author labels,
 temporary FreeText input, cursor state, pointer routing, and stacking. Toolbars,
@@ -48,6 +59,8 @@ belong to consumers. `.inklayer-page-flow` is a stable styling hook, but Core
 does not prescribe scrollbar width, colors, hover treatment, or platform theme.
 The `text-select` tool disables page Canvas hit routing so the PDF.js TextLayer
 can create a native browser selection; `select` restores annotation manipulation.
+Core chooses cursor semantics for each interaction mode; consumers may theme
+the published variables without reimplementing the tool-to-cursor mapping.
 
 PDF.js TextLayer implementation variables such as `--font-height`, `--scale-x`,
 and `--text-scale-factor` may appear below `.inklayer-text-layer`. They are

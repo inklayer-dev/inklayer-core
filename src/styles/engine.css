@@ -21,11 +21,15 @@
   --inklayer-text-input-foreground: #111827;
   --inklayer-text-input-focus-ring: rgb(22 119 255 / 25%);
   --inklayer-cursor-select: default;
-  --inklayer-cursor-text-markup: text;
-  --inklayer-cursor-draw: crosshair;
+  --inklayer-cursor-text-markup: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='29' height='32' viewBox='0 0 29 32'%3E%3Cpath d='M3 15h15v3H3z' fill='%23fde047' stroke='%2315141a'/%3E%3Cpath d='m4 12 8-8 4 4-8 8z' fill='%23fff' stroke='%2315141a'/%3E%3Cpath d='M24 15v15m-4-15h8M20 30h8' stroke='%2315141a' stroke-width='2'/%3E%3C/svg%3E") 24 24, text;
+  --inklayer-cursor-shape: crosshair;
+  --inklayer-cursor-freehand: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='m1 14 1-4L11 1l4 4-9 9z' fill='%23fff' stroke='%23000'/%3E%3Cpath d='m9 3 4 4' stroke='%23000'/%3E%3C/svg%3E") 1 15, pointer;
+  --inklayer-cursor-free-highlight: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='19' viewBox='0 0 18 19'%3E%3Cpath d='m2 14 3-4 7-8 4 4-8 8z' fill='%23fff' stroke='%2315141a'/%3E%3Cpath d='M1 16h16v2H1z' fill='%23fde047' stroke='%2315141a'/%3E%3C/svg%3E") 1 18, pointer;
   --inklayer-cursor-note: copy;
   --inklayer-cursor-free-text: text;
-  --inklayer-cursor-stamp: crosshair;
+  --inklayer-cursor-signature: copy;
+  --inklayer-cursor-stamp: copy;
+  --inklayer-cursor-image-missing: not-allowed;
 
   position: relative;
   isolation: isolate;
@@ -130,14 +134,26 @@
   color: var(--inklayer-author-label-foreground, #fff);
   font: 500 var(--inklayer-author-label-font-size, 12px) / 1.4 system-ui, sans-serif;
   white-space: nowrap;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   background: var(--inklayer-author-label-background, #1677ff);
   border-radius: var(--inklayer-author-label-radius, 3px);
   pointer-events: none;
-  transform: translateY(-100%);
+  transform: none;
 }
 
 .inklayer-engine .inklayer-author-label[hidden] {
   display: none;
+}
+
+.inklayer-engine .inklayer-annotation-a11y-list {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .inklayer-engine .inklayer-text-input {
@@ -173,20 +189,33 @@
 }
 
 .inklayer-engine[data-inklayer-tool="stamp"] .konvajs-content {
-  cursor: var(--inklayer-cursor-stamp, crosshair);
+  cursor: var(--inklayer-cursor-stamp-asset, var(--inklayer-cursor-stamp, copy));
+}
+
+.inklayer-engine[data-inklayer-tool="signature"] .konvajs-content {
+  cursor: var(--inklayer-cursor-signature-asset, var(--inklayer-cursor-signature, copy));
+}
+
+.inklayer-engine[data-inklayer-image-asset="missing"] .konvajs-content {
+  cursor: var(--inklayer-cursor-image-missing, not-allowed);
 }
 
 .inklayer-engine[data-inklayer-tool="rectangle"] .konvajs-content,
 .inklayer-engine[data-inklayer-tool="circle"] .konvajs-content,
-.inklayer-engine[data-inklayer-tool="freehand"] .konvajs-content,
-.inklayer-engine[data-inklayer-tool="free-highlight"] .konvajs-content,
-.inklayer-engine[data-inklayer-tool="signature"] .konvajs-content,
 .inklayer-engine[data-inklayer-tool="line"] .konvajs-content,
 .inklayer-engine[data-inklayer-tool="arrow"] .konvajs-content,
 .inklayer-engine[data-inklayer-tool="polygon"] .konvajs-content,
 .inklayer-engine[data-inklayer-tool="polyline"] .konvajs-content,
 .inklayer-engine[data-inklayer-tool="cloud"] .konvajs-content {
-  cursor: var(--inklayer-cursor-draw, crosshair);
+  cursor: var(--inklayer-cursor-shape, crosshair);
+}
+
+.inklayer-engine[data-inklayer-tool="freehand"] .konvajs-content {
+  cursor: var(--inklayer-cursor-freehand, pointer);
+}
+
+.inklayer-engine[data-inklayer-tool="free-highlight"] .konvajs-content {
+  cursor: var(--inklayer-cursor-free-highlight, pointer);
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -105,7 +105,7 @@ export async function buildAnnotatedPdf(
     const page = document.getPage(pageIndex)
     const annots = retainedAnnotationArray(document, page)
     page.node.set(PDFName.of('Annots'), annots)
-    for (const item of items) writeAnnotation(document, page, item, annots)
+    for (const item of items) await writeAnnotation(document, page, item, annots)
   }
 
   await writeDocumentWatermark(document, options)
@@ -257,17 +257,18 @@ function isReplaceableDictionary(dictionary: PDFDict): boolean {
 }
 
 /** Writes one annotation and all of its reply dictionaries. */
-function writeAnnotation(
+async function writeAnnotation(
   document: PDFDocument,
   page: PDFPage,
   prepared: PreparedAnnotation,
   annots: PDFArray
-): void {
+): Promise<void> {
   const { annotation, snapshot } = prepared
   const pageBox = pdfPageBox(page)
   const dictionary = baseDictionary(document, page, annotation, pageBox)
   writeTypeGeometry(document, dictionary, annotation, snapshot, pageBox)
   writeAppearanceGeometry(document, dictionary, annotation)
+  await writeImageAppearance(document, dictionary, annotation, pageBox)
   const reference = document.context.register(dictionary)
   annots.push(reference)
   for (const comment of annotation.comments) {
@@ -328,9 +329,19 @@ function baseDictionary(
     M: PDFHexString.fromText(toPdfDate(annotation.updatedAt ?? annotation.createdAt)),
     C: pdfNumberArray(document, color),
     CA: annotation.appearance.opacity * primaryComponentOpacity(annotation),
-    F: 4,
+    InkLayerCanonicalType: PDFName.of(annotation.type),
+    InkLayerAppearance: PDFHexString.fromText(JSON.stringify(annotation.appearance)),
+    // Match InkLayer React: image-backed Stamp annotations are printable but
+    // locked against movement/resizing in conforming PDF viewers.
+    F: isLockedImageStamp(annotation) ? 4 | 128 : 4,
     P: page.ref
   })
+}
+
+/** Narrows annotations exported as immutable image-backed PDF Stamps. */
+function isLockedImageStamp(annotation: Annotation): boolean {
+  return annotation.type === 'stamp'
+    || (annotation.type === 'signature' && annotation.content?.signature?.kind === 'image')
 }
 
 /** Writes subtype-specific geometry and custom round-trip markers. */
@@ -344,9 +355,13 @@ function writeTypeGeometry(
   if (annotation.type === 'highlight' || annotation.type === 'underline' || annotation.type === 'strikeout') {
     dictionary.set(PDFName.of('QuadPoints'), pdfNumberArray(document, markupQuadPoints(annotation, snapshot, pageBox)))
   } else if (annotation.type === 'freehand' || annotation.type === 'free-highlight'
-    || annotation.type === 'signature' || annotation.type === 'arrow' || annotation.type === 'cloud') {
+    || isInkSignature(annotation) || annotation.type === 'arrow' || annotation.type === 'cloud') {
     dictionary.set(PDFName.of('InkList'), inkList(document, snapshot, annotation, pageBox))
-    if (annotation.type === 'arrow' || annotation.type === 'cloud') {
+    if (annotation.type === 'signature') {
+      dictionary.set(PDFName.of('InkLayerType'), PDFName.of('SignatureInk'))
+    } else if (annotation.type === 'free-highlight') {
+      dictionary.set(PDFName.of('InkLayerType'), PDFName.of('FreeHighlight'))
+    } else if (annotation.type === 'arrow' || annotation.type === 'cloud') {
       dictionary.set(PDFName.of('InkLayerType'), PDFName.of(annotation.type === 'arrow' ? 'Arrow' : 'Cloud'))
     }
   } else if (annotation.type === 'line') {
@@ -363,6 +378,77 @@ function writeTypeGeometry(
     dictionary.set(PDFName.of('InkLayerFontSize'), PDFNumber.of(size))
     dictionary.set(PDFName.of('InkLayerTextWidth'), PDFNumber.of(annotation.bounds.width))
   }
+}
+
+/** Embeds an image-backed Stamp/Signature and attaches a visible normal AP stream. */
+async function writeImageAppearance(
+  document: PDFDocument,
+  dictionary: PDFDict,
+  annotation: Annotation,
+  pageBox: PdfPageBox
+): Promise<void> {
+  const source = imageSource(annotation)
+  if (source === undefined) return
+  if (annotation.type === 'signature') dictionary.set(PDFName.of('Subtype'), PDFName.of('Stamp'))
+  let bytes: Uint8Array
+  let mime: 'image/png' | 'image/jpeg'
+  try {
+    ({ bytes, mime } = decodeImageSource(source))
+  } catch (cause) {
+    throw exportError('Image annotation content is not an embedded PNG or JPEG data URL.', annotation, cause)
+  }
+  const image = mime === 'image/png'
+    ? await document.embedPng(bytes)
+    : await document.embedJpg(bytes)
+  const rect = boundsToPdfRect(annotation.bounds, annotation.coordinateSpace, pageBox)
+  const width = Math.max(Math.abs(rect[2] - rect[0]), 0.01)
+  const height = Math.max(Math.abs(rect[3] - rect[1]), 0.01)
+  const opacity = annotation.appearance.opacity
+  const resources = document.context.obj({
+    XObject: { Im0: image.ref },
+    ExtGState: { GS0: { Type: 'ExtGState', CA: opacity, ca: opacity } }
+  })
+  const appearance = document.context.flateStream(
+    `q /GS0 gs ${width} 0 0 ${height} 0 0 cm /Im0 Do Q`,
+    {
+      Type: 'XObject',
+      Subtype: 'Form',
+      FormType: 1,
+      BBox: [0, 0, width, height],
+      Resources: resources
+    }
+  )
+  const reference = document.context.register(appearance)
+  dictionary.set(PDFName.of('AP'), document.context.obj({ N: reference }))
+  dictionary.set(PDFName.of('InkLayerType'), PDFName.of(
+    annotation.type === 'signature' ? 'SignatureImage' : 'Stamp'
+  ))
+  dictionary.set(PDFName.of('InkLayerImage'), PDFHexString.fromText(source))
+}
+
+/** Returns the image payload owned by an image-backed canonical type. */
+function imageSource(annotation: Annotation): string | undefined {
+  if (annotation.type === 'stamp') return annotation.content?.image
+  if (annotation.type === 'signature' && annotation.content?.signature?.kind === 'image') {
+    return annotation.content.signature.image
+  }
+  return undefined
+}
+
+/** Decodes a browser-compatible PNG/JPEG data URL without Node-only APIs. */
+function decodeImageSource(source: string): { bytes: Uint8Array; mime: 'image/png' | 'image/jpeg' } {
+  const match = /^data:(image\/(?:png|jpeg));base64,([A-Za-z0-9+/=\s]+)$/.exec(source)
+  if (match === null) throw new Error('Unsupported image URL.')
+  const binary = globalThis.atob((match[2] ?? '').replace(/\s/g, ''))
+  return {
+    mime: match[1] as 'image/png' | 'image/jpeg',
+    bytes: Uint8Array.from(binary, (character) => character.charCodeAt(0))
+  }
+}
+
+/** Returns whether Signature uses PDF Ink geometry instead of an image AP. */
+function isInkSignature(annotation: Annotation): boolean {
+  return annotation.type === 'signature' && annotation.content?.signature?.kind !== 'image'
 }
 
 /** Selects the semantic paint represented by PDF's common C entry. */

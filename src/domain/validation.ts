@@ -10,6 +10,7 @@ import type {
   AnnotationBounds,
   AnnotationContent,
   AnnotationSource,
+  AnnotationSignatureContent,
   AnnotationType,
   KonvaRendererState
 } from './annotation'
@@ -127,6 +128,9 @@ function parseBounds(input: unknown): AnnotationBounds {
 function parseContent(input: unknown): AnnotationContent {
   const value = requireRecord(input, 'content')
   const referencesValue = value['references']
+  const signature = value['signature'] === undefined
+    ? undefined
+    : parseSignatureContent(value['signature'])
   if (referencesValue !== undefined && (!Array.isArray(referencesValue)
     || referencesValue.length > MAX_REFERENCES
     || !referencesValue.every(isValidAnnotationReference))) {
@@ -140,10 +144,38 @@ function parseContent(input: unknown): AnnotationContent {
     ...(value['image'] === undefined
       ? {}
       : { image: requireString(value['image'], 'content.image', MAX_RENDERER_STATE_LENGTH) }),
+    ...(signature === undefined ? {} : { signature }),
     ...(referencesValue === undefined
       ? {}
       : { references: referencesValue.map((reference) => ({ ...reference })) })
   }
+}
+
+/** Parses one explicit image or ink Signature payload. */
+function parseSignatureContent(input: unknown): AnnotationSignatureContent {
+  const value = requireRecord(input, 'content.signature')
+  const kind = requireEnum(value['kind'], new Set(['image', 'ink'] as const), 'content.signature.kind')
+  if (kind === 'image') {
+    return {
+      kind,
+      image: requireString(value['image'], 'content.signature.image', MAX_RENDERER_STATE_LENGTH)
+    }
+  }
+  const strokes = value['strokes']
+  if (!Array.isArray(strokes) || strokes.length === 0) {
+    throw invalid('Signature ink strokes are invalid.', 'parseContent')
+  }
+  let pointCount = 0
+  const parsed = strokes.map((stroke, strokeIndex) => {
+    if (!Array.isArray(stroke) || stroke.length < 4 || stroke.length % 2 !== 0) {
+      throw invalid('Signature ink stroke is invalid.', 'parseContent')
+    }
+    pointCount += stroke.length
+    return stroke.map((point, pointIndex) =>
+      requireFiniteNumber(point, `content.signature.strokes[${strokeIndex}][${pointIndex}]`))
+  })
+  if (pointCount > 100_000) throw invalid('Signature ink strokes are oversized.', 'parseContent')
+  return { kind, strokes: parsed }
 }
 
 /** Parses optional appearance properties and their numeric ranges. */

@@ -15,6 +15,8 @@ export {
 export type {
   AnnotationEngineEvent,
   AnnotationEngineListener,
+  AnnotationHoverSource,
+  AnnotationSelectionSource,
   AnnotationEngineWarning,
   AnnotationTextSelection
 } from './events'
@@ -22,12 +24,16 @@ export {
   ANNOTATION_TOOL_DEFINITIONS,
   type AnnotationTool,
   type AnnotationToolDefinition,
+  type AnnotationCreationMode,
   type AnnotationTransformMode
 } from './tools'
 export type {
   AnnotationAuthorLabelVisibility,
+  AnnotationImageAsset,
+  AnnotationImageTool,
+  AnnotationInteractionTheme,
   AnnotationPageAttachment
-} from './internal/painter/konva-painter'
+} from './contracts'
 export {
   parseAndValidateKonvaSnapshot,
   type KonvaAttributeValue,
@@ -41,6 +47,7 @@ export type { Logger } from '../ports/logger'
 export type { TextInputProvider, TextInputRequest, TextInputResult } from '../ports/text-input'
 export { createBrowserTextInputProvider } from '../platform/browser/text-input'
 export type {
+  Annotation,
   AnnotationAppearance,
   AnnotationAppearanceInput,
   AnnotationFillAppearance,
@@ -50,6 +57,8 @@ export type {
   AnnotationTextAppearance,
   AnnotationTextAppearanceInput
 } from '../domain/annotation'
+export type { User } from '../domain/user'
+export type { AnnotationPermissions } from '../domain/permissions'
 export {
   getAnnotationAppearanceCapabilities,
   getDefaultAnnotationAppearance,

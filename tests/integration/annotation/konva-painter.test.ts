@@ -185,6 +185,11 @@ vi.mock('konva', () => {
       return 'Group'
     }
 
+    /** Accepts one runtime-only hit target. */
+    public add(node: { layer?: MockLayer }): void {
+      if (this.layer !== undefined) node.layer = this.layer
+    }
+
     /** Accepts drag capability. */
     public draggable(value: boolean): void { this.record.draggable = value }
 
@@ -271,6 +276,12 @@ vi.mock('konva', () => {
     /** Accepts preview stacking changes. */
     public moveToTop(): void {}
 
+    /** Accepts runtime hit-target stacking changes. */
+    public moveToBottom(): void {}
+
+    /** Accepts temporary removal before persistence serialization. */
+    public remove(): void {}
+
     /** Releases the preview. */
     public destroy(): void { this.record.destroyed = true }
   }
@@ -292,6 +303,7 @@ vi.mock('konva', () => {
       Ellipse: shapeConstructor('Ellipse'),
       Arrow: shapeConstructor('Arrow'),
       Line: shapeConstructor('Line'),
+      Path: shapeConstructor('Path'),
       Node: {
         create: (serialized: string) => {
           const parsed = JSON.parse(serialized) as { attrs: { id: string } }
@@ -316,6 +328,12 @@ interface FakeElement {
   ownerDocument: FakeDocument
   /** Text content. */
   textContent: string | null
+  /** Button input type. */
+  type?: string
+  /** Records semantic attributes. */
+  setAttribute(name: string, value: string): void
+  /** Registers semantic interaction listeners. */
+  addEventListener(name: string, listener: () => void): void
   /** Appends children. */
   append(...children: FakeElement[]): void
   /** Removes every child. */
@@ -351,6 +369,8 @@ function createElement(document: FakeDocument): FakeElement {
     children: [],
     ownerDocument: document,
     textContent: null,
+    setAttribute: () => undefined,
+    addEventListener: () => undefined,
     append: (...children) => {
       element.children.push(...children)
       children.forEach((child) => {
@@ -418,6 +438,8 @@ describe('Konva painter ownership', () => {
     engine.setTool('free-text')
     runtime.stages[0]?.setPointer(20, 30)
     runtime.stages[0]?.trigger('mousedown')
+    expect(requestText).not.toHaveBeenCalled()
+    runtime.stages[0]?.trigger('click')
     await vi.waitFor(() => expect(requestText).toHaveBeenCalledOnce())
     expect(requestText).toHaveBeenCalledWith(expect.objectContaining({
       root: container,
@@ -426,6 +448,46 @@ describe('Konva painter ownership', () => {
       pageBounds: { x: 20, y: 30, width: 160, height: 40 },
       bounds: { x: 40, y: 60, width: 320, height: 80 }
     }))
+    engine.destroy()
+  })
+
+  it('places prepared Signature and Stamp images and requests a missing asset', async () => {
+    runtime.stages.splice(0)
+    const engine = createAnnotationEngine({ root: createRoot(), currentUser: { id: 'a', name: 'A' } })
+    const events: string[] = []
+    engine.subscribe((event) => events.push(event.type))
+    await engine.attachPage({ pageIndex: 0, container: createContainer(), width: 200, height: 300, scale: 2 })
+    const stage = runtime.stages[0]
+    engine.setTool('stamp')
+    stage?.setPointer(60, 80)
+    stage?.trigger('click')
+    expect(events).toContain('imageAssetRequired')
+    engine.setImageAsset('stamp', {
+      image: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z2S8AAAAASUVORK5CYII=',
+      width: 80,
+      height: 40,
+      text: 'Approved'
+    })
+    stage?.trigger('click')
+    expect(engine.repository.getAll()[0]).toMatchObject({
+      type: 'stamp',
+      bounds: { x: 20, y: 60, width: 80, height: 40 },
+      content: { text: 'Approved' }
+    })
+    engine.setImageAsset('signature', {
+      image: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z2S8AAAAASUVORK5CYII=',
+      width: 100,
+      height: 30
+    })
+    engine.setTool('signature')
+    stage?.setPointer(100, 100)
+    stage?.trigger('mousedown')
+    stage?.setPointer(130, 130)
+    stage?.trigger('mousemove')
+    stage?.trigger('mouseup')
+    expect(engine.repository.getAll()).toHaveLength(1)
+    stage?.trigger('click')
+    expect(engine.repository.getAll()[1]?.content?.signature).toMatchObject({ kind: 'image' })
     engine.destroy()
   })
 
@@ -497,13 +559,13 @@ describe('Konva painter ownership', () => {
     first.setSelection({ ids: [line.id], primaryId: line.id })
     expect(runtime.transformers[0]?.anchors).toEqual(['top-left', 'bottom-right'])
     expect(runtime.transformers[0]?.rotate).toBe(false)
-    expect(firstContainer.fakeChildren).toHaveLength(1)
-    expect(secondContainer.fakeChildren).toHaveLength(1)
+    expect(firstContainer.fakeChildren).toHaveLength(2)
+    expect(secondContainer.fakeChildren).toHaveLength(2)
     first.destroy()
     expect(runtime.stages[0]?.destroyed).toBe(true)
     expect(runtime.stages[1]?.destroyed).toBe(false)
     expect(firstContainer.fakeChildren).toHaveLength(0)
-    expect(secondContainer.fakeChildren).toHaveLength(1)
+    expect(secondContainer.fakeChildren).toHaveLength(2)
     second.destroy()
     expect(runtime.stages[1]?.destroyed).toBe(true)
   })
@@ -539,6 +601,10 @@ describe('Konva painter ownership', () => {
     }
     expect(annotations).toHaveLength(1)
     expect(snapshot.children?.filter((child) => child.className === 'Line')).toHaveLength(2)
+    expect(engine.getTool()).toBe('select')
+    expect(engine.repository.getSelection()).toEqual({
+      ids: [annotations[0]?.id], primaryId: annotations[0]?.id
+    })
     engine.destroy()
     vi.useRealTimers()
   })
@@ -567,7 +633,12 @@ describe('Konva painter ownership', () => {
       stage?.trigger('mousedown')
       stage?.setPointer(80, 20)
       stage?.trigger('mousemove')
-      expect(runtime.previews.at(-1)?.attrs['closed']).toBe(false)
+      if (tool === 'cloud') {
+        expect(runtime.previews.at(-1)?.className).toBe('Path')
+        expect(runtime.previews.at(-1)?.attrs['data']).toMatch(/^M .* Q /)
+      } else {
+        expect(runtime.previews.at(-1)?.attrs['closed']).toBe(false)
+      }
       stage?.trigger('dblclick')
     }
     engine.destroy()

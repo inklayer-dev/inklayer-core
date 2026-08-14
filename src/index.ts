@@ -26,6 +26,7 @@ export {
   type AnnotationContent,
   type AnnotationCoordinateSpace,
   type AnnotationSource,
+  type AnnotationSignatureContent,
   type AnnotationType,
   type KonvaRendererState
 } from './domain/annotation'
@@ -37,7 +38,14 @@ export {
   validateResolvedAppearance,
   type AnnotationAppearanceCapabilities
 } from './domain/appearance'
-export type { AnnotationAuthorLabelVisibility } from './annotation/internal/painter/konva-painter'
+export type {
+  AnnotationAuthorLabelVisibility,
+  AnnotationImageAsset,
+  AnnotationImageTool,
+  AnnotationInteractionTheme,
+  AnnotationPageAttachment
+} from './annotation/contracts'
+export type { AnnotationHoverSource, AnnotationSelectionSource } from './annotation/events'
 export {
   createAnnotationComment,
   removeAnnotationComment,
@@ -170,9 +178,9 @@ export {
   ANNOTATION_TOOL_DEFINITIONS,
   type AnnotationTool,
   type AnnotationToolDefinition,
+  type AnnotationCreationMode,
   type AnnotationTransformMode
 } from './annotation/tools'
-export type { AnnotationPageAttachment } from './annotation/internal/painter/konva-painter'
 export {
   parseAndValidateKonvaSnapshot,
   type KonvaAttributeValue,

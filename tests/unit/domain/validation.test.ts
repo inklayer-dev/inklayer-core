@@ -48,4 +48,14 @@ describe('canonical annotation validation', () => {
     expect(() => parseAnnotation(createTestAnnotation({ extensions: { value: undefined } })))
       .toThrowError(expect.objectContaining<Partial<InkLayerError>>({ code: 'ANNOTATION_INVALID' }))
   })
+
+  it('validates explicit image and bounded ink Signature content', () => {
+    expect(parseAnnotation(createTestAnnotation({
+      type: 'signature',
+      content: { text: '', signature: { kind: 'image', image: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z2S8AAAAASUVORK5CYII=' } }
+    })).content?.signature).toMatchObject({ kind: 'image' })
+    expect(() => parseAnnotation(createTestAnnotation({
+      type: 'signature', content: { text: '', signature: { kind: 'ink', strokes: [[1, 2, 3]] } }
+    }))).toThrowError(expect.objectContaining<Partial<InkLayerError>>({ code: 'ANNOTATION_INVALID' }))
+  })
 })

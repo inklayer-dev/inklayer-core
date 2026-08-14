@@ -65,11 +65,45 @@ export function restyleToolRendererState(
   return { engine: 'konva', schemaVersion: 1, serialized }
 }
 
+/** Reapplies semantic content to content-backed nodes without changing geometry. */
+export function updateToolRendererContent(
+  rendererState: KonvaRendererState,
+  type: AnnotationType,
+  content: AnnotationContent | undefined
+): KonvaRendererState {
+  const validated = parseAndValidateKonvaSnapshot(rendererState.serialized, {
+    operation: 'updateToolRendererContent'
+  })
+  const root = structuredClone(validated.root) as unknown as MutableKonvaNode
+  updateChildContent(root, type, content)
+  const serialized = JSON.stringify(root)
+  parseAndValidateKonvaSnapshot(serialized, { operation: 'updateToolRendererContent' })
+  return { engine: 'konva', schemaVersion: 1, serialized }
+}
+
 /** Mutable internal form used only while rebuilding validated JSON. */
 interface MutableKonvaNode {
   className: string
   attrs: Record<string, unknown>
   children?: MutableKonvaNode[]
+}
+
+/** Updates only renderer attributes that canonically mirror semantic content. */
+function updateChildContent(
+  node: MutableKonvaNode,
+  type: AnnotationType,
+  content: AnnotationContent | undefined
+): void {
+  if ((type === 'free-text' || type === 'note') && node.className === 'Text') {
+    node.attrs['text'] = content?.text ?? ''
+  }
+  if (type === 'stamp' && node.className === 'Image') {
+    node.attrs['src'] = content?.image ?? ''
+  }
+  if (type === 'signature' && node.className === 'Image') {
+    node.attrs['src'] = content?.signature?.kind === 'image' ? content.signature.image : ''
+  }
+  for (const child of node.children ?? []) updateChildContent(child, type, content)
 }
 
 /** Replaces persisted paint attrs while retaining one child node's exact geometry. */
@@ -79,7 +113,10 @@ function restyleChild(
   appearance: AnnotationAppearance
 ): void {
   for (const key of PAINT_ATTRS) delete node.attrs[key]
-  if (type === 'highlight') Object.assign(node.attrs, fillAttrs(appearance))
+  if (node.className === 'Image' && (type === 'signature' || type === 'stamp')) {
+    // Raster assets own their pixels; annotation paint must not create a
+    // browser-only frame that is absent from the exported PDF appearance.
+  } else if (type === 'highlight') Object.assign(node.attrs, fillAttrs(appearance))
   else if (type === 'strikeout' || type === 'underline') {
     Object.assign(node.attrs, {
       fill: appearance.stroke === null ? undefined : colorWithOpacity(
@@ -140,9 +177,22 @@ function buildChildren(input: ToolSnapshotInput): readonly Record<string, unknow
         className: 'Ellipse',
         attrs: { x: x + width / 2, y: y + height / 2, radiusX: width / 2, radiusY: height / 2, ...stroke, ...fill }
       }]
-    case 'freehand':
-    case 'free-highlight':
     case 'signature': {
+      if (input.content?.signature?.kind === 'image') {
+        return [{
+          className: 'Image',
+          attrs: { x, y, width, height, src: input.content.signature.image }
+        }]
+      }
+      const signatureStrokes = input.content?.signature?.kind === 'ink'
+        ? input.content.signature.strokes
+        : [input.points ?? rectanglePoints(input.bounds, false)]
+      return signatureStrokes.map((points) => ({
+        className: 'Line', attrs: { points, ...stroke }
+      }))
+    }
+    case 'freehand':
+    case 'free-highlight': {
       const strokes = input.type === 'freehand' && input.strokes !== undefined
         ? input.strokes
         : [input.points ?? rectanglePoints(input.bounds, false)]
@@ -157,7 +207,7 @@ function buildChildren(input: ToolSnapshotInput): readonly Record<string, unknow
     case 'stamp':
       return [{
         className: 'Image',
-        attrs: { x, y, width, height, src: input.content?.image ?? '', ...stroke }
+        attrs: { x, y, width, height, src: input.content?.image ?? '' }
       }]
     case 'note':
       return [
@@ -185,7 +235,7 @@ function buildChildren(input: ToolSnapshotInput): readonly Record<string, unknow
           y,
           data: input.pathData ?? (input.points === undefined
             ? rectanglePath(width, height)
-            : cloudPathFromPoints(input.points, input.bounds)),
+            : buildCloudPathFromPoints(input.points, input.bounds)),
           ...stroke,
           ...fill
         }
@@ -263,7 +313,11 @@ function rectanglePath(width: number, height: number): string {
 }
 
 /** Converts absolute Stage points to local Cloud path data. */
-function cloudPathFromPoints(points: readonly number[], bounds: AnnotationBounds): string {
+export function buildCloudPathFromPoints(
+  points: readonly number[],
+  bounds: AnnotationBounds,
+  close = true
+): string {
   const vertices: Array<{ x: number; y: number }> = []
   for (let index = 0; index + 1 < points.length; index += 2) {
     const x = points[index]
@@ -271,7 +325,7 @@ function cloudPathFromPoints(points: readonly number[], bounds: AnnotationBounds
     if (x !== undefined && y !== undefined) vertices.push({ x: x - bounds.x, y: y - bounds.y })
   }
   const first = vertices[0]
-  if (first !== undefined) vertices.push({ x: first.x, y: first.y })
+  if (close && first !== undefined) vertices.push({ x: first.x, y: first.y })
   return generateCloudPath(vertices)
 }
 

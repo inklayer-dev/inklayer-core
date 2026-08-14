@@ -20,7 +20,7 @@ import type {
 const TYPE_BY_PDFJS = new Map<number, AnnotationType>([
   [1, 'note'], [3, 'free-text'], [4, 'line'], [5, 'rectangle'], [6, 'circle'],
   [7, 'polygon'], [8, 'polyline'], [9, 'highlight'], [10, 'underline'],
-  [12, 'strikeout'], [15, 'freehand'], [27, 'note']
+  [12, 'strikeout'], [13, 'stamp'], [15, 'freehand'], [27, 'note']
 ])
 
 /** Result of decoding supported PDF.js annotations. */
@@ -50,7 +50,12 @@ export function importPdfJsAnnotations(
         if (type === undefined) continue
         const annotation = decodeAnnotation(value, type, page, replies.get(value.id) ?? [])
         annotations.push(annotation)
-        supportedIds.push(value.id, ...(replies.get(value.id) ?? []).map((reply) => reply.id))
+        // A Stamp/Signature appearance may live only in the PDF appearance stream.
+        // Keep that native raster visible until Core has an equivalent image payload;
+        // the canonical overlay still supplies selection and metadata interaction.
+        if (canReplaceNativeAppearance(annotation)) {
+          supportedIds.push(value.id, ...(replies.get(value.id) ?? []).map((reply) => reply.id))
+        }
       } catch (cause) {
         const candidateId = getCandidateId(input)
         warnings.push({
@@ -66,6 +71,13 @@ export function importPdfJsAnnotations(
   return { annotations, warnings, supportedIds: [...new Set(supportedIds)] }
 }
 
+/** Returns whether Core can safely replace the PDF-rendered appearance. */
+function canReplaceNativeAppearance(annotation: Annotation): boolean {
+  if (annotation.type === 'stamp') return annotation.content?.image !== undefined
+  if (annotation.type === 'signature') return annotation.content?.signature !== undefined
+  return true
+}
+
 /** Decodes one supported annotation to canonical Stage-space state. */
 function decodeAnnotation(
   input: PdfJsAnnotationInput,
@@ -74,17 +86,25 @@ function decodeAnnotation(
   replies: readonly PdfJsAnnotationInput[]
 ): Annotation {
   const bounds = pdfRectToStageBounds(input.rect, page.pageBox)
-  const strokes = type === 'freehand' ? extractInkStrokes(input, page) : undefined
+  const strokes = type === 'freehand' || type === 'free-highlight' || type === 'signature'
+    ? extractInkStrokes(input, page)
+    : undefined
   const points = strokes?.[0] ?? extractPoints(input, page)
   const textRects = extractTextRects(input, page)
   const content = {
     text: input.contentsObj?.str ?? '',
     ...(type === 'highlight' || type === 'underline' || type === 'strikeout'
       ? { selectedText: input.contentsObj?.str ?? '' }
+      : {}),
+    ...(type === 'stamp' && input.image !== undefined ? { image: input.image } : {}),
+    ...(type === 'signature'
+      ? input.inkLayerType === 'SignatureImage' && input.image !== undefined
+        ? { signature: { kind: 'image' as const, image: input.image } }
+        : strokes === undefined ? {} : { signature: { kind: 'ink' as const, strokes } }
       : {})
   }
   const color = colorToHex(input.color)
-  const appearance = resolveAnnotationAppearance(type, {
+  const appearance = input.appearance === undefined ? resolveAnnotationAppearance(type, {
     ...(input.opacity === undefined ? {} : { opacity: input.opacity }),
     ...(type === 'highlight' ? { fill: { color } }
       : type === 'free-text' ? { text: {
@@ -92,8 +112,12 @@ function decodeAnnotation(
           ...(input.fontSize === undefined ? {} : { fontSize: input.fontSize })
         } }
         : type === 'note' ? { fill: { color } }
-          : { stroke: { color } })
-  })
+          : { stroke: {
+              color,
+              ...(input.borderStyle?.width === undefined ? {} : { width: input.borderStyle.width }),
+              ...(input.borderStyle?.dashArray === undefined ? {} : { dash: input.borderStyle.dashArray })
+            } })
+  }) : resolveAnnotationAppearance(type, input.appearance)
   const rendererState = buildToolRendererState({
     id: input.id,
     type,
@@ -137,9 +161,13 @@ function extractInkStrokes(
 
 /** Resolves canonical type only for explicitly supported input. */
 function resolveType(input: PdfJsAnnotationInput): AnnotationType | undefined {
+  if (input.canonicalType !== undefined) return input.canonicalType
   if (input.inkLayerType === 'Cloud' || input.cloudy === true) return 'cloud'
   if (input.inkLayerType === 'FreeText') return 'free-text'
   if (input.inkLayerType === 'Arrow') return 'arrow'
+  if (input.inkLayerType === 'FreeHighlight') return 'free-highlight'
+  if (input.inkLayerType === 'SignatureInk' || input.inkLayerType === 'SignatureImage') return 'signature'
+  if (input.inkLayerType === 'Stamp') return 'stamp'
   if (input.annotationType === 4 && input.lineEndings?.some((ending) => ending.includes('Arrow')) === true) {
     return 'arrow'
   }
@@ -235,7 +263,20 @@ function parseInput(input: unknown): PdfJsAnnotationInput {
     throw new TypeError('Annotation identity, type, or rectangle is invalid.')
   }
   validateOptionalInput(value)
-  return structuredClone(value) as unknown as PdfJsAnnotationInput
+  const normalized = structuredClone(value)
+  for (const key of ['color', 'quadPoints', 'lineCoordinates'] as const) {
+    if (ArrayBuffer.isView(normalized[key])) {
+      normalized[key] = Array.from(normalized[key] as unknown as ArrayLike<number>)
+    }
+  }
+  const borderStyle = normalized['borderStyle']
+  if (typeof borderStyle === 'object' && borderStyle !== null && !Array.isArray(borderStyle)) {
+    const border = borderStyle as Record<string, unknown>
+    if (ArrayBuffer.isView(border['dashArray'])) {
+      border['dashArray'] = Array.from(border['dashArray'] as unknown as ArrayLike<number>)
+    }
+  }
+  return normalized as unknown as PdfJsAnnotationInput
 }
 
 /** Validates optional normalized fields consumed by decoders. */
@@ -243,6 +284,25 @@ function validateOptionalInput(value: Record<string, unknown>): void {
   for (const key of ['subtype', 'modificationDate', 'creationDate', 'inReplyTo']) {
     const field = value[key]
     if (field !== undefined && field !== null && typeof field !== 'string') throw new TypeError(`${key} is invalid.`)
+  }
+  if (value['image'] !== undefined && typeof value['image'] !== 'string') throw new TypeError('image is invalid.')
+  if (value['canonicalType'] !== undefined
+    && !TYPE_BY_PDFJS_VALUES.has(value['canonicalType'] as AnnotationType)) {
+    throw new TypeError('canonicalType is invalid.')
+  }
+  if (value['appearance'] !== undefined && (typeof value['appearance'] !== 'object'
+    || value['appearance'] === null || Array.isArray(value['appearance']))) {
+    throw new TypeError('appearance is invalid.')
+  }
+  if (value['borderStyle'] !== undefined) {
+    if (typeof value['borderStyle'] !== 'object' || value['borderStyle'] === null
+      || Array.isArray(value['borderStyle'])) throw new TypeError('borderStyle is invalid.')
+    const border = value['borderStyle'] as Record<string, unknown>
+    if (border['width'] !== undefined && (typeof border['width'] !== 'number'
+      || !Number.isFinite(border['width']))) throw new TypeError('borderStyle.width is invalid.')
+    if (border['dashArray'] !== undefined && !isFiniteNumberArray(border['dashArray'])) {
+      throw new TypeError('borderStyle.dashArray is invalid.')
+    }
   }
   for (const key of ['opacity', 'fontSize']) {
     const field = value[key]
@@ -262,18 +322,29 @@ function validateOptionalInput(value: Record<string, unknown>): void {
     || value['inkLists'].some((entry) => !isPointArray(entry)))) throw new TypeError('inkLists are invalid.')
   if (value['cloudy'] !== undefined && typeof value['cloudy'] !== 'boolean') throw new TypeError('cloudy is invalid.')
   if (value['inkLayerType'] !== undefined
-    && !['Cloud', 'FreeText', 'Arrow'].includes(String(value['inkLayerType']))) {
+    && ![
+      'Cloud', 'FreeText', 'Arrow', 'FreeHighlight',
+      'SignatureInk', 'SignatureImage', 'Stamp'
+    ].includes(String(value['inkLayerType']))) {
     throw new TypeError('inkLayerType is invalid.')
   }
   if (value['contentsObj'] !== undefined && !isStringWrapper(value['contentsObj'])) throw new TypeError('contentsObj is invalid.')
   if (value['titleObj'] !== undefined && !isStringWrapper(value['titleObj'])) throw new TypeError('titleObj is invalid.')
 }
 
+const TYPE_BY_PDFJS_VALUES = new Set<AnnotationType>([
+  'highlight', 'strikeout', 'underline', 'free-text', 'rectangle', 'circle',
+  'freehand', 'free-highlight', 'signature', 'stamp', 'note', 'line', 'arrow',
+  'polygon', 'polyline', 'cloud'
+])
+
 /** Returns whether a value is a bounded finite number array. */
 function isFiniteNumberArray(value: unknown, exactLength?: number): value is number[] {
-  return Array.isArray(value) && value.length <= 100_000
-    && (exactLength === undefined || value.length === exactLength)
-    && value.every((entry) => typeof entry === 'number' && Number.isFinite(entry))
+  if (!Array.isArray(value) && !ArrayBuffer.isView(value)) return false
+  const values = Array.from(value as ArrayLike<unknown>)
+  return values.length <= 100_000
+    && (exactLength === undefined || values.length === exactLength)
+    && values.every((entry) => typeof entry === 'number' && Number.isFinite(entry))
 }
 
 /** Returns whether a value is a bounded array of finite PDF points. */

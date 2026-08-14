@@ -27,6 +27,7 @@ const TYPES: readonly AnnotationType[] = [
   'freehand', 'free-highlight', 'signature', 'stamp', 'note', 'line', 'arrow',
   'polygon', 'polyline', 'cloud'
 ]
+const TINY_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z2S8AAAAASUVORK5CYII='
 
 describe('buildAnnotatedPdf', () => {
   it('writes every canonical type, metadata, geometry, replies, and preserves Link', async () => {
@@ -102,6 +103,38 @@ describe('buildAnnotatedPdf', () => {
     const bytes = await buildAnnotatedPdf(await document.save(), [exportAnnotation('rectangle', 0)])
     const rectangle = annotationDictionaries(await PDFDocument.load(bytes))[0]
     expect(numberArray(rectangle, 'Rect')).toEqual([20, 10, 70, 110])
+  })
+
+  it('embeds visible normal appearance streams for Stamp and image Signature', async () => {
+    const source = await createSourcePdf()
+    const stamp = exportAnnotation('stamp', 0)
+    const signature = exportAnnotation('signature', 1)
+    stamp.content = { text: 'Approved', image: TINY_PNG }
+    signature.content = {
+      text: 'Alice', signature: { kind: 'image', image: TINY_PNG }
+    }
+    stamp.rendererState = buildToolRendererState({
+      id: stamp.id, type: stamp.type, bounds: stamp.bounds,
+      content: stamp.content, appearance: stamp.appearance
+    })
+    signature.rendererState = buildToolRendererState({
+      id: signature.id, type: signature.type, bounds: signature.bounds,
+      content: signature.content, appearance: signature.appearance
+    })
+    const dictionaries = annotationDictionaries(await PDFDocument.load(
+      await buildAnnotatedPdf(source, [stamp, signature])
+    ))
+    for (const id of [stamp.id, signature.id]) {
+      const dictionary = dictionaries.find((entry) => textValue(entry, 'NM') === id)
+      expect(nameValue(dictionary, 'Subtype')).toBe('Stamp')
+      expect(numberValue(dictionary, 'F')).toBe(4 | 128)
+      expect(dictionary?.lookupMaybe(PDFName.of('AP'), PDFDict)
+        ?.get(PDFName.of('N'))).toBeDefined()
+    }
+    expect(nameValue(
+      dictionaries.find((entry) => textValue(entry, 'NM') === signature.id),
+      'InkLayerType'
+    )).toBe('SignatureImage')
   })
 
   it('uses one watermark policy for print while respecting export targeting', async () => {

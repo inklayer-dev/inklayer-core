@@ -50,9 +50,26 @@ export interface AnnotationContent {
   selectedText?: string
   /** Image data or URL used by image-backed annotations. */
   image?: string
+  /** Explicit Signature payload; applications may collect it through any UI. */
+  signature?: AnnotationSignatureContent
   /** Structured targets corresponding to visible reference labels in text. */
   references?: AnnotationReference[]
 }
+
+/** Canonical V1 Signature payload supporting asset and direct-ink signatures. */
+export type AnnotationSignatureContent =
+  | {
+      /** Rasterized signature produced by draw/type/upload application UI. */
+      kind: 'image'
+      /** Image data URL or application-resolvable URL. */
+      image: string
+    }
+  | {
+      /** One or more page-space ink strokes captured directly by Core. */
+      kind: 'ink'
+      /** Independent x/y point arrays, each containing at least two points. */
+      strokes: readonly (readonly number[])[]
+    }
 
 /** Stroke paint shared by line and outlined annotation geometries. */
 export interface AnnotationStrokeAppearance {

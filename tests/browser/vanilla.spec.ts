@@ -5,12 +5,86 @@
  */
 
 import { expect, test, type ConsoleMessage, type Locator, type Page } from '@playwright/test'
+import { PDFDocument } from 'pdf-lib'
+import { buildAnnotatedPdf } from '../../src/export/pdf'
+import { buildToolRendererState } from '../../src/renderer/konva/snapshot-builder'
+import { resolveAnnotationAppearance } from '../../src/domain/appearance'
+import { createTestAnnotation } from '../helpers/annotation'
 
 const TOOLS = [
   'highlight', 'strikeout', 'underline', 'free-text', 'rectangle', 'circle',
   'freehand', 'free-highlight', 'signature', 'stamp', 'note', 'line', 'arrow',
   'polygon', 'polyline', 'cloud'
 ] as const
+
+test('opens and focuses FreeText after a real canvas click', async ({ page }) => {
+  const failures = collectBrowserFailures(page)
+  await page.goto('/')
+  const alice = page.locator('.instance-card').first()
+  await expect(alice.locator('.instance-status')).toContainText('Ready')
+  await alice.locator('.tool-select').selectOption('free-text')
+  await alice.locator('.konvajs-content').click({ position: { x: 120, y: 140 } })
+  const input = alice.locator('.inklayer-text-input')
+  await expect(input).toBeVisible()
+  await expect(input).toBeFocused()
+  await input.fill('Canvas FreeText')
+  await input.press('Control+Enter')
+  await expect(input).toBeHidden()
+  await expect(alice.locator('.inklayer-author-label')).toHaveCount(1)
+  await expect(alice.locator('.inklayer-author-label')).toBeVisible()
+  await expect(alice.locator('.tool-select')).toHaveValue('select')
+  expect(failures).toEqual([])
+})
+
+test('places visible image-backed Signature and Stamp annotations from canvas clicks', async ({ page }) => {
+  const failures = collectBrowserFailures(page)
+  await page.goto('/')
+  const alice = page.locator('.instance-card').first()
+  await expect(alice.locator('.instance-status')).toContainText('Ready')
+  const canvas = alice.locator('.konvajs-content')
+  await alice.locator('.tool-select').selectOption('signature')
+  await expect.poll(async () => canvas.evaluate((element) => getComputedStyle(element).cursor))
+    .toContain('url(')
+  await canvas.click({ position: { x: 180, y: 180 } })
+  await expect(alice.locator('.inklayer-annotation-a11y-list button')).toHaveCount(1)
+  await expect(alice.locator('.inklayer-annotation-a11y-list button')).toHaveAttribute(
+    'aria-label', /signature/i
+  )
+  await expect(alice.locator('.tool-select')).toHaveValue('select')
+  await expect(alice.locator('.inklayer-author-label')).toBeVisible()
+  await alice.locator('.tool-select').selectOption('stamp')
+  await expect.poll(async () => canvas.evaluate((element) => getComputedStyle(element).cursor))
+    .toContain('url(')
+  await canvas.click({ position: { x: 320, y: 250 } })
+  await expect(alice.locator('.inklayer-annotation-a11y-list button')).toHaveCount(2)
+  await expect(alice.locator('.inklayer-annotation-a11y-list button').nth(1)).toHaveAttribute(
+    'aria-label', /stamp/i
+  )
+  await expect(alice.locator('.tool-select')).toHaveValue('select')
+  expect(failures).toEqual([])
+})
+
+test('selects annotations imported from an annotated PDF opened by the demo', async ({ page }) => {
+  const failures = collectBrowserFailures(page)
+  await page.goto('/')
+  const alice = page.locator('.instance-card').first()
+  await expect(alice.locator('.instance-status')).toContainText('Ready')
+  const bytes = await createNativeAnnotationPdf()
+  await alice.locator('.pdf-file').setInputFiles({
+    name: 'react-style-annotations.pdf',
+    mimeType: 'application/pdf',
+    buffer: Buffer.from(bytes)
+  })
+  await expect(alice.locator('.instance-status')).toContainText('react-style-annotations.pdf')
+  await expect(alice.locator('.tool-select')).toHaveValue('select')
+  await expect(alice.locator('.inklayer-author-label')).toHaveCount(1)
+  await expect(alice.locator('.inklayer-author-label')).toBeHidden()
+  const canvas = await alice.locator('.konvajs-content').boundingBox()
+  if (canvas === null) throw new Error('Imported annotation canvas is unavailable.')
+  await page.mouse.click(canvas.x + 30, canvas.y + 35)
+  await expect(alice.locator('.inklayer-author-label')).toBeVisible()
+  expect(failures).toEqual([])
+})
 
 test('runs the complete Vanilla engine flow without console errors', async ({ page }) => {
   const failures = collectBrowserFailures(page)
@@ -108,7 +182,7 @@ test('runs the complete Vanilla engine flow without console errors', async ({ pa
   await expect(alice.locator('.instance-status')).toHaveText(
     'Created grouped highlight from cross-page PDF text'
   )
-  await expect(alice.locator('.tool-select')).toHaveValue('text-select')
+  await expect(alice.locator('.tool-select')).toHaveValue('highlight')
   await alice.getByRole('button', { name: 'Single' }).click()
   await expect(alice.locator('.flow-scroll')).toBeHidden()
   await expect(alice.locator('.instance-status')).toContainText('page 3/3')
@@ -118,6 +192,7 @@ test('runs the complete Vanilla engine flow without console errors', async ({ pa
 
   await alice.getByRole('button', { name: 'Text Selection' }).click()
   await expect(alice.locator('.instance-status')).toContainText('page 3/3')
+  await alice.locator('.tool-select').selectOption('text-select')
   const selectionLine = alice.locator('.inklayer-text-layer span').last()
   await selectionLine.scrollIntoViewIfNeeded()
   const selectionBox = await selectionLine.boundingBox()
@@ -153,6 +228,9 @@ test('runs the complete Vanilla engine flow without console errors', async ({ pa
   await page.mouse.move(canvas.x + 170, canvas.y + 180, { steps: 5 })
   await page.mouse.up()
   await expect(alice.locator('.inklayer-author-label')).toHaveCount(1)
+  await expect(alice.locator('.inklayer-author-label')).toBeVisible()
+  await expect(alice.locator('.tool-select')).toHaveValue('select')
+  await page.mouse.click(canvas.x + 350, canvas.y + 400)
   await expect(alice.locator('.inklayer-author-label')).toBeHidden()
   await page.mouse.move(canvas.x + 60, canvas.y + 130)
   await expect(alice.locator('.inklayer-author-label')).toBeVisible()
@@ -277,4 +355,26 @@ function collectBrowserFailures(page: Page): string[] {
   })
   page.on('pageerror', (error) => failures.push(error.message))
   return failures
+}
+
+/** Builds a Square through the same native export contract consumed by React. */
+async function createNativeAnnotationPdf(): Promise<Uint8Array> {
+  const document = await PDFDocument.create()
+  document.addPage([200, 300])
+  const bounds = { x: 10, y: 20, width: 40, height: 30 }
+  const appearance = resolveAnnotationAppearance('rectangle', {
+    stroke: { color: '#ff0000', width: 2 }
+  })
+  const annotation = createTestAnnotation({
+    id: 'react-native-square',
+    type: 'rectangle',
+    bounds,
+    appearance,
+    content: { text: 'Imported rectangle' },
+    rendererState: buildToolRendererState({
+      id: 'react-native-square', type: 'rectangle', bounds, appearance,
+      content: { text: 'Imported rectangle' }
+    })
+  })
+  return buildAnnotatedPdf(await document.save(), [annotation])
 }

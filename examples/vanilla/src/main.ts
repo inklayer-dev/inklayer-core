@@ -31,7 +31,11 @@ import {
   type PdfViewerScale,
   type PdfZoomGestureController
 } from 'inklayer-core'
-import { importPdfJsAnnotations } from 'inklayer-core/import/pdfjs'
+import {
+  hideImportedPdfJsAnnotations,
+  importPdfJsAnnotationsWithMetadata,
+  type ImportPdfJsAnnotationsWithMetadataResult
+} from 'inklayer-core/import/pdfjs'
 import 'inklayer-core/style'
 import './demo.css'
 import { createSamplePdf } from './sample-pdf'
@@ -87,6 +91,7 @@ class DemoInstance {
   private gestureScale = 1
   private pendingGestureScale: number | null = null
   private gestureScaleCommit: Promise<void> | null = null
+  private readonly nativeImports = new Map<number, ImportPdfJsAnnotationsWithMetadataResult>()
 
   /** Creates DOM and Core instances for one isolated card. */
   public constructor(parent: HTMLElement, label: string, accent: string) {
@@ -115,12 +120,21 @@ class DemoInstance {
       root: this.host,
       currentUser: { id: label.toLowerCase(), name: label }
     })
+    this.annotations.setImageAsset('signature', createDemoSignature(label, accent))
+    this.annotations.setImageAsset('stamp', createDemoStamp())
     this.annotations.setTool('text-select')
     this.annotations.setAuthorLabelVisibility('auto')
     this.updateAppearanceControls()
     this.unsubscribeAnnotations = this.annotations.subscribe((event) => {
       if (event.type === 'selectionChanged' || event.type === 'annotationUpdated') {
         this.updateAppearanceControls()
+      }
+      if (event.type === 'toolChanged') {
+        this.toolSelect.value = event.tool
+        this.updateAppearanceControls()
+      }
+      if (event.type === 'imageAssetRequired') {
+        this.setStatus(`Choose or create a ${event.tool} image before placing it.`)
       }
     })
     this.unsubscribeViewer = this.viewer.subscribe((event) => {
@@ -172,6 +186,25 @@ class DemoInstance {
     const viewport = page.getViewport({ scale: this.scale })
     const context = this.canvas.getContext('2d')
     if (context === null) throw new Error('Canvas 2D context is unavailable.')
+    const view = page.view
+    const [xMin, yMin, xMax, yMax] = normalizePageView(view)
+    let imported = this.nativeImports.get(this.currentPageIndex)
+    if (imported === undefined) {
+      imported = await importPdfJsAnnotationsWithMetadata([{
+        pageIndex: this.currentPageIndex,
+        pageBox: {
+          xMin, yMin, xMax, yMax,
+          rotation: normalizeRotation(page.rotate)
+        },
+        annotations: await page.getAnnotations()
+      }], this.sourcePdf)
+      this.nativeImports.set(this.currentPageIndex, imported)
+    }
+    hideImportedPdfJsAnnotations(
+      document.annotationStorage,
+      imported.supportedIds,
+      new Map(imported.annotations.map((annotation) => [annotation.id, annotation.pageIndex]))
+    )
     this.renderTask?.cancel()
     this.canvas.width = Math.ceil(viewport.width)
     this.canvas.height = Math.ceil(viewport.height)
@@ -184,16 +217,6 @@ class DemoInstance {
     this.renderTask = page.render({ canvas: this.canvas, canvasContext: context, viewport })
     await this.renderTask.promise
     this.viewer.drawWatermark({ canvas: this.canvas, pageIndex: this.currentPageIndex })
-    const view = page.view
-    const [xMin, yMin, xMax, yMax] = normalizePageView(view)
-    const imported = importPdfJsAnnotations([{
-      pageIndex: this.currentPageIndex,
-      pageBox: {
-        xMin, yMin, xMax, yMax,
-        rotation: normalizeRotation(page.rotate)
-      },
-      annotations: await page.getAnnotations()
-    }])
     for (const annotation of imported.annotations) {
       if (this.annotations.repository.getById(annotation.id) === undefined) {
         this.annotations.repository.add(annotation)
@@ -349,10 +372,10 @@ class DemoInstance {
     }))
     const ids = annotations.map((annotation) => annotation.id)
     const primaryId = ids.at(-1)
-    this.annotations.setSelection(primaryId === undefined ? { ids: [] } : { ids, primaryId })
+    if (ids.length > 1) {
+      this.annotations.setSelection(primaryId === undefined ? { ids: [] } : { ids, primaryId })
+    }
     this.viewer.clearTextSelection()
-    this.annotations.setTool('text-select')
-    this.toolSelect.value = 'text-select'
     this.setStatus(active.kind === 'document'
       ? `Created grouped ${type} from cross-page PDF text`
       : `Created ${type} from selected PDF text`)
@@ -615,6 +638,8 @@ class DemoInstance {
     this.pageFlow?.destroy()
     this.pageFlow = null
     this.annotations.repository.replaceAll([])
+    this.annotations.setTool('select')
+    this.nativeImports.clear()
     this.sourcePdf = new Uint8Array(bytes)
     this.sourceName = name
     this.currentPageIndex = 0
@@ -668,8 +693,13 @@ class DemoInstance {
         pageIndex: 0,
         bounds,
         content: tool === 'stamp'
-          ? { text: 'Stamp', image: stampDataUrl() }
-          : { text: `${tool} annotation` },
+          ? { text: 'Approved stamp', image: this.requireImageAsset('stamp').image }
+          : tool === 'signature'
+            ? {
+                text: 'Signature',
+                signature: { kind: 'image', image: this.requireImageAsset('signature').image }
+              }
+            : { text: `${tool} annotation` },
         points: [bounds.x, bounds.y, bounds.x + bounds.width, bounds.y + bounds.height]
       })
     }
@@ -677,6 +707,13 @@ class DemoInstance {
       this.annotations.setSelection({ ids: [annotation.id], primaryId: annotation.id })
       this.setStatus(`Created ${annotation.type} · ${this.annotations.repository.getAll().length} total`)
     }
+  }
+
+  /** Returns the demo's prepared image asset after constructor setup. */
+  private requireImageAsset(type: 'signature' | 'stamp') {
+    const asset = this.annotations.getImageAsset(type)
+    if (asset === null) throw new Error(`${type} demo image is unavailable.`)
+    return asset
   }
 
   /** Adds one comment to the current primary selection. */
@@ -927,10 +964,45 @@ function normalizePageView(view: readonly number[]): [number, number, number, nu
   return [xMin, yMin, xMax, yMax]
 }
 
-/** Builds a tiny self-contained SVG stamp image URL. */
-function stampDataUrl(): string {
-  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="54"><rect width="118" height="52" x="1" y="1" rx="6" fill="#ecfdf3" stroke="#067647" stroke-width="2"/><text x="60" y="33" text-anchor="middle" font-family="sans-serif" font-size="17" fill="#067647">APPROVED</text></svg>'
-  return `data:image/svg+xml,${encodeURIComponent(svg)}`
+/** Draws a visible transparent signature image as application-owned input UI would. */
+function createDemoSignature(label: string, color: string) {
+  const canvas = document.createElement('canvas')
+  canvas.width = 360
+  canvas.height = 120
+  const context = canvas.getContext('2d')
+  if (context === null) throw new Error('Demo signature canvas is unavailable.')
+  context.strokeStyle = color
+  context.lineWidth = 7
+  context.lineCap = 'round'
+  context.beginPath()
+  context.moveTo(24, 82)
+  context.bezierCurveTo(80, 12, 105, 114, 150, 55)
+  context.bezierCurveTo(185, 12, 205, 110, 270, 54)
+  context.stroke()
+  context.font = 'italic 26px cursive'
+  context.fillStyle = color
+  context.fillText(label, 238, 96)
+  return { image: canvas.toDataURL('image/png'), width: 180, height: 60, text: `${label} signature` }
+}
+
+/** Draws a visible raster stamp as application-owned selection UI would. */
+function createDemoStamp() {
+  const canvas = document.createElement('canvas')
+  canvas.width = 280
+  canvas.height = 120
+  const context = canvas.getContext('2d')
+  if (context === null) throw new Error('Demo stamp canvas is unavailable.')
+  context.strokeStyle = '#16803a'
+  context.fillStyle = 'rgb(22 128 58 / 10%)'
+  context.lineWidth = 8
+  context.strokeRect(7, 7, 266, 106)
+  context.fillRect(7, 7, 266, 106)
+  context.font = 'bold 38px system-ui'
+  context.textAlign = 'center'
+  context.textBaseline = 'middle'
+  context.fillStyle = '#16803a'
+  context.fillText('APPROVED', 140, 60)
+  return { image: canvas.toDataURL('image/png'), width: 140, height: 60, text: 'Approved stamp' }
 }
 
 /** Mounts both isolated demo instances and loads their PDF pages. */

@@ -5,6 +5,7 @@
  */
 
 import type { PdfPageBox } from '../../geometry/coordinates'
+import type { AnnotationAppearance, AnnotationType } from '../../domain/annotation'
 
 /** PDF.js string wrapper commonly used for title and contents. */
 export interface PdfJsStringValue {
@@ -53,13 +54,21 @@ export interface PdfJsAnnotationInput {
   /** Parent annotation ID for a reply/pop-up comment. */
   inReplyTo?: string
   /** InkLayer custom persisted type marker from PDF metadata inspection. */
-  inkLayerType?: 'Cloud' | 'FreeText' | 'Arrow'
+  inkLayerType?: 'Cloud' | 'FreeText' | 'Arrow' | 'FreeHighlight' | 'SignatureInk' | 'SignatureImage' | 'Stamp'
+  /** Exact canonical type emitted by InkLayer's own exporter. */
+  canonicalType?: AnnotationType
+  /** Exact canonical appearance emitted by InkLayer's own exporter. */
+  appearance?: AnnotationAppearance
+  /** Image payload recovered from an InkLayer image annotation dictionary. */
+  image?: string
   /** Whether PDF border metadata identifies a cloudy polygon. */
   cloudy?: boolean
   /** Optional opacity from PDF metadata. */
   opacity?: number
   /** Optional custom FreeText font size. */
   fontSize?: number
+  /** Normalized PDF.js border style used to restore stroke width and dashes. */
+  borderStyle?: { width?: number; dashArray?: readonly number[] }
 }
 
 /** One page of normalized PDF.js annotations and its coordinate box. */

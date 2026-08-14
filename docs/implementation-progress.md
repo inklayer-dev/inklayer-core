@@ -288,9 +288,9 @@ real creation paths.
   quadratic Cloud waves;
 - instance-owned dynamic Konva Stage, Layer, Transformer, nodes, image hydration,
   author-label overlay, hover state, page registry, and namespaced listeners;
-- Core-owned Stage pointer gestures for drag tools, freehand/signature,
-  Note/FreeText clicks, and multi-point Polygon/Polyline/Cloud; text markup uses
-  normalized browser selection input and Stamp uses image-backed creation input;
+- Core-owned Stage pointer gestures for drag tools and Freehand,
+  Note/FreeText clicks, image-backed Signature/Stamp placement, and multi-point
+  Polygon/Polyline/Cloud; text markup uses normalized browser selection input;
 - selection, transform write-back, semantic updates, deletion, navigation,
   comments/status permissions, tool state, typed events, and listener isolation;
 - actual Clock, IdGenerator, Logger, and TextInputProvider consumers plus an

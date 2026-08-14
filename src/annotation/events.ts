@@ -8,6 +8,15 @@ import type { Annotation, AnnotationBounds } from '../domain/annotation'
 import type { InkLayerError } from '../domain/errors'
 import type { AnnotationSelection } from '../repository/annotation-repository'
 import type { AnnotationTool } from './tools'
+import type { AnnotationImageTool } from './contracts'
+
+/** Origin of a selection command, used by framework adapters to prevent loops. */
+export type AnnotationSelectionSource =
+  | 'canvas' | 'sidebar' | 'navigation' | 'programmatic' | 'repository'
+
+/** Independent hover channel coordinated by Core. */
+export type AnnotationHoverSource =
+  | 'canvas' | 'sidebar-pointer' | 'sidebar-focus' | 'programmatic' | 'passive'
 
 /** Browser text selection normalized to one PDF page. */
 export interface AnnotationTextSelection {
@@ -60,6 +69,18 @@ export type AnnotationEngineEvent =
     type: 'selectionChanged'
     /** Current stable selection. */
     selection: AnnotationSelection
+    /** Command origin. */
+    source: AnnotationSelectionSource
+    /** Whether selection originated from a direct pointer click/tap. */
+    isClick: boolean
+  }
+  | {
+    /** Event discriminator. */
+    type: 'hoverChanged'
+    /** Effective annotation after coordinating all hover channels. */
+    annotationId: string | null
+    /** Source owning the effective hover, or null after the last channel clears. */
+    source: AnnotationHoverSource | null
   }
   | {
     /** Event discriminator. */
@@ -72,6 +93,12 @@ export type AnnotationEngineEvent =
     type: 'toolChanged'
     /** Current transient or persisted tool. */
     tool: AnnotationTool
+  }
+  | {
+    /** Event discriminator. */
+    type: 'imageAssetRequired'
+    /** Image-backed tool that needs application UI to provide an asset. */
+    tool: AnnotationImageTool
   }
   | {
     /** Event discriminator. */

@@ -5,21 +5,30 @@
  */
 
 import type { PdfJsAnnotationPageInput, PdfJsImportWarning } from './types'
-import type { Annotation } from '../../domain/annotation'
+import type { Annotation, AnnotationAppearance, AnnotationType } from '../../domain/annotation'
+import { resolveAnnotationAppearance } from '../../domain/appearance'
 import { importPdfJsAnnotations } from './normalize'
 
 /** Custom metadata recovered from one native PDF annotation dictionary. */
 export interface InkLayerPdfAnnotationMetadata {
   /** Annotation `/NM` identifier or indirect-reference fallback. */
   id: string
+  /** PDF.js annotation ID derived from the indirect object reference. */
+  pdfjsId?: string
   /** Canonical custom marker type. */
-  type: 'Cloud' | 'FreeText' | 'Arrow'
+  type?: 'Cloud' | 'FreeText' | 'Arrow' | 'FreeHighlight' | 'SignatureInk' | 'SignatureImage' | 'Stamp'
+  /** Exact InkLayer canonical type when written by Core. */
+  canonicalType?: AnnotationType
+  /** Exact validated appearance when written by Core. */
+  appearance?: AnnotationAppearance
   /** Optional custom FreeText font size. */
   fontSize?: number
   /** Optional custom FreeText layout width. */
   textWidth?: number
   /** Optional annotation opacity. */
   opacity?: number
+  /** Original image data retained for exact InkLayer round-trip. */
+  image?: string
 }
 
 /** Combined resilient metadata inspection and native decoding result. */
@@ -56,26 +65,66 @@ export async function inspectInkLayerPdfMetadata(
       )
       const marker = dictionary.lookupMaybe(PDFName.of('InkLayerType'), PDFName)?.asString().replace(/^\//, '')
       const type = cloudy ? 'Cloud' : validMarker(marker, subtype)
-      if (type === undefined) continue
+      const canonicalName = dictionary.lookupMaybe(PDFName.of('InkLayerCanonicalType'), PDFName)
+        ?.asString().replace(/^\//, '')
+      const canonicalType = validCanonicalType(canonicalName)
+      const appearanceObject = dictionary.lookupMaybe(
+        PDFName.of('InkLayerAppearance'), PDFString, PDFHexString
+      )
+      const appearance = parseStoredAppearance(appearanceObject?.decodeText(), canonicalType)
+      if (type === undefined && canonicalType === undefined && appearance === undefined) continue
       const nameObject = dictionary.get(PDFName.of('NM'))
       const name = nameObject === undefined ? undefined : document.context.lookup(nameObject)
+      const pdfjsId = reference instanceof PDFRef ? `${reference.objectNumber}R` : undefined
       const id = name instanceof PDFString || name instanceof PDFHexString
         ? name.decodeText()
-        : reference instanceof PDFRef ? `${reference.objectNumber}R` : undefined
+        : pdfjsId
       if (id === undefined || id.length === 0) continue
       const fontSize = dictionary.lookupMaybe(PDFName.of('InkLayerFontSize'), PDFNumber)?.asNumber()
       const textWidth = dictionary.lookupMaybe(PDFName.of('InkLayerTextWidth'), PDFNumber)?.asNumber()
       const opacity = dictionary.lookupMaybe(PDFName.of('CA'), PDFNumber)?.asNumber()
+      const imageObject = dictionary.lookupMaybe(PDFName.of('InkLayerImage'), PDFString, PDFHexString)
+      const image = imageObject?.decodeText()
       records.push({
         id,
-        type,
+        ...(pdfjsId === undefined || pdfjsId === id ? {} : { pdfjsId }),
+        ...(type === undefined ? {} : { type }),
+        ...(canonicalType === undefined ? {} : { canonicalType }),
+        ...(appearance === undefined ? {} : { appearance }),
         ...(fontSize === undefined ? {} : { fontSize }),
         ...(textWidth === undefined ? {} : { textWidth }),
-        ...(opacity === undefined ? {} : { opacity })
+        ...(opacity === undefined ? {} : { opacity }),
+        ...(image === undefined ? {} : { image })
       })
     }
   }
   return records
+}
+
+const CANONICAL_TYPES = new Set<AnnotationType>([
+  'highlight', 'strikeout', 'underline', 'free-text', 'rectangle', 'circle',
+  'freehand', 'free-highlight', 'signature', 'stamp', 'note', 'line', 'arrow',
+  'polygon', 'polyline', 'cloud'
+])
+
+/** Accepts only current V1 canonical names. */
+function validCanonicalType(value: string | undefined): AnnotationType | undefined {
+  return value !== undefined && CANONICAL_TYPES.has(value as AnnotationType)
+    ? value as AnnotationType
+    : undefined
+}
+
+/** Validates exporter-owned appearance JSON through the domain appearance rules. */
+function parseStoredAppearance(
+  value: string | undefined,
+  type: AnnotationType | undefined
+): AnnotationAppearance | undefined {
+  if (value === undefined || type === undefined) return undefined
+  try {
+    return resolveAnnotationAppearance(type, JSON.parse(value) as AnnotationAppearance)
+  } catch {
+    return undefined
+  }
 }
 
 /** Decodes pages after optional metadata enrichment and isolates inspection failure. */
@@ -83,6 +132,9 @@ export async function importPdfJsAnnotationsWithMetadata(
   pages: readonly PdfJsAnnotationPageInput[],
   pdfBytes: Uint8Array | ArrayBuffer
 ): Promise<ImportPdfJsAnnotationsWithMetadataResult> {
+  if (pages.every((page) => page.annotations.length === 0)) {
+    return { ...importPdfJsAnnotations(pages), metadata: [] }
+  }
   let metadata: readonly InkLayerPdfAnnotationMetadata[] = []
   let warning: PdfJsImportWarning | undefined
   try {
@@ -110,6 +162,10 @@ function validMarker(
   if (marker === 'Cloud' && (subtype === 'Ink' || subtype === 'Polygon')) return marker
   if (marker === 'Arrow' && subtype === 'Ink') return marker
   if (marker === 'FreeText' && (subtype === 'Text' || subtype === 'FreeText')) return marker
+  if (marker === 'FreeHighlight' && subtype === 'Ink') return marker
+  if (marker === 'SignatureInk' && subtype === 'Ink') return marker
+  if (marker === 'SignatureImage' && subtype === 'Stamp') return marker
+  if (marker === 'Stamp' && subtype === 'Stamp') return marker
   return undefined
 }
 
@@ -118,7 +174,10 @@ function enrichPages(
   pages: readonly PdfJsAnnotationPageInput[],
   metadata: readonly InkLayerPdfAnnotationMetadata[]
 ): PdfJsAnnotationPageInput[] {
-  const byId = new Map(metadata.map((record) => [record.id, record]))
+  const byId = new Map(metadata.flatMap((record) => [
+    [record.id, record] as const,
+    ...(record.pdfjsId === undefined ? [] : [[record.pdfjsId, record] as const])
+  ]))
   return pages.map((page) => ({
     ...page,
     annotations: page.annotations.map((annotation) => {
@@ -128,8 +187,11 @@ function enrichPages(
       return {
         ...annotation,
         inkLayerType: record.type,
+        ...(record.canonicalType === undefined ? {} : { canonicalType: record.canonicalType }),
+        ...(record.appearance === undefined ? {} : { appearance: record.appearance }),
         ...(record.fontSize === undefined ? {} : { fontSize: record.fontSize }),
         ...(record.opacity === undefined ? {} : { opacity: record.opacity }),
+        ...(record.image === undefined ? {} : { image: record.image }),
         ...(record.type === 'Cloud' ? { cloudy: true } : {})
       }
     })
