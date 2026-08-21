@@ -14,12 +14,34 @@ import {
   PDFNumber,
   rgb,
   StandardFonts,
+  appendBezierCurve,
+  closePath,
+  fill,
+  fillAndStroke,
+  lineTo,
+  moveTo,
+  popGraphicsState,
+  pushGraphicsState,
+  rectangle,
+  setDashPattern,
+  setFillingRgbColor,
+  setGraphicsState,
+  setLineWidth,
+  setStrokingRgbColor,
+  stroke,
+  type PDFOperator,
+  type PDFRef,
   type PDFFont,
   type PDFPage
 } from 'pdf-lib'
 import fontkit from '@pdf-lib/fontkit'
 
-import type { Annotation, AnnotationBounds, AnnotationType } from '../../domain/annotation'
+import {
+  isBuiltInAnnotationType,
+  type Annotation,
+  type AnnotationBounds,
+  type AnnotationType
+} from '../../domain/annotation'
 import { parseAnnotationColor } from '../../domain/color'
 import { InkLayerError } from '../../domain/errors'
 import { parseAnnotation } from '../../domain/validation'
@@ -37,6 +59,11 @@ import {
   type ValidatedKonvaSnapshot
 } from '../../renderer/konva/snapshot'
 import { normalizeWatermarkSpec, type PdfWatermarkSpec } from '../../domain/watermark'
+import type {
+  AnnotationTypeDefinition,
+  AnnotationTypeRegistry
+} from '../../annotation-types/contracts'
+import { buildAnnotationSceneRendererState } from '../../renderer/konva/annotation-scene'
 
 /** Export behavior used when one annotation cannot be represented safely. */
 export type PdfExportStrategy = 'strict' | 'lenient'
@@ -65,14 +92,38 @@ export interface PdfExportOptions {
   watermarkFontBytes?: Uint8Array
   /** Selects which watermark target flag applies; defaults to export. */
   watermarkTarget?: 'print' | 'export'
+  /** Instance Registry required to render and export custom annotation types. */
+  annotationTypes?: AnnotationTypeRegistry
 }
 
 /** Internal annotation plus its validated renderer representation. */
-interface PreparedAnnotation {
+interface PreparedBuiltInAnnotation {
+  /** Prepared representation discriminator. */
+  kind: 'built-in'
   /** Detached canonical annotation. */
-  annotation: Annotation
+  annotation: Annotation & { type: AnnotationType }
   /** Single validated renderer snapshot. */
   snapshot: ValidatedKonvaSnapshot
+}
+
+/** Compatible controlled custom annotation ready for a PDF appearance stream. */
+interface PreparedCustomAnnotation {
+  /** Prepared representation discriminator. */
+  kind: 'custom'
+  /** Detached canonical custom annotation. */
+  annotation: Annotation
+  /** Compatible Definition resolved by the supplied instance Registry. */
+  definition: AnnotationTypeDefinition
+  /** Core-validated controlled scene snapshot; no Konva object is created. */
+  snapshot: ValidatedKonvaSnapshot
+}
+
+type PreparedAnnotation = PreparedBuiltInAnnotation | PreparedCustomAnnotation
+
+/** Mutable PDF resources assembled only from validated controlled primitives. */
+interface CustomPdfResources {
+  /** Per-primitive opacity graphics states. */
+  ExtGState: Record<string, PDFDict>
 }
 
 const REPLACEABLE_SUBTYPES = new Set([
@@ -93,7 +144,14 @@ export async function buildAnnotatedPdf(
   } catch (cause) {
     throw exportError('PDF bytes could not be loaded.', undefined, cause)
   }
-  const prepared = prepareAnnotations(annotationsInput, document.getPageCount(), strategy, options.onWarning)
+  const prepared = prepareAnnotations(
+    annotationsInput,
+    document.getPageCount(),
+    strategy,
+    options.onWarning,
+    options.annotationTypes,
+    options.watermarkTarget === 'print' ? 'print' : 'export'
+  )
   const byPage = new Map<number, PreparedAnnotation[]>()
   for (const item of prepared) {
     const pageItems = byPage.get(item.annotation.pageIndex) ?? []
@@ -164,7 +222,7 @@ function drawPdfPageWatermark(
   spec: PdfWatermarkSpec,
   color: ReturnType<typeof rgb>
 ): void {
-  const { width, height } = page.getSize()
+  const { x, y, width, height } = page.getCropBox()
   const size = spec.fontSize ?? 18
   const angle = spec.rotation ?? -30
   const opacity = spec.opacity ?? 0.12
@@ -181,13 +239,15 @@ function drawPdfPageWatermark(
     })
   }
   if ((spec.layout ?? 'repeated') === 'center') {
-    draw(width / 2, height / 2)
+    draw(x + width / 2, y + height / 2)
     return
   }
   const stepX = Math.max(textWidth + (spec.horizontalGap ?? 120), 40)
   const stepY = Math.max(size + (spec.verticalGap ?? 90), 40)
-  for (let y = -height; y <= height * 2; y += stepY) {
-    for (let x = -width; x <= width * 2; x += stepX) draw(x, y)
+  for (let cursorY = y - height; cursorY <= y + height * 2; cursorY += stepY) {
+    for (let cursorX = x - width; cursorX <= x + width * 2; cursorX += stepX) {
+      draw(cursorX, cursorY)
+    }
   }
 }
 
@@ -207,7 +267,9 @@ function prepareAnnotations(
   input: readonly Annotation[],
   pageCount: number,
   strategy: PdfExportStrategy,
-  onWarning: PdfExportOptions['onWarning']
+  onWarning: PdfExportOptions['onWarning'],
+  annotationTypes: AnnotationTypeRegistry | undefined,
+  target: 'print' | 'export'
 ): PreparedAnnotation[] {
   const prepared: PreparedAnnotation[] = []
   const ids = new Set<string>()
@@ -216,6 +278,22 @@ function prepareAnnotations(
       const annotation = parseAnnotation(candidate)
       if (ids.has(annotation.id)) throw new Error('Duplicate annotation identifier.')
       if (annotation.pageIndex >= pageCount) throw new Error('Target page does not exist.')
+      if (!isBuiltInAnnotationType(annotation.type)) {
+        const definition = requireCustomPdfDefinition(annotation, annotationTypes, target)
+        const rendererState = buildAnnotationSceneRendererState(
+          annotation,
+          annotationTypes?.renderControlled(annotation, 'buildAnnotatedPdf') ?? unavailableCustomExport(annotation)
+        )
+        const snapshot = parseAndValidateKonvaSnapshot(rendererState.serialized, {
+          annotationId: annotation.id,
+          pageIndex: annotation.pageIndex,
+          operation: 'buildAnnotatedPdf'
+        })
+        validateCustomPdfSnapshot(snapshot)
+        ids.add(annotation.id)
+        prepared.push({ kind: 'custom', annotation, definition, snapshot })
+        continue
+      }
       const snapshot = parseAndValidateKonvaSnapshot(annotation.rendererState.serialized, {
         annotationId: annotation.id,
         pageIndex: annotation.pageIndex,
@@ -223,7 +301,11 @@ function prepareAnnotations(
       })
       parseAnnotationColor(primaryAppearanceColor(annotation))
       ids.add(annotation.id)
-      prepared.push({ annotation, snapshot })
+      prepared.push({
+        kind: 'built-in',
+        annotation: annotation as Annotation & { type: AnnotationType },
+        snapshot
+      })
     } catch (cause) {
       if (strategy === 'strict') throw exportError('PDF annotation preflight failed.', candidate, cause)
       onWarning?.({
@@ -235,6 +317,20 @@ function prepareAnnotations(
     }
   }
   return prepared
+}
+
+/** Rejects unsupported controlled primitives during preflight before PDF mutation. */
+function validateCustomPdfSnapshot(snapshot: ValidatedKonvaSnapshot): void {
+  const children = snapshot.root.children ?? []
+  if (children.length === 0) throw new Error('Custom annotation scene has no exportable primitives.')
+  for (const node of children) {
+    if (node.className !== 'Rect' && node.className !== 'Ellipse' && node.className !== 'Line') {
+      throw new Error(`Controlled PDF appearance does not support ${node.className} primitives yet.`)
+    }
+    if (node.attrs['stroke'] === undefined && node.attrs['fill'] === undefined) {
+      throw new Error('Controlled PDF primitive has no visible paint.')
+    }
+  }
 }
 
 /** Copies existing unsupported annotations into a new page annotation array. */
@@ -263,6 +359,10 @@ async function writeAnnotation(
   prepared: PreparedAnnotation,
   annots: PDFArray
 ): Promise<void> {
+  if (prepared.kind === 'custom') {
+    await writeCustomAnnotation(document, page, prepared, annots)
+    return
+  }
   const { annotation, snapshot } = prepared
   const pageBox = pdfPageBox(page)
   const dictionary = baseDictionary(document, page, annotation, pageBox)
@@ -271,6 +371,18 @@ async function writeAnnotation(
   await writeImageAppearance(document, dictionary, annotation, pageBox)
   const reference = document.context.register(dictionary)
   annots.push(reference)
+  writeReplyComments(document, page, annotation, reference, annots)
+}
+
+/** Writes canonical reply dictionaries shared by native and controlled types. */
+function writeReplyComments(
+  document: PDFDocument,
+  page: PDFPage,
+  annotation: Annotation,
+  reference: PDFRef,
+  annots: PDFArray
+): void {
+  const pageBox = pdfPageBox(page)
   for (const comment of annotation.comments) {
     const reply = document.context.obj({
       Type: 'Annot',
@@ -287,6 +399,243 @@ async function writeAnnotation(
     })
     annots.push(document.context.register(reply))
   }
+}
+
+/** Resolves a compatible enabled controlled PDF appearance policy. */
+function requireCustomPdfDefinition(
+  annotation: Annotation,
+  annotationTypes: AnnotationTypeRegistry | undefined,
+  target: 'print' | 'export'
+): AnnotationTypeDefinition {
+  if (annotationTypes === undefined) unavailableCustomExport(annotation)
+  const availability = annotationTypes.validate(annotation)
+  if (availability.status !== 'available' || !('render' in availability.definition.renderer)) {
+    unavailableCustomExport(annotation)
+  }
+  const definition = availability.definition
+  const enabled = target === 'print'
+    ? definition.capabilities.printable
+    : definition.capabilities.exportable
+  if (!enabled) {
+    throw new InkLayerError('ANNOTATION_TYPE_UNAVAILABLE', `Custom annotation is not ${target}able.`, {
+      operation: 'buildAnnotatedPdf', annotationId: annotation.id, pageIndex: annotation.pageIndex
+    })
+  }
+  if (definition.pdf?.exportStrategy !== 'appearance-stream') {
+    throw new InkLayerError(
+      'ANNOTATION_TYPE_UNSUPPORTED',
+      'Custom PDF export currently requires the controlled appearance-stream strategy.',
+      { operation: 'buildAnnotatedPdf', annotationId: annotation.id, pageIndex: annotation.pageIndex }
+    )
+  }
+  return definition
+}
+
+/** Throws the stable missing-strategy error while preserving caller data. */
+function unavailableCustomExport(annotation: Annotation): never {
+  throw new InkLayerError(
+    'ANNOTATION_TYPE_UNAVAILABLE',
+    'Custom annotation PDF export requires a compatible instance Definition.',
+    { operation: 'buildAnnotatedPdf', annotationId: annotation.id, pageIndex: annotation.pageIndex }
+  )
+}
+
+/** Writes one controlled scene as a selectable PDF Stamp appearance stream. */
+async function writeCustomAnnotation(
+  document: PDFDocument,
+  page: PDFPage,
+  prepared: PreparedCustomAnnotation,
+  annots: PDFArray
+): Promise<void> {
+  const { annotation, snapshot } = prepared
+  const pageBox = pdfPageBox(page)
+  const pdfRect = boundsToPdfRect(annotation.bounds, annotation.coordinateSpace, pageBox)
+  const width = Math.max(pdfRect[2] - pdfRect[0], 0.01)
+  const height = Math.max(pdfRect[3] - pdfRect[1], 0.01)
+  const resources: CustomPdfResources = { ExtGState: {} }
+  const operators: PDFOperator[] = []
+  let graphicsStateIndex = 0
+
+  for (const node of snapshot.root.children ?? []) {
+    if (node.className === 'Group') {
+      throw new Error('Nested controlled scene groups are not supported by PDF appearance export.')
+    }
+    const nodeOperators = customNodeOperators(
+      node,
+      snapshot.root.attrs,
+      annotation,
+      pageBox,
+      pdfRect,
+      document,
+      resources,
+      graphicsStateIndex
+    )
+    graphicsStateIndex += 1
+    operators.push(...nodeOperators)
+  }
+  if (operators.length === 0) throw new Error('Custom annotation scene has no exportable primitives.')
+
+  const appearance = document.context.formXObject(operators, {
+    BBox: document.context.obj([0, 0, width, height]),
+    Matrix: document.context.obj([1, 0, 0, 1, 0, 0]),
+    Resources: document.context.obj({ ExtGState: resources.ExtGState })
+  })
+  const appearanceRef = document.context.register(appearance)
+  const dictionary = document.context.obj({
+    Type: 'Annot',
+    Subtype: 'Stamp',
+    Rect: pdfNumberArray(document, pdfRect),
+    NM: PDFHexString.fromText(annotation.id),
+    T: PDFHexString.fromText(annotation.author.name),
+    Contents: PDFHexString.fromText(annotation.content?.text ?? ''),
+    M: PDFHexString.fromText(toPdfDate(annotation.updatedAt ?? annotation.createdAt)),
+    InkLayerCanonicalType: PDFHexString.fromText(annotation.type),
+    InkLayerTypeData: PDFHexString.fromText(JSON.stringify(annotation.typeData ?? null)),
+    InkLayerAppearance: PDFHexString.fromText(JSON.stringify(annotation.appearance)),
+    AP: document.context.obj({ N: appearanceRef }),
+    F: 4,
+    P: page.ref
+  })
+  const reference = document.context.register(dictionary)
+  annots.push(reference)
+  writeReplyComments(document, page, annotation, reference, annots)
+}
+
+/** Converts one validated controlled primitive to bounded local AP operators. */
+function customNodeOperators(
+  node: ValidatedKonvaNode,
+  rootAttrs: Readonly<Record<string, unknown>>,
+  annotation: Annotation,
+  pageBox: PdfPageBox,
+  annotationRect: readonly [number, number, number, number],
+  document: PDFDocument,
+  resources: CustomPdfResources,
+  graphicsStateIndex: number
+): PDFOperator[] {
+  if (node.className !== 'Rect' && node.className !== 'Ellipse' && node.className !== 'Line') {
+    throw new Error(`Controlled PDF appearance does not support ${node.className} primitives yet.`)
+  }
+  const opacity = numericNodeAttr(node, 'opacity', 1) * annotation.appearance.opacity
+  const strokeOpacity = numericNodeAttr(node, 'strokeOpacity', 1) * opacity
+  const fillOpacity = numericNodeAttr(node, 'fillOpacity', 1) * opacity
+  const graphicsStateName = `GS${graphicsStateIndex}`
+  resources.ExtGState[graphicsStateName] = document.context.obj({
+    Type: 'ExtGState', CA: strokeOpacity, ca: fillOpacity
+  })
+  const operators: PDFOperator[] = [pushGraphicsState(), setGraphicsState(graphicsStateName)]
+  const strokeColor = stringNodeAttr(node, 'stroke')
+  const fillColor = stringNodeAttr(node, 'fill')
+  if (strokeColor !== undefined) {
+    const [red, green, blue] = parseAnnotationColor(strokeColor)
+    operators.push(
+      setStrokingRgbColor(red, green, blue),
+      setLineWidth(numericNodeAttr(node, 'strokeWidth', 1)),
+      setDashPattern(numberArrayNodeAttr(node, 'dash'), numericNodeAttr(node, 'dashOffset', 0))
+    )
+  }
+  if (fillColor !== undefined) {
+    const [red, green, blue] = parseAnnotationColor(fillColor)
+    operators.push(setFillingRgbColor(red, green, blue))
+  }
+  if (node.className === 'Line') {
+    const points = numberArrayNodeAttr(node, 'points')
+    if (points.length < 4 || points.length % 2 !== 0) throw new Error('Controlled line points are invalid.')
+    points.forEach((_, index) => {
+      if (index % 2 !== 0) return
+      const point = localPdfPoint(
+        { x: points[index] ?? 0, y: points[index + 1] ?? 0 },
+        node.attrs, rootAttrs, annotation, pageBox, annotationRect
+      )
+      operators.push(index === 0 ? moveTo(point.x, point.y) : lineTo(point.x, point.y))
+    })
+    if (node.attrs['closed'] === true) operators.push(closePath())
+  } else {
+    const localBounds = localPdfBounds(node, rootAttrs, annotation, pageBox, annotationRect)
+    if (node.className === 'Rect') {
+      operators.push(rectangle(localBounds.x, localBounds.y, localBounds.width, localBounds.height))
+    } else {
+      operators.push(...ellipseOperators(localBounds))
+    }
+  }
+  if (strokeColor !== undefined && fillColor !== undefined) operators.push(fillAndStroke())
+  else if (fillColor !== undefined) operators.push(fill())
+  else if (strokeColor !== undefined) operators.push(stroke())
+  else throw new Error('Controlled PDF primitive has no visible paint.')
+  operators.push(popGraphicsState())
+  return operators
+}
+
+/** Builds an ellipse path using four cubic Bézier segments. */
+function ellipseOperators(bounds: AnnotationBounds): PDFOperator[] {
+  const factor = 0.552284749831
+  const radiusX = bounds.width / 2
+  const radiusY = bounds.height / 2
+  const centerX = bounds.x + radiusX
+  const centerY = bounds.y + radiusY
+  return [
+    moveTo(centerX + radiusX, centerY),
+    appendBezierCurve(centerX + radiusX, centerY + factor * radiusY, centerX + factor * radiusX, centerY + radiusY, centerX, centerY + radiusY),
+    appendBezierCurve(centerX - factor * radiusX, centerY + radiusY, centerX - radiusX, centerY + factor * radiusY, centerX - radiusX, centerY),
+    appendBezierCurve(centerX - radiusX, centerY - factor * radiusY, centerX - factor * radiusX, centerY - radiusY, centerX, centerY - radiusY),
+    appendBezierCurve(centerX + factor * radiusX, centerY - radiusY, centerX + radiusX, centerY - factor * radiusY, centerX + radiusX, centerY),
+    closePath()
+  ]
+}
+
+/** Projects a validated node rectangle into the annotation appearance box. */
+function localPdfBounds(
+  node: ValidatedKonvaNode,
+  rootAttrs: Readonly<Record<string, unknown>>,
+  annotation: Annotation,
+  pageBox: PdfPageBox,
+  annotationRect: readonly [number, number, number, number]
+): AnnotationBounds {
+  const width = numericNodeAttr(node, node.className === 'Ellipse' ? 'radiusX' : 'width', 0)
+    * (node.className === 'Ellipse' ? 2 : 1)
+  const height = numericNodeAttr(node, node.className === 'Ellipse' ? 'radiusY' : 'height', 0)
+    * (node.className === 'Ellipse' ? 2 : 1)
+  const origin = node.className === 'Ellipse'
+    ? { x: -width / 2, y: -height / 2 }
+    : { x: 0, y: 0 }
+  const opposite = { x: origin.x + width, y: origin.y + height }
+  const first = localPdfPoint(origin, node.attrs, rootAttrs, annotation, pageBox, annotationRect)
+  const second = localPdfPoint(opposite, node.attrs, rootAttrs, annotation, pageBox, annotationRect)
+  return {
+    x: Math.min(first.x, second.x),
+    y: Math.min(first.y, second.y),
+    width: Math.abs(second.x - first.x),
+    height: Math.abs(second.y - first.y)
+  }
+}
+
+/** Converts one snapshot point to local PDF appearance coordinates. */
+function localPdfPoint(
+  point: CoordinatePoint,
+  nodeAttrs: Readonly<Record<string, unknown>>,
+  rootAttrs: Readonly<Record<string, unknown>>,
+  annotation: Annotation,
+  pageBox: PdfPageBox,
+  annotationRect: readonly [number, number, number, number]
+): CoordinatePoint {
+  const transformed = transformSnapshotPoint(point, nodeAttrs, rootAttrs)
+  const pdfPoint = annotation.coordinateSpace === 'konva-stage'
+    ? stagePointToPdf(transformed, pageBox)
+    : transformed
+  return { x: pdfPoint.x - annotationRect[0], y: pdfPoint.y - annotationRect[1] }
+}
+
+/** Reads one optional validated string node attribute. */
+function stringNodeAttr(node: ValidatedKonvaNode, key: string): string | undefined {
+  const value = node.attrs[key]
+  return typeof value === 'string' ? value : undefined
+}
+
+/** Reads one validated finite numeric array node attribute. */
+function numberArrayNodeAttr(node: ValidatedKonvaNode, key: string): number[] {
+  const value = node.attrs[key]
+  return Array.isArray(value) && value.every((part) => typeof part === 'number')
+    ? value as number[]
+    : []
 }
 
 /** Writes PDF border/fill entries that have direct semantic equivalents. */
@@ -315,7 +664,7 @@ function writeAppearanceGeometry(
 function baseDictionary(
   document: PDFDocument,
   page: PDFPage,
-  annotation: Annotation,
+  annotation: Annotation & { type: AnnotationType },
   pageBox: PdfPageBox
 ): PDFDict {
   const color = parseAnnotationColor(primaryAppearanceColor(annotation))
@@ -678,13 +1027,13 @@ function boundsToPdfRect(
 
 /** Derives a coordinate conversion box from one loaded PDF page. */
 function pdfPageBox(page: PDFPage): PdfPageBox {
-  const mediaBox = page.getMediaBox()
+  const cropBox = page.getCropBox()
   const rotation = normalizeRotation(page.getRotation().angle)
   return {
-    xMin: mediaBox.x,
-    yMin: mediaBox.y,
-    xMax: mediaBox.x + mediaBox.width,
-    yMax: mediaBox.y + mediaBox.height,
+    xMin: cropBox.x,
+    yMin: cropBox.y,
+    xMax: cropBox.x + cropBox.width,
+    yMax: cropBox.y + cropBox.height,
     rotation
   }
 }

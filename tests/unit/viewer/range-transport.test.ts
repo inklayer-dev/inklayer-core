@@ -18,6 +18,24 @@ function response(status: number, body: Uint8Array | null, headers: Record<strin
 }
 
 describe('PDF Range probing', () => {
+  it('invokes browser-compatible fetch implementations without an accidental receiver', async () => {
+    const receivers: unknown[] = []
+    let call = 0
+    const fetch = function (this: unknown): Promise<Response> {
+      receivers.push(this)
+      call += 1
+      return Promise.resolve(call === 1
+        ? response(200, null, { 'content-length': '4', 'accept-ranges': 'bytes' })
+        : response(206, new Uint8Array([1, 2, 3, 4]), {
+            'content-range': 'bytes 0-3/4'
+          }))
+    } as typeof globalThis.fetch
+    await expect(probePdfRangeSupport({
+      url: '/document.pdf', signal: new AbortController().signal, fetch
+    })).resolves.toMatchObject({ length: 4 })
+    expect(receivers).toEqual([undefined, undefined])
+  })
+
   it('validates metadata and an initial 206 response', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>()
       .mockResolvedValueOnce(response(200, null, {

@@ -12,6 +12,7 @@ import type {
   PdfDocumentTextSelection,
   PdfSearchMatch,
   PdfTextSelection,
+  PdfTextSelectionSource,
   PdfTextSelectionRect
 } from './types'
 
@@ -27,8 +28,11 @@ interface TextLayerResources {
 /** Owns all attached PDF.js TextLayers for one loaded document. */
 export class PdfTextLayerController {
   private readonly document: PDFDocumentProxy
-  private readonly onSelection: (selection: PdfTextSelection) => void
-  private readonly onDocumentSelection: (selection: PdfDocumentTextSelection) => void
+  private readonly onSelection: (selection: PdfTextSelection, source: PdfTextSelectionSource) => void
+  private readonly onDocumentSelection: (
+    selection: PdfDocumentTextSelection,
+    source: PdfTextSelectionSource
+  ) => void
   private readonly onSelectionCleared: () => void
   private readonly pages = new Map<number, TextLayerResources>()
   private readonly generations = new Map<number, number>()
@@ -40,8 +44,11 @@ export class PdfTextLayerController {
   /** Creates a TextLayer controller around one live document. */
   public constructor(
     document: PDFDocumentProxy,
-    onSelection: (selection: PdfTextSelection) => void,
-    onDocumentSelection: (selection: PdfDocumentTextSelection) => void = () => undefined,
+    onSelection: (selection: PdfTextSelection, source: PdfTextSelectionSource) => void,
+    onDocumentSelection: (
+      selection: PdfDocumentTextSelection,
+      source: PdfTextSelectionSource
+    ) => void = () => undefined,
     onSelectionCleared: () => void = () => undefined
   ) {
     this.document = document
@@ -149,15 +156,15 @@ export class PdfTextLayerController {
   /** Attaches page-local completion listeners without a global selection singleton. */
   private attachSelectionListeners(resources: TextLayerResources): void {
     const signal = resources.abortController.signal
-    const capture = (): void => {
-      queueMicrotask(() => this.captureSelection(resources))
+    const capture = (source: PdfTextSelectionSource): void => {
+      queueMicrotask(() => this.captureSelection(resources, source))
     }
-    resources.container.addEventListener('pointerup', capture, { signal })
-    resources.container.addEventListener('keyup', capture, { signal })
+    resources.container.addEventListener('pointerup', () => capture('pointer'), { signal })
+    resources.container.addEventListener('keyup', () => capture('keyboard'), { signal })
   }
 
   /** Emits one normalized same-page selection when browser geometry is usable. */
-  private captureSelection(resources: TextLayerResources): void {
+  private captureSelection(resources: TextLayerResources, source: PdfTextSelectionSource): void {
     if (this.destroyed || this.pages.get(resources.pageIndex) !== resources) return
     const selection = resources.container.ownerDocument.getSelection()
     if (selection === null || selection.isCollapsed || selection.rangeCount !== 1) {
@@ -168,7 +175,7 @@ export class PdfTextLayerController {
     }
     if (!nodeBelongsTo(resources.container, selection.anchorNode)
       || !nodeBelongsTo(resources.container, selection.focusNode)) {
-      this.captureCrossPageSelection(selection)
+      this.captureCrossPageSelection(selection, source)
       return
     }
     const text = selection.toString().trim()
@@ -183,11 +190,11 @@ export class PdfTextLayerController {
       `${rect.x},${rect.y},${rect.width},${rect.height}`).join(';')}`
     if (signature === resources.lastSelectionSignature) return
     resources.lastSelectionSignature = signature
-    this.onSelection({ pageIndex: resources.pageIndex, text, rects })
+    this.onSelection({ pageIndex: resources.pageIndex, text, rects }, source)
   }
 
   /** Normalizes a DOM Range spanning two or more simultaneously attached pages. */
-  private captureCrossPageSelection(selection: Selection): void {
+  private captureCrossPageSelection(selection: Selection, source: PdfTextSelectionSource): void {
     if (selection.rangeCount !== 1) return
     const range = selection.getRangeAt(0)
     const fragments: PdfTextSelection[] = []
@@ -216,7 +223,7 @@ export class PdfTextLayerController {
       `${fragment.pageIndex}:${fragment.rects.length}`).join(';')}`
     if (signature === this.lastDocumentSelectionSignature) return
     this.lastDocumentSelectionSignature = signature
-    this.onDocumentSelection({ text, fragments })
+    this.onDocumentSelection({ text, fragments }, source)
   }
 
   /** Releases one attached layer without changing its generation. */

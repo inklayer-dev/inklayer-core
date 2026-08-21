@@ -26,6 +26,7 @@ node_modules
 # Output
 dist/
 dist-example/
+docs/.vitepress/cache/
 playwright-report/
 test-results/
 *.log

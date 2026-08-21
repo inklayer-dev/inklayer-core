@@ -1,8 +1,5 @@
 # Core Product Boundary
 
-> Status: normative architecture contract; correction verified complete on
-> 2026-08-11.
-
 InkLayer Core owns behavior that must remain identical across React, Vue,
 Vanilla, and future consumers. Framework adapters own product composition and
 presentation. The dividing line is behavioral consistency—not whether a feature
@@ -34,6 +31,7 @@ browser engine behavior, while the framework renders the surrounding controls.
 | Watermark | validated policy, Canvas/PDF rendering | identity data and policy controls |
 | Print | permission enforcement, vector/raster composition, watermark/annotation merge, browser resource lifecycle | print options and command UI |
 | Annotation interaction | hit testing, selection, drag, resize, rotate, endpoint/vertex editing | toolbar and appearance controls |
+| Keyboard/accessibility | direct-document focus, annotation semantic mirror, movement/deletion, FreeText focus, reduced-motion execution | labelled product controls, menu/dialog focus order, localized workflow copy |
 | Collaboration | canonical comments, permissions, references, numbering | panels, dialogs and user-facing messages |
 | Export | deterministic PDF/XLSX bytes | naming, download, upload and persistence policy |
 
@@ -58,6 +56,9 @@ browser engine behavior, while the framework renders the surrounding controls.
 - Passwords never enter snapshots, errors, logs, storage, or ordinary events.
 - Framework adapters never receive Konva nodes or persist framework-specific
   annotation models.
+- Core never applies `role="application"`; Canvas annotations have stable native
+  button alternatives with visible focus, while adapters own surrounding control
+  semantics and use text-selection source for contextual-menu focus handoff.
 - Viewer sub-features are generation-scoped and release page tasks, canvases,
   text layers, search work, and cached thumbnails on replacement or destroy.
 - Virtual multi-page flow mounts only pages inside the render-ahead window,

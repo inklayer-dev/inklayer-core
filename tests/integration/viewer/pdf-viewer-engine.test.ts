@@ -234,7 +234,7 @@ describe('PDF Viewer Engine lifecycle', () => {
     await vi.waitFor(() => expect(mocks.getDocument).toHaveBeenCalledTimes(1))
     await engine.cancelLoad()
     await expect(cancelledLoad).rejects.toEqual(expect.objectContaining<Partial<InkLayerError>>({
-      code: 'PDF_LOAD_FAILED'
+      code: 'PDF_LOAD_CANCELLED', operation: 'load'
     }))
     expect(engine.getSnapshot().status).toBe('idle')
     const destroyedLoad = engine.load({ data: new Uint8Array([2]) })
@@ -385,8 +385,8 @@ describe('PDF Viewer Engine lifecycle', () => {
     engine.subscribe(listener)
     await engine.load({ data: new Uint8Array([1]) })
     expect(onListenerError).toHaveBeenCalled()
-    expect(engine.getViewer()).not.toBeNull()
-    expect(engine.getEventBus()).not.toBeNull()
+    expect('getViewer' in engine).toBe(false)
+    expect('getEventBus' in engine).toBe(false)
     const scaleEvents: number[] = []
     engine.subscribe((event) => {
       if (event.type === 'scaleChanged') scaleEvents.push(event.state.scale)

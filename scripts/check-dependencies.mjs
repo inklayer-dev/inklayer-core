@@ -66,16 +66,19 @@ function allowedLayers(layer) {
     geometry: ['domain', 'geometry'],
     repository: ['domain', 'repository'],
     compat: ['domain', 'compat'],
-    renderer: ['domain', 'geometry', 'renderer'],
+    renderer: ['domain', 'geometry', 'annotation-types', 'renderer'],
     viewer: ['domain', 'ports', 'platform', 'viewer'],
-    annotation: ['domain', 'geometry', 'repository', 'renderer', 'viewer', 'ports', 'platform', 'annotation'],
+    annotation: ['domain', 'geometry', 'repository', 'renderer', 'viewer', 'ports', 'platform', 'annotation-types', 'annotation'],
     import: ['domain', 'geometry', 'renderer', 'import'],
-    export: ['domain', 'geometry', 'renderer', 'export'],
+    export: ['domain', 'geometry', 'renderer', 'annotation-types', 'export'],
     platform: ['ports', 'platform'],
     ports: ['domain', 'ports'],
+    lifecycle: ['domain', 'lifecycle'],
+    capabilities: ['root', 'domain', 'lifecycle', 'viewer', 'annotation', 'annotation-types', 'ports', 'platform', 'repository', 'renderer', 'geometry', 'capabilities'],
+    'annotation-types': ['domain', 'annotation-types'],
     styles: ['styles']
   }
-  return rules[layer] ?? ['root', 'domain', 'geometry', 'repository', 'renderer', 'viewer', 'annotation', 'import', 'export', 'platform', 'ports', 'compat', 'styles']
+  return rules[layer] ?? ['root', 'domain', 'geometry', 'repository', 'renderer', 'viewer', 'annotation', 'annotation-types', 'import', 'export', 'platform', 'ports', 'compat', 'lifecycle', 'capabilities', 'styles']
 }
 
 /** Detects the first directed graph cycle, if one exists. */

@@ -12,7 +12,7 @@ import type { AnnotationImageTool } from './contracts'
 
 /** Origin of a selection command, used by framework adapters to prevent loops. */
 export type AnnotationSelectionSource =
-  | 'canvas' | 'sidebar' | 'navigation' | 'programmatic' | 'repository'
+  | 'canvas' | 'accessibility' | 'sidebar' | 'navigation' | 'programmatic' | 'repository'
 
 /** Independent hover channel coordinated by Core. */
 export type AnnotationHoverSource =

@@ -38,14 +38,14 @@ describe('canonical annotation validation', () => {
 
   it('rejects dangerous extension keys parsed from JSON', () => {
     const extension = JSON.parse('{"constructor":{"polluted":true}}') as unknown
-    expect(() => parseAnnotation(createTestAnnotation({ extensions: extension as Record<string, unknown> })))
+    expect(() => parseAnnotation({ ...createTestAnnotation(), extensions: extension }))
       .toThrowError(expect.objectContaining<Partial<InkLayerError>>({ code: 'ANNOTATION_INVALID' }))
   })
 
   it('rejects non-JSON extension values', () => {
-    expect(() => parseAnnotation(createTestAnnotation({ extensions: { created: new Date() } })))
+    expect(() => parseAnnotation({ ...createTestAnnotation(), extensions: { created: new Date() } }))
       .toThrowError(expect.objectContaining<Partial<InkLayerError>>({ code: 'ANNOTATION_INVALID' }))
-    expect(() => parseAnnotation(createTestAnnotation({ extensions: { value: undefined } })))
+    expect(() => parseAnnotation({ ...createTestAnnotation(), extensions: { value: undefined } }))
       .toThrowError(expect.objectContaining<Partial<InkLayerError>>({ code: 'ANNOTATION_INVALID' }))
   })
 
@@ -57,5 +57,72 @@ describe('canonical annotation validation', () => {
     expect(() => parseAnnotation(createTestAnnotation({
       type: 'signature', content: { text: '', signature: { kind: 'ink', strokes: [[1, 2, 3]] } }
     }))).toThrowError(expect.objectContaining<Partial<InkLayerError>>({ code: 'ANNOTATION_INVALID' }))
+  })
+
+  it.each([
+    'custom:acme/measurement',
+    'custom:medical.region/approval_stamp',
+    'custom:a/b'
+  ])('accepts and preserves a valid namespaced custom type: %s', (type) => {
+    const parsed = parseAnnotation(createTestAnnotation({
+      type: type as `custom:${string}/${string}`,
+      typeData: { schemaVersion: 3, payload: { unit: 'mm', values: [1, 2, null] } }
+    }))
+    expect(parsed.type).toBe(type)
+    expect(parsed.typeData).toEqual({
+      schemaVersion: 3,
+      payload: { unit: 'mm', values: [1, 2, null] }
+    })
+  })
+
+  it.each([
+    'custom:Acme/measurement',
+    'custom:acme',
+    'custom:/measurement',
+    'custom:acme/',
+    'custom:acme/measure ment',
+    'rectangle-extra'
+  ])('rejects an invalid or unqualified custom type: %s', (type) => {
+    expect(() => parseAnnotation({ ...createTestAnnotation(), type })).toThrowError(
+      expect.objectContaining<Partial<InkLayerError>>({ code: 'ANNOTATION_INVALID' })
+    )
+  })
+
+  it('detaches typeData and rejects non-lossless JSON or invalid versions', () => {
+    const payload = { nested: [{ value: true }] }
+    const parsed = parseAnnotation(createTestAnnotation({
+      type: 'custom:test/data', typeData: { schemaVersion: 1, payload }
+    }))
+    const nested = payload.nested[0]
+    if (nested === undefined) throw new Error('Expected nested payload fixture.')
+    nested.value = false
+    expect(parsed.typeData?.payload).toEqual({ nested: [{ value: true }] })
+
+    for (const typeData of [
+      { schemaVersion: 0, payload: null },
+      { schemaVersion: 1, payload: Number.NaN },
+      { schemaVersion: 1, payload: new Date() },
+      { schemaVersion: 1, payload: { value: undefined } }
+    ]) {
+      expect(() => parseAnnotation({
+        ...createTestAnnotation(), type: 'custom:test/data', typeData
+      })).toThrowError(expect.objectContaining<Partial<InkLayerError>>({ code: 'ANNOTATION_INVALID' }))
+    }
+  })
+
+  it('rejects cyclic, symbol-keyed, hidden, and accessor JSON payloads', () => {
+    const cyclic: Record<string, unknown> = {}
+    cyclic['self'] = cyclic
+    const symbolKeyed = { visible: true } as Record<PropertyKey, unknown>
+    symbolKeyed[Symbol('hidden')] = true
+    const hidden = { visible: true }
+    Object.defineProperty(hidden, 'secret', { value: true, enumerable: false })
+    const accessor = Object.defineProperty({}, 'value', { get: () => true, enumerable: true })
+    for (const payload of [cyclic, symbolKeyed, hidden, accessor]) {
+      expect(() => parseAnnotation({
+        ...createTestAnnotation(), type: 'custom:test/data',
+        typeData: { schemaVersion: 1, payload }
+      })).toThrowError(expect.objectContaining<Partial<InkLayerError>>({ code: 'ANNOTATION_INVALID' }))
+    }
   })
 })

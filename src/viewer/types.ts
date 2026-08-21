@@ -5,7 +5,6 @@
  */
 
 import type { PDFDocumentProxy } from 'pdfjs-dist'
-import type { EventBus, PDFViewer } from 'pdfjs-dist/web/pdf_viewer.mjs'
 import type { InkLayerError } from '../domain/errors'
 import type { PdfWatermarkSpec } from '../domain/watermark'
 export type { PdfWatermarkSpec } from '../domain/watermark'
@@ -46,9 +45,9 @@ export interface PdfSearchMatch {
   pageIndex: number
   /** Zero-based occurrence index within the page. */
   matchIndex: number
-  /** Character offset in Core's normalized page text. */
+  /** UTF-16 character offset in the extracted source page text. */
   start: number
-  /** Matched character length in Core's normalized page text. */
+  /** UTF-16 character length in the extracted source page text. */
   length: number
   /** Compact surrounding text intended for a framework result list. */
   preview: string
@@ -60,6 +59,8 @@ export interface PdfSearchOptions {
   matchCase?: boolean
   /** Whether adjacent word characters invalidate a match; defaults to false. */
   wholeWord?: boolean
+  /** Whether Unicode diacritics must match exactly; defaults to false. */
+  matchDiacritics?: boolean
   /** Maximum returned occurrences; defaults to 1,000. */
   maxResults?: number
 }
@@ -170,17 +171,24 @@ export interface PdfDocumentTextSelection {
   fragments: readonly PdfTextSelection[]
 }
 
+/** User input channel that completed a native PDF TextLayer selection. */
+export type PdfTextSelectionSource = 'pointer' | 'keyboard'
+
 /** Current normalized browser selection retained independently of native DOM focus. */
 export type PdfActiveTextSelection =
   | {
     /** One attached page contains the complete selection. */
     kind: 'page'
+    /** Input channel used by adapters for contextual-menu focus handoff. */
+    source: PdfTextSelectionSource
     /** Stable page-local text and geometry. */
     selection: PdfTextSelection
   }
   | {
     /** Two or more attached pages participate in the selection. */
     kind: 'document'
+    /** Input channel used by adapters for contextual-menu focus handoff. */
+    source: PdfTextSelectionSource
     /** Stable document text and ordered page-local fragments. */
     selection: PdfDocumentTextSelection
   }
@@ -302,15 +310,15 @@ export type PdfSource = PdfUrlSource | PdfDataSource
 /** Stable handle returned for one successfully loaded document. */
 export interface PdfDocumentHandle {
   /** PDF.js document proxy used for page and metadata operations. */
-  document: PDFDocumentProxy
+  readonly document: PDFDocumentProxy
   /** Number of pages reported by the loaded document. */
-  numPages: number
+  readonly numPages: number
   /** PDF.js document fingerprints, detached from the proxy array. */
-  fingerprints: readonly (string | null)[]
+  readonly fingerprints: readonly (string | null)[]
   /** Permissions normalized from the active PDF security handler. */
-  permissions: PdfDocumentPermissions
+  readonly permissions: PdfDocumentPermissions
   /** Whether PDF.js requested a password while opening this document. */
-  passwordProtected: boolean
+  readonly passwordProtected: boolean
 }
 
 /** Viewer lifecycle states. */
@@ -447,7 +455,7 @@ export interface PdfViewerEngineOptions {
 export interface PdfViewerEngine {
   /** Loads a URL or copied byte source, replacing any prior work. */
   load(source: PdfSource): Promise<PdfDocumentHandle>
-  /** Cancels current loading and returns the engine to idle. */
+  /** Cancels current loading, rejects it with PDF_LOAD_CANCELLED, and returns to idle. */
   cancelLoad(): Promise<void>
   /** Supplies a password only to the matching active PDF.js loading task. */
   submitPassword(requestId: string, password: string): void
@@ -457,10 +465,6 @@ export interface PdfViewerEngine {
   getSnapshot(): PdfViewerSnapshot
   /** Subscribes to typed Viewer events. */
   subscribe(listener: PdfViewerListener): () => void
-  /** Returns the owned PDF.js web viewer when configured. */
-  getViewer(): PDFViewer | null
-  /** Returns the owned PDF.js EventBus when configured. */
-  getEventBus(): EventBus | null
   /** Changes single/continuous and one/two-page layout on the owned web Viewer. */
   setLayoutMode(mode: PdfViewerLayoutMode): Promise<void>
   /** Changes the owned web Viewer's scale without framework rendering logic. */

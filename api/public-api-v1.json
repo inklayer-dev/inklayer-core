@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "packageVersion": "0.1.0",
+  "packageEntries": [
+    ".",
+    "./viewer",
+    "./annotation",
+    "./capabilities",
+    "./annotation-types",
+    "./import/pdfjs",
+    "./export/pdf",
+    "./export/excel",
+    "./style"
+  ],
+  "entries": {
+    ".": {
+      "exportCount": 223,
+      "signatureHash": "3ed61095d4fab36927a24ab699f03665bb88acc0cdc23da8fe48ea80484c7411"
+    },
+    "./viewer": {
+      "exportCount": 48,
+      "signatureHash": "065e21cd298eeb4a3e2cfad8b2d9365be06165b1ad50b5dac7668f03daa5dab2"
+    },
+    "./annotation": {
+      "exportCount": 56,
+      "signatureHash": "dd1dd0b8c14f546f468729defe2f5985eac07014387fe5af980cdd728bb48a54"
+    },
+    "./capabilities": {
+      "exportCount": 26,
+      "signatureHash": "354ff5f7a116fffdefef7c1aa9c1e2099306cd4d9532bae8aaca8810da7c0606"
+    },
+    "./annotation-types": {
+      "exportCount": 31,
+      "signatureHash": "6bead00452e171b9abe1f35c4259ccab9887c066baffaa82ddb8102047215657"
+    },
+    "./import/pdfjs": {
+      "exportCount": 13,
+      "signatureHash": "f0e5571e191fb181e0f04ad28d5c28dd7686e038c61a07cc1d5f1abc1c8a1364"
+    },
+    "./export/pdf": {
+      "exportCount": 5,
+      "signatureHash": "4001fb2d818edab219969f3a8c95a2d4d9455dcf1c59a3d166e6a2dd3c204b2b"
+    },
+    "./export/excel": {
+      "exportCount": 4,
+      "signatureHash": "f34d2433bd2d20680620d08f262a497c0e66e502300ff4dcec29f11599f491a4"
+    }
+  }
+}

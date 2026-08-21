@@ -49,8 +49,7 @@ flowchart TB
 - `compat/legacy` is the only module that understands historical storage fields.
 
 `npm run check:dependencies` resolves all local TypeScript imports, rejects
-cycles and forbidden layer edges, and rejects framework packages. The current
-graph covers 55 production implementation files with no cycles.
+cycles and forbidden layer edges, and rejects framework packages.
 
 ## Ownership and lifecycle
 

@@ -5,7 +5,10 @@
  */
 
 import type { Annotation, AnnotationBounds, AnnotationType } from '../../domain/annotation'
-import { resolveAnnotationAppearance } from '../../domain/appearance'
+import {
+  getAnnotationAppearanceCapabilities,
+  resolveAnnotationAppearance
+} from '../../domain/appearance'
 import type { AnnotationComment } from '../../domain/comment'
 import { parseAnnotation } from '../../domain/validation'
 import { pdfPointToStage, pdfRectToStageBounds } from '../../geometry/coordinates'
@@ -114,8 +117,12 @@ function decodeAnnotation(
         : type === 'note' ? { fill: { color } }
           : { stroke: {
               color,
-              ...(input.borderStyle?.width === undefined ? {} : { width: input.borderStyle.width }),
-              ...(input.borderStyle?.dashArray === undefined ? {} : { dash: input.borderStyle.dashArray })
+              ...(input.borderStyle?.width === undefined || input.borderStyle.width <= 0
+                ? {} : { width: input.borderStyle.width }),
+              ...(!getAnnotationAppearanceCapabilities(type).dash
+                || input.borderStyle?.dashArray === undefined
+                || input.borderStyle.dashArray.length === 0
+                ? {} : { dash: input.borderStyle.dashArray })
             } })
   }) : resolveAnnotationAppearance(type, input.appearance)
   const rendererState = buildToolRendererState({

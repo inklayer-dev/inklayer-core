@@ -4,10 +4,15 @@
  * records interaction capabilities used by framework-neutral UI consumers.
  */
 
-import type { AnnotationType } from '../domain/annotation'
+import {
+  BUILT_IN_ANNOTATION_TYPES,
+  type AnnotationType,
+  type AnnotationTypeId
+} from '../domain/annotation'
+import { BUILT_IN_ANNOTATION_TYPE_DEFINITIONS } from '../annotation-types/built-in-definitions'
 
 /** Transient and persisted tools selectable in the Annotation Engine. */
-export type AnnotationTool = 'select' | 'text-select' | AnnotationType
+export type AnnotationTool = 'select' | 'text-select' | AnnotationTypeId
 
 /** Direct-manipulation geometry used by the internal Painter. */
 export type AnnotationTransformMode =
@@ -39,22 +44,25 @@ export interface AnnotationToolDefinition {
   rotatable: boolean
 }
 
-/** Complete verified tool capability table. */
-export const ANNOTATION_TOOL_DEFINITIONS: Readonly<Record<AnnotationType, AnnotationToolDefinition>> = {
-  highlight: { type: 'highlight', textSelection: true, creationMode: 'continuous', resizable: false, draggable: false, transformMode: 'none', rotatable: false },
-  strikeout: { type: 'strikeout', textSelection: true, creationMode: 'continuous', resizable: false, draggable: false, transformMode: 'none', rotatable: false },
-  underline: { type: 'underline', textSelection: true, creationMode: 'continuous', resizable: false, draggable: false, transformMode: 'none', rotatable: false },
-  'free-text': { type: 'free-text', textSelection: false, creationMode: 'once', resizable: true, draggable: true, transformMode: 'box', rotatable: false },
-  rectangle: { type: 'rectangle', textSelection: false, creationMode: 'once', resizable: true, draggable: true, transformMode: 'box', rotatable: true },
-  circle: { type: 'circle', textSelection: false, creationMode: 'once', resizable: true, draggable: true, transformMode: 'box', rotatable: false },
-  freehand: { type: 'freehand', textSelection: false, creationMode: 'once', resizable: true, draggable: true, transformMode: 'uniform', rotatable: true },
-  'free-highlight': { type: 'free-highlight', textSelection: false, creationMode: 'once', resizable: true, draggable: true, transformMode: 'uniform', rotatable: true },
-  signature: { type: 'signature', textSelection: false, creationMode: 'once', resizable: true, draggable: true, transformMode: 'uniform', rotatable: true },
-  stamp: { type: 'stamp', textSelection: false, creationMode: 'once', resizable: true, draggable: true, transformMode: 'uniform', rotatable: true },
-  note: { type: 'note', textSelection: false, creationMode: 'once', resizable: false, draggable: true, transformMode: 'move', rotatable: false },
-  line: { type: 'line', textSelection: false, creationMode: 'once', resizable: true, draggable: true, transformMode: 'endpoints', rotatable: false },
-  arrow: { type: 'arrow', textSelection: false, creationMode: 'once', resizable: true, draggable: true, transformMode: 'endpoints', rotatable: false },
-  polygon: { type: 'polygon', textSelection: false, creationMode: 'once', resizable: true, draggable: true, transformMode: 'vertices', rotatable: false },
-  polyline: { type: 'polyline', textSelection: false, creationMode: 'once', resizable: true, draggable: true, transformMode: 'vertices', rotatable: false },
-  cloud: { type: 'cloud', textSelection: false, creationMode: 'once', resizable: true, draggable: true, transformMode: 'uniform', rotatable: false }
-}
+/** Compatibility projection of the canonical protected Definition table. */
+export const ANNOTATION_TOOL_DEFINITIONS: Readonly<Record<AnnotationType, AnnotationToolDefinition>> =
+  Object.freeze(Object.fromEntries(BUILT_IN_ANNOTATION_TYPES.map((type) => {
+    const definition = BUILT_IN_ANNOTATION_TYPE_DEFINITIONS[type]
+    const capabilities = definition.capabilities.transform
+    const transformMode: AnnotationTransformMode = capabilities.endpoints
+      ? 'endpoints'
+      : capabilities.vertices
+        ? 'vertices'
+        : capabilities.resize
+          ? definition.geometry === 'box' || definition.geometry === 'text-box' ? 'box' : 'uniform'
+          : capabilities.move ? 'move' : 'none'
+    return [type, {
+      type,
+      textSelection: definition.creation.controller === 'text-selection',
+      creationMode: definition.capabilities.creationMode === 'one-shot' ? 'once' : 'continuous',
+      resizable: capabilities.resize,
+      draggable: capabilities.move,
+      transformMode,
+      rotatable: capabilities.rotate
+    } satisfies AnnotationToolDefinition]
+  }))) as Readonly<Record<AnnotationType, AnnotationToolDefinition>>

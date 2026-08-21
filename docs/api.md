@@ -1,16 +1,180 @@
 # Public API
 
+This reference covers every public package entry and the contracts application
+developers use most often. Start with the [getting-started guide](./guide/getting-started.md)
+and [framework integration](./guide/framework-integration.md) if you are building
+a React, Vue, Svelte, Angular, Web Component, or Vanilla adapter. Emitted V1
+declaration signatures are enforced by `npm run check:api`.
+
 ## Package entries
 
 | Entry | Purpose | Heavy runtime |
 |---|---|---|
 | `inklayer-core` | Domain, repository, collaboration, Viewer/Annotation factories, browser ports | PDF.js/Konva loaded only when used |
+| `inklayer-core/capabilities` | Composition Root, Capability contracts, lifecycle types | Viewer/Annotation runtimes only when composed |
+| `inklayer-core/annotation-types` | Custom type IDs, Definition Registry, controlled scene contracts | None until an Annotation page is attached |
 | `inklayer-core/viewer` | PDF.js Viewer facade and lifecycle types | PDF.js |
 | `inklayer-core/annotation` | Annotation facade, tools, events, ports, snapshot validator | Konva after page attach |
 | `inklayer-core/import/pdfjs` | Native decoding, optional metadata inspection, storage hiding | pdf-lib only during metadata inspection |
 | `inklayer-core/export/pdf` | Existing PDF bytes → annotated PDF bytes | pdf-lib |
 | `inklayer-core/export/excel` | Canonical annotations → XLSX bytes | ExcelJS |
 | `inklayer-core/style` | Generated instance-scoped engine CSS | CSS only |
+
+## Composition Root and Capabilities
+
+```ts
+import {
+  INKLAYER_CAPABILITY_SERVICE_KEYS,
+  createAnnotationRepositoryCapability,
+  createInkLayer,
+  createLoggerCapability,
+  createPrintCapability,
+  createTextInputCapability
+} from 'inklayer-core/capabilities'
+
+const instance = await createInkLayer({
+  root,
+  pageFlow: { container: scrollElement },
+  capabilities: [
+    createLoggerCapability(logger),
+    createTextInputCapability(textInput),
+    createAnnotationRepositoryCapability(repository),
+    createPrintCapability(printProvider)
+  ]
+})
+
+await instance.load({ url, range: 'auto' })
+const flow = instance.getPageFlow()
+await instance.destroy()
+```
+
+Capability `setup()` calls run sequentially before Viewer and Annotation engine
+construction. A Capability can provide a unique instance-local service, consume
+services from earlier Capabilities, register owned resources on its lifecycle
+scope, and schedule ordered `onReady` effects. Initialization is transactional:
+any failure rolls back all resources already created. Page Flow is
+document-scoped and is created only after `load()` returns a ready document.
+
+The protected Port service keys and factories are:
+
+| Port | Factory | Engine consumption |
+|---|---|---|
+| `Logger` | `createLoggerCapability` | Annotation diagnostics and Viewer listener fallback |
+| `TextInputProvider` | `createTextInputCapability` | FreeText create/edit sessions |
+| `AnnotationRepository` | `createAnnotationRepositoryCapability` | Canonical Annotation state |
+| `PrintProvider` | `createPrintCapability` | Explicit application invocation after print-byte generation |
+| `DownloadProvider` | `createDownloadCapability` | Explicit application invocation after export generation |
+| `Clock` | `createClockCapability` | Annotation timestamps |
+| `IdGenerator` | `createIdGeneratorCapability` | Engine and annotation identities |
+| `PdfThumbnailSurfaceProvider` | `createThumbnailSurfaceCapability` | Viewer thumbnail allocation |
+| `fetch` | `createFetchCapability` | Viewer Range probing and byte requests |
+
+Resolution always follows `explicit low-level Engine option > Capability
+provider > Core browser/default implementation`. A shadowed Capability remains
+inspectable but is not mixed into that Engine. For example, an explicit
+`annotation.repository` is the sole repository even if a Repository Capability
+is installed. Repository providers default to borrowed ownership; pass
+`{ ownership: 'owned' }` only when the InkLayer instance must destroy it.
+
+Print and Download do not run implicitly. They remain application-triggered
+environment effects and can be retrieved with their typed keys:
+
+```ts
+await instance.capabilities
+  .get(INKLAYER_CAPABILITY_SERVICE_KEYS.print)
+  ?.print({ content: printablePdf })
+```
+
+When no Capability supplies these side effects, applications may continue to
+use `createBrowserPrintProvider()` and `createBrowserDownloadProvider()`
+directly. The existing Port interfaces and all low-level factory options remain
+public and unchanged.
+
+### Deferred optional Capabilities
+
+V1 intentionally does not expose a Search Index Provider, synchronization
+adapter, Command Registry, or telemetry provider. Current React/Vue requirements
+are expressible through the canonical Viewer search/highlight/navigation APIs,
+Repository commands and events, explicit engine/output methods, existing Ports,
+and adapter-owned UI composition.
+
+These seams are not reserved string keys and must not be simulated with no-op
+providers. [ADR 0005](./adr/0005-optional-capability-seams.md) defines the
+consumer evidence, lifecycle/error contract, privacy boundary, and tests needed
+before any one of them can enter the public API. In particular, a future
+telemetry interface cannot receive raw engine events containing document or
+annotation content, and a future synchronization interface cannot define
+conflict policy by mutating Repository internals.
+
+Canonical Viewer search supports `matchCase`, `wholeWord`,
+`matchDiacritics`, and `maxResults`. Diacritics are folded by default to retain
+current React/Vue behavior; set `matchDiacritics: true` when accents must match
+exactly. This normalization remains Core-owned and cannot be replaced by a
+Capability.
+
+## Annotation Type Definitions
+
+Custom persisted identities use `custom:<namespace>/<name>`. Each segment starts
+with a lowercase ASCII letter or digit, then uses lowercase letters, digits,
+`.`, `_`, or `-`. A segment is at most 120 characters and the complete ID at
+most 256 characters. Built-in IDs are reserved.
+
+Every Registry starts with immutable Definitions for all 16 built-ins. `get()`
+therefore returns both built-in and installed custom Definitions, while
+`register()` remains custom-only. Built-in Definitions are the canonical source
+for default Appearance, exact Appearance controls, geometry, creation
+controller, one-shot/continuous lifecycle, direct-manipulation capabilities,
+printability, exportability, and PDF strategy. Their `renderer.strategy` is
+`core`: this delegates to verified private Konva snapshot builders and is
+rejected on external registration.
+
+```ts
+import { createAnnotationTypeRegistry } from 'inklayer-core/annotation-types'
+
+const annotationTypes = createAnnotationTypeRegistry()
+const unregister = annotationTypes.register(measurementDefinition)
+
+const engine = createAnnotationEngine({ root, annotationTypes, repository })
+unregister()
+engine.destroy()
+annotationTypes.destroy()
+```
+
+`AnnotationTypeDefinition` exposes controlled metadata and pure callbacks only;
+it never receives Konva nodes, Stages, Layers, PDF.js internals, or a Repository.
+Its renderer returns a bounded scene made from groups, rectangles, ellipses,
+lines, paths, text, and images. Core validates that scene before constructing
+private renderer objects.
+
+`AnnotationEngine.setTool()` accepts an installed custom type ID as well as a
+built-in. Pointer creation resolves its controller and preview geometry through
+the instance Registry. Removing an active custom Definition immediately returns
+the Engine to `select` and prevents further creation.
+
+Unknown custom annotations remain valid canonical data. Core preserves their
+`typeData`, `rendererState`, and `extensions`, renders a safe bounds-based
+placeholder without parsing the unknown renderer string, and rejects
+type-specific commands with `ANNOTATION_TYPE_UNAVAILABLE`. Delete and canonical
+comment operations remain available. Installing a compatible Definition redraws
+retained annotations; removing it restores the placeholder.
+
+`creation.initialize(input)` is an optional pure callback for custom pointer
+creation. It receives detached, deeply frozen bounds/content/point data and may
+return refined bounds, semantic content, and independently versioned `typeData`.
+Core validates the result before committing it to the Repository. The existing
+pure `interaction.reduceTransform()` callback may then synchronize `typeData`
+with direct manipulation.
+
+`buildAnnotatedPdf()` and `buildPrintablePdf()` accept the instance Registry as
+`options.annotationTypes`. A compatible custom Definition must enable the
+relevant `exportable` or `printable` capability and declare
+`pdf.exportStrategy: 'appearance-stream'`. Core invokes the same controlled
+renderer, validates the scene, and writes a selectable PDF Stamp appearance
+stream containing the stable custom ID, `typeData`, and Appearance metadata.
+V1 appearance-stream export currently accepts rectangle, ellipse, and line
+primitives; unsupported scene primitives fail during preflight before PDF
+mutation. Missing Definitions and unsupported policies are reported explicitly,
+never silently dropped.
 
 ## Viewer
 
@@ -29,6 +193,14 @@ wins. URL Range supports `true`, `false`, and `'auto'`. Automatic fallback occur
 only for confirmed lack of range support, not ordinary network/HTTP failures.
 Root and Viewer imports are SSR-safe because PDF.js is dynamically loaded by
 `load()`.
+
+```ts
+const cspViewer = createPdfViewerEngine({
+  workerSrc: '/assets/pdf.worker.min.mjs'
+})
+```
+
+The override is not required for ordinary Vite or Webpack consumers.
 
 Viewer state exposes structured loading progress:
 
@@ -275,6 +447,15 @@ resize for image/path-like content, endpoint editing for Line/Arrow, vertex
 editing for Polygon/Polyline, move-only Note, and no transform handles for text
 markup. Pointer feedback is continuous and constrained to the page.
 
+Direct-document keyboard interaction is enabled by default. Arrow keys move the
+current selection by one page unit, Shift+arrow moves by ten, Delete/Backspace
+uses the canonical permission-aware delete path, and Escape cancels drawing or
+clears selection. Configure bounded steps through `keyboard`; localize Core-owned
+root/page/annotation semantics through `accessibility`. Existing root ARIA and
+tabindex attributes are preserved. See
+[`docs/accessibility.md`](./accessibility.md) for focus ownership, FreeText,
+TextLayer menu handoff, reduced motion, and adapter responsibilities.
+
 Successive Freehand strokes on the same attached page are merged into one
 annotation until `freehandMergeDelayMs` elapses; each stroke remains independent
 in Konva state and PDF `InkList` import/export. Its once-only selection/tool
@@ -327,3 +508,10 @@ temporary anchor and object URL.
 All feature boundaries use `InkLayerError` with a stable `code`, optional
 `operation`, `annotationId`, `pageIndex`, and retained `cause`. Error messages do
 not include PDF contents or comment text.
+
+Viewer recovery distinguishes `PDF_LOAD_FAILED`, `PDF_LOAD_CANCELLED`,
+`PDF_PASSWORD_CANCELLED`, `PDF_RANGE_FAILED`, `PDF_RANGE_UNSUPPORTED`, and
+`PDF_FEATURE_FAILED`. An incorrect credential is a recoverable
+`passwordRequired` event rather than a thrown error because the same PDF.js
+loading task remains active. Applications branch on the code/event and retain
+their own retry policy; see [Error recovery](./error-recovery.md).

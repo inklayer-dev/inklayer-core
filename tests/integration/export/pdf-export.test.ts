@@ -21,6 +21,8 @@ import { resolveAnnotationAppearance } from '../../../src/domain/appearance'
 import { buildAnnotatedPdf, buildPrintablePdf } from '../../../src/export/pdf'
 import { buildToolRendererState } from '../../../src/renderer/konva/snapshot-builder'
 import { createTestAnnotation } from '../../helpers/annotation'
+import { createAnnotationTypeRegistry } from '../../../src/annotation-types/annotation-type-registry'
+import { createTestAnnotationTypeDefinition } from '../../helpers/annotation-type'
 
 const TYPES: readonly AnnotationType[] = [
   'highlight', 'strikeout', 'underline', 'free-text', 'rectangle', 'circle',
@@ -96,6 +98,66 @@ describe('buildAnnotatedPdf', () => {
     expect(annotationDictionaries(await PDFDocument.load(bytes))).toHaveLength(2)
   })
 
+  it('reports custom annotations explicitly instead of evaluating unknown renderer state', async () => {
+    const source = await createSourcePdf()
+    const custom = createTestAnnotation({
+      id: 'custom-1',
+      type: 'custom:test/export',
+      typeData: { schemaVersion: 1, payload: { retained: true } },
+      rendererState: { engine: 'konva', schemaVersion: 1, serialized: 'do-not-evaluate' }
+    })
+    await expect(buildAnnotatedPdf(source, [custom])).rejects.toMatchObject({ code: 'EXPORT_FAILED' })
+
+    const warnings: Array<{ id?: string; reason: string }> = []
+    const bytes = await buildAnnotatedPdf(source, [custom], {
+      strategy: 'lenient',
+      onWarning: (warning) => warnings.push({
+        ...(warning.annotationId === undefined ? {} : { id: warning.annotationId }),
+        reason: warning.reason
+      })
+    })
+    expect(warnings).toEqual([{
+      id: 'custom-1',
+      reason: 'Custom annotation PDF export requires a compatible instance Definition.'
+    }])
+    expect(annotationDictionaries(await PDFDocument.load(bytes))).toHaveLength(1)
+  })
+
+  it('exports and prints a compatible custom controlled scene as a PDF appearance stream', async () => {
+    const source = await createSourcePdf()
+    const registry = createAnnotationTypeRegistry()
+    const base = createTestAnnotationTypeDefinition('custom:test/export', {
+      supportedSchemaVersions: [1],
+      /** Accepts the bounded proof payload. */
+      validate() {}
+    })
+    registry.register({
+      ...base,
+      capabilities: { ...base.capabilities, printable: true, exportable: true },
+      pdf: { exportStrategy: 'appearance-stream' }
+    })
+    const custom = createTestAnnotation({
+      id: 'custom-appearance',
+      type: 'custom:test/export',
+      typeData: { schemaVersion: 1, payload: { label: 'Length', precision: 2 } },
+      rendererState: { engine: 'konva', schemaVersion: 1, serialized: 'ignored-safe-rebuild' }
+    })
+
+    for (const bytes of [
+      await buildAnnotatedPdf(source, [custom], { annotationTypes: registry }),
+      await buildPrintablePdf(source, [custom], { annotationTypes: registry })
+    ]) {
+      const dictionaries = annotationDictionaries(await PDFDocument.load(bytes))
+      const dictionary = dictionaries.find((entry) => textValue(entry, 'NM') === custom.id)
+      expect(nameValue(dictionary, 'Subtype')).toBe('Stamp')
+      expect(textValue(dictionary, 'InkLayerCanonicalType')).toBe('custom:test/export')
+      expect(textValue(dictionary, 'InkLayerTypeData')).toContain('Length')
+      expect(dictionary?.lookupMaybe(PDFName.of('AP'), PDFDict)?.get(PDFName.of('N')))
+        .toBeDefined()
+    }
+    registry.destroy()
+  })
+
   it('converts Stage geometry against rotated PDF pages', async () => {
     const document = await PDFDocument.create()
     const page = document.addPage([200, 300])
@@ -163,7 +225,7 @@ async function createSourcePdf(): Promise<Uint8Array> {
 }
 
 /** Creates a canonical export fixture with type-appropriate renderer geometry. */
-function exportAnnotation(type: AnnotationType, index: number): Annotation {
+function exportAnnotation(type: AnnotationType, index: number): Annotation & { type: AnnotationType } {
   const id = `annotation-${type}`
   const bounds = { x: 10 + index, y: 20 + index, width: 100, height: 50 }
   const appearance = resolveAnnotationAppearance(type, {
@@ -192,7 +254,7 @@ function exportAnnotation(type: AnnotationType, index: number): Annotation {
         ]
       } : {})
     })
-  })
+  }) as Annotation & { type: AnnotationType }
 }
 
 /** Resolves low-level dictionaries from the first page annotation array. */

@@ -27,6 +27,10 @@ Override them on one engine root to avoid affecting another instance.
 | `--inklayer-overlay-z-index` | `2` | Konva canvas overlay layer |
 | `--inklayer-text-layer-z-index` | `1` | Selectable PDF.js TextLayer |
 | `--inklayer-selection-z-index` | `3` | Labels and temporary input layer |
+| `--inklayer-accessibility-z-index` | `4` | Focused Canvas semantic alternative layer |
+| `--inklayer-accessibility-background` | `#101828` | Focused annotation alternative background |
+| `--inklayer-accessibility-foreground` | `#fff` | Focused annotation alternative text |
+| `--inklayer-accessibility-focus-ring` | `#84adff` | Engine and annotation keyboard focus ring |
 | `--inklayer-search-highlight-background` | `rgb(250 204 21 / 45%)` | Search match background |
 | `--inklayer-search-active-background` | `rgb(249 115 22 / 60%)` | Active search match background |
 | `--inklayer-search-active-outline` | `rgb(194 65 12 / 70%)` | Active search match outline |

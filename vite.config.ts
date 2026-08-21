@@ -19,6 +19,8 @@ export default defineConfig({
         index: resolve(import.meta.dirname, 'src/index.ts'),
         viewer: resolve(import.meta.dirname, 'src/viewer/index.ts'),
         annotation: resolve(import.meta.dirname, 'src/annotation/index.ts'),
+        capabilities: resolve(import.meta.dirname, 'src/capabilities/index.ts'),
+        'annotation-types': resolve(import.meta.dirname, 'src/annotation-types/index.ts'),
         'import/pdfjs': resolve(import.meta.dirname, 'src/import/pdfjs/index.ts'),
         'export/pdf': resolve(import.meta.dirname, 'src/export/pdf/index.ts'),
         'export/excel': resolve(import.meta.dirname, 'src/export/excel/index.ts'),

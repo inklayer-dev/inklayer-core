@@ -28,8 +28,17 @@ export {
   type AnnotationSource,
   type AnnotationSignatureContent,
   type AnnotationType,
+  type AnnotationTypeData,
+  type AnnotationTypeId,
+  type CustomAnnotationType,
+  BUILT_IN_ANNOTATION_TYPES,
+  isAnnotationTypeId,
+  isBuiltInAnnotationType,
+  isCustomAnnotationType,
   type KonvaRendererState
 } from './domain/annotation'
+export type { JsonObject, JsonPrimitive, JsonValue, JsonValueLimits } from './domain/json-value'
+export { parseJsonObject, parseJsonValue } from './domain/json-value'
 export {
   getAnnotationAppearanceCapabilities,
   getDefaultAnnotationAppearance,
@@ -39,10 +48,12 @@ export {
   type AnnotationAppearanceCapabilities
 } from './domain/appearance'
 export type {
+  AnnotationAccessibilityOptions,
   AnnotationAuthorLabelVisibility,
   AnnotationImageAsset,
   AnnotationImageTool,
   AnnotationInteractionTheme,
+  AnnotationKeyboardOptions,
   AnnotationPageAttachment
 } from './annotation/contracts'
 export type { AnnotationHoverSource, AnnotationSelectionSource } from './annotation/events'
@@ -128,6 +139,7 @@ export type {
   PdfThumbnailSurfaceProvider,
   PdfTextLayerAttachment,
   PdfTextSelection,
+  PdfTextSelectionSource,
   PdfTextSelectionRect,
   PdfUrlSource,
   PdfViewerEngine,
@@ -201,3 +213,58 @@ export {
   printPdfBlob,
   type BrowserPrintEnvironment
 } from './platform/browser/print'
+export { createInkLayer } from './capabilities/composition-root'
+export {
+  INKLAYER_CAPABILITY_SERVICE_KEYS,
+  createAnnotationRepositoryCapability,
+  createClockCapability,
+  createDownloadCapability,
+  createFetchCapability,
+  createIdGeneratorCapability,
+  createLoggerCapability,
+  createPrintCapability,
+  createTextInputCapability,
+  createThumbnailSurfaceCapability
+} from './capabilities/ports'
+export type {
+  AnnotationRepositoryCapabilityOptions,
+  InkLayerCapabilityServiceKey,
+  InkLayerCapabilityServiceMap,
+  InkLayerPortCapabilityOptions
+} from './capabilities/ports'
+export type {
+  InkLayerDisposer,
+  InkLayerLifecycleScope
+} from './lifecycle/lifecycle-scope'
+export type {
+  InkLayerAnnotationOptions,
+  InkLayerCapability,
+  InkLayerCapabilityContext,
+  InkLayerCapabilityRegistry,
+  InkLayerInstance,
+  InkLayerOptions,
+  InkLayerPageFlowOptions,
+  InkLayerReadyContext,
+  InkLayerReadyEffect
+} from './capabilities/contracts'
+export {
+  ANNOTATION_TYPE_DEFINITION_API_VERSION,
+  BUILT_IN_ANNOTATION_TYPE_DEFINITIONS,
+  createAnnotationTypeRegistry
+} from './annotation-types'
+export type {
+  AnnotationCreationController,
+  AnnotationGeometryKind,
+  AnnotationScene,
+  AnnotationSceneNode,
+  AnnotationTypeAvailability,
+  AnnotationTypeCapabilities,
+  AnnotationTypeCreationInput,
+  AnnotationTypeCreationResult,
+  CoreAnnotationTypeRendererDefinition,
+  AnnotationTypeDataCodec,
+  AnnotationTypeDefinition,
+  AnnotationTypeRegistry,
+  AnnotationTypeRegistryEvent,
+  AnnotationTypeTransformInput
+} from './annotation-types'

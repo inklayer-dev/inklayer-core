@@ -175,7 +175,10 @@ class PdfPageFlowControllerImpl implements PdfPageFlowController {
   public scrollToPage(pageIndex: number, behavior: ScrollBehavior = 'auto'): void {
     this.assertPage(pageIndex)
     this.setCurrentPage(pageIndex)
-    this.shells.get(pageIndex)?.root.scrollIntoView({ block: 'start', behavior })
+    this.shells.get(pageIndex)?.root.scrollIntoView({
+      block: 'start',
+      behavior: prefersReducedMotion(this.options.container) ? 'auto' : behavior
+    })
   }
 
   /** Rebuilds all page placeholders while preserving current page identity. */
@@ -408,6 +411,12 @@ class PdfPageFlowControllerImpl implements PdfPageFlowController {
       throw pageFlowError('PDF page-flow target is invalid.', pageIndex)
     }
   }
+}
+
+/** Returns whether the active document requests motion-reduced navigation. */
+function prefersReducedMotion(container: HTMLElement | null): boolean {
+  const view = container?.ownerDocument.defaultView
+  return view?.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
 }
 
 /** Creates one stable layered page placeholder. */

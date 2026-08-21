@@ -106,6 +106,38 @@ describe('PDF document features', () => {
     expect(document.getPage).toHaveBeenCalledTimes(2)
   })
 
+  it('folds Unicode diacritics by default and can require exact marks', async () => {
+    const features = new PdfDocumentFeatures(createFeatureDocument([{
+      text: 'Résumé resume café cafe'
+    }]), undefined)
+
+    await expect(features.search('resume')).resolves.toMatchObject({
+      matches: [
+        { start: 0, length: 6 },
+        { start: 7, length: 6 }
+      ]
+    })
+    await expect(features.search('resume', { matchDiacritics: true })).resolves.toMatchObject({
+      matches: [{ start: 7, length: 6 }]
+    })
+    await expect(features.search('café', {
+      matchCase: true,
+      matchDiacritics: true
+    })).resolves.toMatchObject({
+      matches: [{ start: 14, length: 4 }]
+    })
+
+    const decomposed = new PdfDocumentFeatures(createFeatureDocument([{
+      text: 'Cafe\u0301 noir resume'
+    }]), undefined)
+    await expect(decomposed.search('cafe')).resolves.toMatchObject({
+      matches: [{ start: 0, length: 5 }]
+    })
+    await expect(decomposed.search('resume')).resolves.toMatchObject({
+      matches: [{ start: 11, length: 6 }]
+    })
+  })
+
   it('renders and caches encoded thumbnails while always releasing surfaces', async () => {
     const release = vi.fn()
     const provider = createSurfaceProvider(release)
@@ -131,5 +163,37 @@ describe('PDF document features', () => {
     features.destroy()
     features.destroy()
     await expect(features.search('one')).rejects.toMatchObject({ code: 'PDF_FEATURE_FAILED' })
+  })
+
+  it('churns long-document text and thumbnail caches while releasing every surface', async () => {
+    const pageCount = 96
+    const release = vi.fn()
+    const provider = createSurfaceProvider(release)
+    const document = createFeatureDocument(Array.from({ length: pageCount }, (_, pageIndex) => ({
+      text: `Lifecycle stress search token page ${pageIndex + 1}`,
+      width: 420,
+      height: 560
+    })))
+    const features = new PdfDocumentFeatures(document, provider)
+
+    await expect(features.search('lifecycle stress search token', {
+      maxResults: pageCount + 1
+    })).resolves.toMatchObject({
+      truncated: false,
+      matches: Array.from({ length: pageCount }, (_, pageIndex) => ({ pageIndex }))
+    })
+    for (const maxWidth of [64, 96]) {
+      await Promise.all(Array.from({ length: pageCount }, (_, pageIndex) =>
+        features.renderThumbnail({ pageIndex, maxWidth, pixelRatio: 1 })))
+    }
+    await Promise.all(Array.from({ length: pageCount }, (_, pageIndex) =>
+      features.renderThumbnail({ pageIndex, maxWidth: 64, pixelRatio: 1 })))
+
+    expect(provider.create).toHaveBeenCalledTimes(pageCount * 2)
+    expect(release).toHaveBeenCalledTimes(pageCount * 2)
+    features.destroy()
+    await expect(features.renderThumbnail({ pageIndex: 0 })).rejects.toMatchObject({
+      code: 'PDF_FEATURE_FAILED'
+    })
   })
 })

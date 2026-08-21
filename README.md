@@ -9,10 +9,93 @@ Viewer Engine with thumbnails, outline, search, and TextLayer selection, Konva
 Annotation Engine, native PDF.js import, content-only PDF/Excel exporters, scoped
 engine styles, and browser platform helpers.
 
+## Composed instance
+
+`createInkLayer()` is the recommended integration entry. It owns Viewer,
+Annotation, optional document Page Flow, instance Capabilities, and deterministic
+teardown. The lower-level factories remain available for advanced integrations.
+
+```ts
+import {
+  createInkLayer,
+  createLoggerCapability,
+  createTextInputCapability
+} from 'inklayer-core/capabilities'
+
+const core = await createInkLayer({
+  root: document.querySelector<HTMLElement>('#viewer')!,
+  capabilities: [
+    createLoggerCapability(appLogger),
+    createTextInputCapability(appTextInput)
+  ]
+})
+
+await core.load({ url: '/documents/example.pdf' })
+await core.destroy()
+```
+
+Capabilities are ordered and instance-local. Setup runs before engines are
+created; `onReady` effects run after both engines exist. Returned disposers and
+resources registered on `context.lifecycle` are released automatically.
+Existing Port interfaces remain valid both as low-level Engine options and as
+Capabilities. Resolution is deterministic: an explicit Engine option wins over
+the matching Capability provider, which wins over Core's browser/default
+implementation. Stable factories cover Logger, Text Input, Annotation
+Repository, Print, Download, Clock, ID Generator, thumbnail surfaces, and Fetch.
+Repositories are borrowed unless `ownership: 'owned'` explicitly transfers
+their destruction to the Capability lifecycle.
+
+## Custom annotation types
+
+Custom V1 annotations use stable namespaced IDs such as
+`custom:acme/measurement` and may persist independently versioned lossless JSON
+in `typeData`. Definitions are registered per instance:
+
+```ts
+import { createAnnotationTypeRegistry } from 'inklayer-core/annotation-types'
+
+const annotationTypes = createAnnotationTypeRegistry()
+const unregister = annotationTypes.register(measurementDefinition)
+const annotations = createAnnotationEngine({ root, repository, annotationTypes })
+```
+
+The same Registry exposes immutable protected Definitions for all 16 built-ins.
+Their defaults, geometry, creation controller, tool lifecycle, transform
+capabilities, output policy, and Core-private renderer ownership resolve through
+the same instance boundary. External code may inspect but cannot replace,
+unregister, or select the private renderer strategy.
+
+Definitions return renderer-neutral controlled scenes; they never receive Konva
+nodes. If a Definition is missing or cannot read the payload version, Core keeps
+the complete annotation, renders a safe placeholder without parsing its retained
+renderer string, permits generic comments/deletion, and rejects type behavior
+with `ANNOTATION_TYPE_UNAVAILABLE`. Registering compatible behavior restores the
+controlled rendering. The Composition Root exposes the same Registry through
+`instance.annotationTypes` and Capability setup context.
+
+Custom pointer tools may provide `creation.initialize()` to convert normalized
+Core gesture geometry into canonical `typeData` and content. Pure transform
+reducers keep that semantic data synchronized after direct manipulation.
+Definitions using the controlled `appearance-stream` PDF strategy are exported
+or printed by passing the same instance Registry:
+
+```ts
+const bytes = await buildAnnotatedPdf(source, annotations, {
+  annotationTypes: instance.annotationTypes
+})
+```
+
 ## Viewer Engine
 
 The Viewer factory is safe to import during Node and SSR builds. PDF.js runtime
 modules are loaded only when `load()` is called.
+
+Packed production builds are verified with Vite browser, Webpack browser, and
+executable Webpack Node SSR consumers. The pinned support matrix and its limits
+are documented in the
+[consumer build matrix](https://github.com/Laomai-codefee/inklayer-core/blob/main/docs/consumer-build-matrix.md).
+Runtime Viewer and Annotation flows are verified against the declared
+[Chromium, Firefox, and WebKit matrix](https://github.com/Laomai-codefee/inklayer-core/blob/main/docs/browser-support.md).
 
 ```ts
 import { createPdfViewerEngine } from 'inklayer-core/viewer'
@@ -44,6 +127,15 @@ not need to download, copy, or configure one. Advanced deployments may override
 `workerSrc` for self-hosting or a custom Content Security Policy. Active Viewer
 instances must share the same resolved worker URL; conflicting overrides fail
 with `PDF_WORKER_CONFLICT`.
+
+```ts
+const cspViewer = createPdfViewerEngine({
+  workerSrc: '/assets/pdf.worker.min.mjs'
+})
+```
+
+This override is optional; the zero-argument construction above is the normal
+application path.
 
 URL sources accept `range: true`, `false`, or `'auto'`. Automatic mode falls
 back only when the server explicitly lacks byte-range support; HTTP and network
@@ -98,23 +190,27 @@ demo imports normal `inklayer-core/*` package specifiers, while its dedicated
 Vite configuration resolves those specifiers directly to the current source for
 fast debugging.
 
-The demo renders two independent PDF.js/Konva instances and exercises thumbnails,
-outline navigation, search, real/cross-page TextLayer markup, virtual continuous
-pages, an interactive protected-PDF password dialog, real system print command,
-secure raster print preparation, local PDF loading, all annotation tools,
-tool-specific transforms, comments, zoom, reload, PDF/Excel export, and
+The single-workspace demo exercises thumbnails, outline navigation, search,
+same-page and cross-page TextLayer markup, virtual continuous pages, protected
+PDF passwords, Range loading and progress, system print, secure raster print,
+watermarks, local PDF loading, all annotation tools, tool-specific transforms,
+comments, zoom and pinch gestures, reload, PDF/Excel export, error recovery, and
 destroy/remount without React or Vue.
 
-See [`docs/implementation-progress.md`](./docs/implementation-progress.md) for
-completed implementation history and [`docs/roadmap.md`](./docs/roadmap.md) for
-the current ordered work and acceptance criteria.
+Documentation is built with VitePress:
 
-Detailed contracts: [architecture](./docs/architecture.md),
-[public API](./docs/api.md), [data model](./docs/data-model.md),
-[Core boundary](./docs/core-boundary.md),
-[CSS](./docs/css-contract.md), [legacy data](./docs/legacy-data.md),
-[framework integration](./docs/future-framework-integration.md), and
-[performance baseline](./docs/performance-baseline.md).
+```bash
+npm run docs:dev
+npm run docs:build
+```
+
+Start with the [getting-started guide](./docs/guide/getting-started.md), then read
+[framework integration](./docs/guide/framework-integration.md) and the complete
+[public API](./docs/api.md). Detailed contracts cover
+[architecture](./docs/architecture.md), [data](./docs/data-model.md),
+[Core ownership](./docs/core-boundary.md),
+[accessibility](./docs/accessibility.md), [CSS](./docs/css-contract.md),
+[legacy data](./docs/legacy-data.md), and [browser support](./docs/browser-support.md).
 
 ## Local quality gate
 

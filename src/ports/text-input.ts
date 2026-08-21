@@ -20,6 +20,8 @@ export interface TextInputRequest {
   scale: number
   /** Initial text for edits. */
   initialValue?: string
+  /** Direct-document focus owner restored after explicit submit or cancellation. */
+  returnFocusTo?: HTMLElement
   /** Signal that cancels and removes the input. */
   signal: AbortSignal
 }

@@ -5,14 +5,23 @@
  */
 
 import type Konva from 'konva'
-import type { Annotation, AnnotationAppearance, AnnotationContent } from '../../../domain/annotation'
+import type {
+  Annotation,
+  AnnotationAppearance,
+  AnnotationContent,
+  AnnotationTypeId
+} from '../../../domain/annotation'
+import type {
+  AnnotationCreationController,
+  AnnotationGeometryKind
+} from '../../../annotation-types/contracts'
 import { parseAnnotationColor } from '../../../domain/color'
 import { InkLayerError } from '../../../domain/errors'
 import { parseAndValidateKonvaSnapshot } from '../../../renderer/konva/snapshot'
 import { buildCloudPathFromPoints } from '../../../renderer/konva/snapshot-builder'
-import { ANNOTATION_TOOL_DEFINITIONS } from '../../tools'
 import type { AnnotationTool, AnnotationTransformMode } from '../../tools'
 import type {
+  AnnotationAccessibilityOptions,
   AnnotationAuthorLabelVisibility,
   AnnotationImageAsset,
   AnnotationImageTool,
@@ -31,17 +40,25 @@ export interface KonvaPainterOptions {
   /** Returns current annotations for one page attachment. */
   getAnnotationsByPage: (pageIndex: number) => readonly Annotation[]
   /** Handles annotation selection initiated from a Konva node. */
-  onSelect: (annotationId: string) => void
+  onSelect: (annotationId: string, source: 'canvas' | 'accessibility') => void
   /** Handles a completed drag or transform with exact serialized state. */
   onTransform: (annotationId: string, bounds: Annotation['bounds'], serialized: string) => void
   /** Returns the current Annotation Engine tool. */
   getTool: () => AnnotationTool
+  /** Resolves the Core-owned creation controller through the Type Registry. */
+  getCreationController: (type: AnnotationTypeId) => AnnotationCreationController
+  /** Resolves preview geometry through the same protected Definition. */
+  getGeometry: (type: AnnotationTypeId) => AnnotationGeometryKind
   /** Returns the complete current appearance used by creation previews. */
-  getAppearance: (type: Annotation['type']) => AnnotationAppearance
+  getAppearance: (type: AnnotationTypeId) => AnnotationAppearance
   /** Returns the current application-provided image for an image placement tool. */
   getImageAsset: (type: AnnotationImageTool) => AnnotationImageAsset | null
+  /** Resolves direct-manipulation metadata without indexing unknown type IDs. */
+  getTypeInteraction: (annotation: Annotation) => PainterTypeInteraction
   /** Returns whether the current identity may directly transform an annotation. */
   canTransform: (annotation: Annotation) => boolean
+  /** Returns whether an annotation may enter print-safe raster composition. */
+  canPrint: (annotation: Annotation) => boolean
   /** Creates an annotation after an instance-owned pointer gesture. */
   onCreate: (gesture: PainterCreationGesture) => void
   /** Requests application UI when an image placement tool has no prepared asset. */
@@ -54,14 +71,28 @@ export interface KonvaPainterOptions {
   onClearSelection: () => void
   /** Publishes Canvas hover so labels and product adapters share one state. */
   onHover: (annotationId: string | null) => void
+  /** Localized semantics for Core-owned direct-document controls. */
+  accessibility?: AnnotationAccessibilityOptions
   /** Idle interval that merges successive Freehand strokes; defaults to 1,000ms. */
   freehandMergeDelayMs?: number
+}
+
+/** Minimal normalized interaction metadata consumed by the private painter. */
+export interface PainterTypeInteraction {
+  /** Whether direct dragging is enabled. */
+  draggable: boolean
+  /** Whether bounds handles are enabled. */
+  resizable: boolean
+  /** Whether rotation handles are enabled. */
+  rotatable: boolean
+  /** Private geometry controller selected for the Transformer. */
+  transformMode: AnnotationTransformMode
 }
 
 /** Completed geometry emitted by internal pointer editors. */
 export interface PainterCreationGesture {
   /** Persisted annotation type. */
-  type: Annotation['type']
+  type: AnnotationTypeId
   /** Zero-based page index. */
   pageIndex: number
   /** Completed Stage-space bounds. */
@@ -133,7 +164,11 @@ interface PointControl {
 /** Mutable pointer gesture owned by one page. */
 interface PainterGestureState {
   /** Tool captured when the gesture began. */
-  type: Annotation['type']
+  type: AnnotationTypeId
+  /** Registry-provided geometry captured for the complete gesture. */
+  geometry: AnnotationGeometryKind
+  /** Registry-provided controller captured for the complete gesture. */
+  controller: AnnotationCreationController
   /** Absolute Stage points in x/y pairs. */
   points: number[]
   /** Whether the gesture waits for double-click completion. */
@@ -166,6 +201,8 @@ export interface AnnotationPainter {
   setAuthorLabelShortcutVisible(visible: boolean): void
   /** Cancels or steps back one active drawing gesture. */
   handleKeyboard(key: string): boolean
+  /** Moves every selected, transformable annotation in page-space coordinates. */
+  nudgeSelection(deltaX: number, deltaY: number): boolean
   /** Renders one attached annotation page without selection affordances. */
   renderPageRaster(pageIndex: number, pixelRatio?: number): HTMLCanvasElement
   /** Destroys every attached page idempotently. */
@@ -239,8 +276,12 @@ class KonvaPainter implements AnnotationPainter {
     attachment.container.append(labels)
     const accessibility = attachment.container.ownerDocument.createElement('div')
     accessibility.className = 'inklayer-annotation-a11y-list'
-    accessibility.setAttribute('role', 'list')
-    accessibility.setAttribute('aria-label', `Annotations on page ${attachment.pageIndex + 1}`)
+    accessibility.setAttribute('role', 'group')
+    accessibility.setAttribute(
+      'aria-label',
+      this.options.accessibility?.pageLabel?.(attachment.pageIndex)
+        ?? `Annotations on page ${attachment.pageIndex + 1}`
+    )
     attachment.container.append(accessibility)
     attachment.container.dataset['inklayerPage'] = String(attachment.pageIndex)
     attachment.container.dataset['inklayerInstance'] = this.options.instanceId
@@ -321,13 +362,13 @@ class KonvaPainter implements AnnotationPainter {
     configureHitRegions(group, resources.stage.scaleX())
     if (annotation.native) addInteractionHitTarget(KonvaRuntime, group, annotation.bounds)
     group.draggable(this.options.getTool() === 'select'
-      && ANNOTATION_TOOL_DEFINITIONS[annotation.type].draggable
+      && this.options.getTypeInteraction(annotation).draggable
       && this.options.canTransform(annotation))
     group.dragBoundFunc((position) => clampDragPosition(group, resources, position))
     const namespace = `.inklayer-${this.options.instanceId}`
     group.on(`click${namespace} tap${namespace}`, (event) => {
       event.cancelBubble = true
-      if (this.options.getTool() === 'select') this.options.onSelect(annotation.id)
+      if (this.options.getTool() === 'select') this.options.onSelect(annotation.id, 'canvas')
     })
     group.on(`dblclick${namespace} dbltap${namespace}`, (event) => {
       event.cancelBubble = true
@@ -402,7 +443,7 @@ class KonvaPainter implements AnnotationPainter {
       for (const [id, node] of resources.nodes) {
         const annotation = resources.annotations.get(id)
         node.draggable(tool === 'select' && annotation !== undefined
-          && ANNOTATION_TOOL_DEFINITIONS[annotation.type].draggable
+          && this.options.getTypeInteraction(annotation).draggable
           && this.options.canTransform(annotation))
       }
       resources.gesture = null
@@ -464,6 +505,35 @@ class KonvaPainter implements AnnotationPainter {
     return false
   }
 
+  /** Nudges selected movable groups and commits through the canonical transform path. */
+  public nudgeSelection(deltaX: number, deltaY: number): boolean {
+    let moved = false
+    for (const resources of this.pages.values()) {
+      for (const annotationId of this.selectionIds) {
+        const annotation = resources.annotations.get(annotationId)
+        const group = resources.nodes.get(annotationId)
+        if (annotation === undefined || group === undefined
+          || !this.options.getTypeInteraction(annotation).draggable
+          || !this.options.canTransform(annotation)) continue
+        const current = group.position()
+        const next = clampDragPosition(group, resources, {
+          x: current.x + deltaX,
+          y: current.y + deltaY
+        })
+        if (next.x === current.x && next.y === current.y) continue
+        group.position(next)
+        group.opacity(annotation.appearance.opacity)
+        this.options.onTransform(annotationId, {
+          ...annotation.bounds,
+          x: annotation.bounds.x + next.x - current.x,
+          y: annotation.bounds.y + next.y - current.y
+        }, serializeWithoutHitRegions(group))
+        moved = true
+      }
+    }
+    return moved
+  }
+
   /** Captures one page while excluding Transformer and edit controls. */
   public renderPageRaster(pageIndex: number, pixelRatio = 1): HTMLCanvasElement {
     this.assertActive()
@@ -477,12 +547,21 @@ class KonvaPainter implements AnnotationPainter {
     const transformerVisible = resources.transformer.visible()
     resources.transformer.visible(false)
     for (const control of resources.pointControls) control.node.visible(false)
+    const hiddenForPrint: Konva.Group[] = []
+    for (const [annotationId, annotation] of resources.annotations) {
+      const node = resources.nodes.get(annotationId)
+      if (node !== undefined && node.visible() && !this.options.canPrint(annotation)) {
+        node.visible(false)
+        hiddenForPrint.push(node)
+      }
+    }
     resources.layer.draw()
     try {
       return resources.stage.toCanvas({ pixelRatio })
     } finally {
       resources.transformer.visible(transformerVisible)
       for (const control of resources.pointControls) control.node.visible(true)
+      for (const node of hiddenForPrint) node.visible(true)
       resources.layer.draw()
     }
   }
@@ -510,7 +589,7 @@ class KonvaPainter implements AnnotationPainter {
       const tool = this.options.getTool()
       configureTransformer(
         resources,
-        primary,
+        primary === undefined ? undefined : this.options.getTypeInteraction(primary),
         tool,
         primary !== undefined && this.options.canTransform(primary)
       )
@@ -518,6 +597,13 @@ class KonvaPainter implements AnnotationPainter {
       const usesPointControls = tool === 'select' && primary !== undefined
         && this.createPointControls(resources, primary)
       resources.transformer.nodes(tool === 'select' && !usesPointControls ? nodes : [])
+      for (const child of resources.accessibility.children) {
+        const item = child as HTMLButtonElement
+        item.setAttribute('aria-pressed', String(
+          item.dataset['annotationId'] !== undefined
+            && this.selectionIds.includes(item.dataset['annotationId'])
+        ))
+      }
       this.refreshAuthorLabelVisibility(resources)
       resources.layer.batchDraw()
     }
@@ -545,16 +631,22 @@ class KonvaPainter implements AnnotationPainter {
 
   /** Mirrors one canvas annotation into a keyboard-accessible list item. */
   private renderAccessibilityItem(resources: PageResources, annotation: Annotation): void {
-    findAccessibilityItem(resources.accessibility, annotation.id)?.remove()
-    const button = resources.accessibility.ownerDocument.createElement('button')
-    button.type = 'button'
-    button.dataset['annotationId'] = annotation.id
-    button.setAttribute('role', 'listitem')
-    button.setAttribute('aria-label', annotationAccessibilityLabel(annotation))
-    button.addEventListener('focus', () => this.options.onHover(annotation.id))
-    button.addEventListener('blur', () => this.options.onHover(null))
-    button.addEventListener('click', () => this.options.onSelect(annotation.id))
-    resources.accessibility.append(button)
+    const existing = findAccessibilityItem(resources.accessibility, annotation.id)
+    const button = (existing as HTMLButtonElement | undefined)
+      ?? resources.accessibility.ownerDocument.createElement('button')
+    if (existing === undefined) {
+      button.type = 'button'
+      button.dataset['annotationId'] = annotation.id
+      button.addEventListener('focus', () => this.options.onHover(annotation.id))
+      button.addEventListener('blur', () => this.options.onHover(null))
+      button.addEventListener('click', () => this.options.onSelect(annotation.id, 'accessibility'))
+      resources.accessibility.append(button)
+    }
+    const label = this.options.accessibility?.annotationLabel?.(structuredClone(annotation))
+      ?? annotationAccessibilityLabel(annotation)
+    button.textContent = label
+    button.setAttribute('aria-label', label)
+    button.setAttribute('aria-pressed', String(this.selectionIds.includes(annotation.id)))
   }
 
   /** Applies policy precedence: hidden, always, then selected-or-hovered auto. */
@@ -636,7 +728,7 @@ class KonvaPainter implements AnnotationPainter {
 
   /** Creates endpoint or vertex handles for one selected line-based annotation. */
   private createPointControls(resources: PageResources, annotation: Annotation): boolean {
-    const mode = ANNOTATION_TOOL_DEFINITIONS[annotation.type].transformMode
+    const mode = this.options.getTypeInteraction(annotation).transformMode
     if (mode !== 'endpoints' && mode !== 'vertices') return false
     const group = resources.nodes.get(annotation.id)
     const KonvaRuntime = this.KonvaModule
@@ -707,23 +799,30 @@ class KonvaPainter implements AnnotationPainter {
         if (tool === 'select' && event.target === resources.stage) this.options.onClearSelection()
         return
       }
-      if (ANNOTATION_TOOL_DEFINITIONS[tool].textSelection || isImageTool(tool)) return
+      const controller = this.options.getCreationController(tool)
+      if (controller === 'text-selection' || controller === 'image-placement') return
       // FreeText starts after the completed click/tap below. Opening and focusing
       // an input during pointer-down allows the same native gesture to blur it.
-      if (tool === 'free-text') return
-      if (tool === 'note') {
+      if (controller === 'text-input') return
+      if (controller === 'point') {
         this.options.onCreate({
-          type: 'note', pageIndex: resources.pageIndex,
+          type: tool, pageIndex: resources.pageIndex,
           bounds: { x: point.x, y: point.y, width: 24, height: 24 }
         })
         return
       }
-      const multiPoint = tool === 'polygon' || tool === 'polyline' || tool === 'cloud'
-      if (tool === 'freehand') this.pauseFreehandCommit(resources)
+      const multiPoint = controller === 'polyline'
+      if (controller === 'freehand' && tool === 'freehand') this.pauseFreehandCommit(resources)
       if (multiPoint && resources.gesture?.type === tool) {
         resources.gesture.points.push(point.x, point.y)
       } else {
-        resources.gesture = { type: tool, points: [point.x, point.y], multiPoint }
+        resources.gesture = {
+          type: tool,
+          geometry: this.options.getGeometry(tool),
+          controller,
+          points: [point.x, point.y],
+          multiPoint
+        }
       }
       this.updateGesturePreview(resources, resources.gesture, point)
       if (!multiPoint) this.capturePointerRelease(resources)
@@ -752,13 +851,16 @@ class KonvaPainter implements AnnotationPainter {
       const tool = this.options.getTool()
       const point = resources.stage.getRelativePointerPosition()
       if (point === null) return
-      if (tool === 'free-text') {
+      const controller = tool === 'select' || tool === 'text-select'
+        ? undefined
+        : this.options.getCreationController(tool)
+      if (controller === 'text-input') {
         this.options.onRequestFreeText(resources.pageIndex, {
           x: point.x, y: point.y, width: 160, height: 40
         })
         return
       }
-      if (!isImageTool(tool)) return
+      if (controller !== 'image-placement' || !isImageTool(tool)) return
       const asset = this.options.getImageAsset(tool)
       if (asset === null) {
         this.options.onImageAssetRequired(tool)
@@ -812,7 +914,9 @@ class KonvaPainter implements AnnotationPainter {
           ? 'Arrow'
           : gesture.type === 'cloud'
             ? 'Path'
-          : 'Line'
+            : gesture.geometry === 'box' || gesture.geometry === 'text-box'
+              ? 'Rect'
+              : 'Line'
     if (resources.gesturePreview?.getClassName() !== desiredClass) {
       clearGesturePreview(resources)
       resources.gesturePreview = createGesturePreview(
@@ -1029,7 +1133,8 @@ function gesturePreviewAttributes(
   points: readonly number[]
 ): Record<string, unknown> {
   const bounds = boundsFromPoints(points)
-  if (gesture.type === 'rectangle') {
+    if (gesture.type === 'rectangle' || gesture.geometry === 'box'
+      || gesture.geometry === 'text-box') {
     return { ...bounds, dash: [6, 4] }
   }
   if (gesture.type === 'circle') {
@@ -1169,11 +1274,10 @@ function clampControlPosition(
 /** Applies geometry-specific selection handles and safe page bounds. */
 function configureTransformer(
   resources: PageResources,
-  annotation: Annotation | undefined,
+  definition: PainterTypeInteraction | undefined,
   tool: AnnotationTool,
   permitted: boolean
 ): void {
-  const definition = annotation === undefined ? undefined : ANNOTATION_TOOL_DEFINITIONS[annotation.type]
   const enabled = tool === 'select' && definition !== undefined && permitted
   const mode = definition?.transformMode ?? 'none'
   resources.transformer.resizeEnabled(enabled && definition.resizable)

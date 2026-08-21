@@ -1,5 +1,7 @@
 /** @file Stable public Annotation Engine interaction contracts. */
 
+import type { Annotation } from '../domain/annotation'
+
 /** Configuration used to attach one PDF page overlay. */
 export interface AnnotationPageAttachment {
   /** Zero-based page index. */
@@ -16,6 +18,26 @@ export interface AnnotationPageAttachment {
 
 /** Core-owned author/reference Tag visibility policy. */
 export type AnnotationAuthorLabelVisibility = 'auto' | 'always' | 'hidden'
+
+/** Core-owned keyboard behavior for direct document annotation interaction. */
+export interface AnnotationKeyboardOptions {
+  /** Enables root-scoped Escape, deletion, and arrow-key movement; defaults to true. */
+  enabled?: boolean
+  /** Page-space distance moved by one arrow-key press; defaults to one. */
+  nudgeStep?: number
+  /** Page-space distance moved while Shift is held; defaults to ten. */
+  acceleratedNudgeStep?: number
+}
+
+/** Localizable semantics for Core-owned annotation document controls. */
+export interface AnnotationAccessibilityOptions {
+  /** Accessible name added only when the engine root has none. */
+  rootLabel?: string
+  /** Returns the accessible name for one Core-owned page annotation group. */
+  pageLabel?: (pageIndex: number) => string
+  /** Returns the accessible label for one canvas annotation alternative. */
+  annotationLabel?: (annotation: Readonly<Annotation>) => string
+}
 
 /** Image prepared by application UI for Core-owned Signature or Stamp placement. */
 export interface AnnotationImageAsset {

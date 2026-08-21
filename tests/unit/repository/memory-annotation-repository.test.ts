@@ -31,6 +31,30 @@ describe('memory annotation repository', () => {
       .toThrowError(expect.objectContaining<Partial<InkLayerError>>({ code: 'ANNOTATION_INVALID' }))
   })
 
+  it('round-trips unknown custom types and typeData without a Definition', () => {
+    const repository = createMemoryAnnotationRepository()
+    const listener = vi.fn()
+    repository.subscribe(listener)
+    const annotation = createTestAnnotation({
+      type: 'custom:workflow/approval',
+      typeData: { schemaVersion: 7, payload: { state: 'pending', actors: ['a', 'b'] } },
+      extensions: { application: { retained: true } },
+      rendererState: { engine: 'konva', schemaVersion: 1, serialized: 'opaque-custom-state' }
+    })
+    repository.replaceAll([annotation])
+    annotation.typeData = { schemaVersion: 1, payload: null }
+    const stored = repository.getById('annotation-1')
+    expect(stored).toMatchObject({
+      type: 'custom:workflow/approval',
+      typeData: { schemaVersion: 7, payload: { state: 'pending', actors: ['a', 'b'] } },
+      rendererState: { serialized: 'opaque-custom-state' }
+    })
+    expect(listener).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'replace', annotations: [expect.objectContaining({ type: 'custom:workflow/approval' })]
+    }))
+    repository.destroy()
+  })
+
   it('atomically rejects duplicates without losing current state', () => {
     const repository = createMemoryAnnotationRepository()
     repository.add(createTestAnnotation())

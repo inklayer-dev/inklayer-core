@@ -4,8 +4,12 @@
  * from the canonical Core model while preserving unknown legacy fields.
  */
 
-import type { Annotation, AnnotationType } from '../../domain/annotation'
-import { getDefaultAnnotationAppearance, resolveAnnotationAppearance } from '../../domain/appearance'
+import {
+  isBuiltInAnnotationType,
+  type Annotation,
+  type AnnotationType
+} from '../../domain/annotation'
+import { resolveAnnotationAppearance } from '../../domain/appearance'
 import type { AnnotationComment } from '../../domain/comment'
 import { InkLayerError } from '../../domain/errors'
 import { parseAnnotation } from '../../domain/validation'
@@ -109,6 +113,11 @@ export function serializeLegacyAnnotation(
   options: LegacyCompatibilityOptions = {}
 ): LegacyAnnotation {
   const value = parseAnnotation(annotation)
+  if (!isBuiltInAnnotationType(value.type)) {
+    throw new InkLayerError('ANNOTATION_TYPE_UNSUPPORTED', 'Custom annotations have no legacy wire representation.', {
+      operation: 'serializeLegacyAnnotation', annotationId: value.id, pageIndex: value.pageIndex
+    })
+  }
   if (value.coordinateSpace !== 'konva-stage') {
     warn(options, {
       code: 'COORDINATE_SPACE_MISMATCH',
@@ -238,6 +247,7 @@ function getLegacyTitle(annotation: Annotation): string {
 
 /** Returns whether appearance contains properties absent from the old payload. */
 function hasNonColorAppearance(annotation: Annotation): boolean {
+  if (!isBuiltInAnnotationType(annotation.type)) return true
   const color = primaryAppearanceColor(annotation)
   const expected = resolveAnnotationAppearance(
     annotation.type,
@@ -255,7 +265,7 @@ function legacyColorOverride(type: AnnotationType, color: string): object {
 
 /** Returns the best single-color projection supported by historical payloads. */
 function primaryAppearanceColor(annotation: Annotation): string | undefined {
-  const appearance = annotation.appearance ?? getDefaultAnnotationAppearance(annotation.type)
+  const appearance = annotation.appearance
   if (annotation.type === 'highlight' || annotation.type === 'note') return appearance.fill?.color
   if (annotation.type === 'free-text') return appearance.text?.color
   return appearance.stroke?.color ?? appearance.fill?.color ?? appearance.text?.color

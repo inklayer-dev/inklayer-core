@@ -116,13 +116,19 @@ export class PdfDocumentFeatures {
         operation: 'search'
       })
     }
-    const needle = normalizeSearchValue(normalizedQuery, options.matchCase ?? false)
+    const matchCase = options.matchCase ?? false
+    const matchDiacritics = options.matchDiacritics ?? false
+    const needle = normalizeSearchValue(normalizedQuery, matchCase, matchDiacritics).text
+    if (needle.length === 0) {
+      return { query: normalizedQuery, matches: [], truncated: false }
+    }
     const matches: PdfSearchMatch[] = []
     try {
       for (let pageIndex = 0; pageIndex < this.document.numPages; pageIndex += 1) {
         const pageText = await this.getPageText(pageIndex)
         this.assertActive('search')
-        const haystack = normalizeSearchValue(pageText, options.matchCase ?? false)
+        const normalizedPage = normalizeSearchValue(pageText, matchCase, matchDiacritics)
+        const haystack = normalizedPage.text
         let cursor = 0
         let pageMatchIndex = 0
         while (cursor <= haystack.length - needle.length) {
@@ -130,12 +136,16 @@ export class PdfDocumentFeatures {
           if (start < 0) break
           cursor = start + Math.max(needle.length, 1)
           if ((options.wholeWord ?? false) && !isWholeWord(haystack, start, needle.length)) continue
+          const sourceStart = normalizedPage.starts[start] ?? start
+          const sourceEnd = normalizedPage.ends[start + needle.length - 1]
+            ?? sourceStart + needle.length
+          const sourceLength = sourceEnd - sourceStart
           matches.push({
             pageIndex,
             matchIndex: pageMatchIndex,
-            start,
-            length: needle.length,
-            preview: createSearchPreview(pageText, start, needle.length)
+            start: sourceStart,
+            length: sourceLength,
+            preview: createSearchPreview(pageText, sourceStart, sourceLength)
           })
           pageMatchIndex += 1
           if (matches.length >= maxResults) {
@@ -456,10 +466,58 @@ function rgbToCss(color: Uint8ClampedArray): string {
     (part ?? 0).toString(16).padStart(2, '0')).join('')}`
 }
 
-/** Normalizes Unicode search input with optional case folding. */
-function normalizeSearchValue(value: string, matchCase: boolean): string {
-  const normalized = value.normalize('NFKC')
-  return matchCase ? normalized : normalized.toLocaleLowerCase()
+interface NormalizedSearchValue {
+  text: string
+  starts: number[]
+  ends: number[]
+}
+
+interface SearchGrapheme {
+  value: string
+  start: number
+  end: number
+}
+
+/** Normalizes Unicode search input while retaining source-offset projection. */
+function normalizeSearchValue(
+  value: string,
+  matchCase: boolean,
+  matchDiacritics: boolean
+): NormalizedSearchValue {
+  let text = ''
+  const starts: number[] = []
+  const ends: number[] = []
+  for (const grapheme of segmentSearchGraphemes(value)) {
+    const compatibilityNormalized = grapheme.value.normalize('NFKC')
+    const diacriticNormalized = matchDiacritics
+      ? compatibilityNormalized
+      : compatibilityNormalized.normalize('NFD').replace(/\p{M}/gu, '')
+    const normalized = matchCase ? diacriticNormalized : diacriticNormalized.toLowerCase()
+    text += normalized
+    for (let index = 0; index < normalized.length; index += 1) {
+      starts.push(grapheme.start)
+      ends.push(grapheme.end)
+    }
+  }
+  return { text, starts, ends }
+}
+
+/** Groups base code points with following combining marks for stable offsets. */
+function segmentSearchGraphemes(value: string): SearchGrapheme[] {
+  const graphemes: SearchGrapheme[] = []
+  let offset = 0
+  for (const codePoint of value) {
+    const start = offset
+    offset += codePoint.length
+    const previous = graphemes.at(-1)
+    if (/\p{M}/u.test(codePoint) && previous !== undefined) {
+      previous.value += codePoint
+      previous.end = offset
+    } else {
+      graphemes.push({ value: codePoint, start, end: offset })
+    }
+  }
+  return graphemes
 }
 
 /** Returns whether a match is bounded by non-word characters. */

@@ -122,6 +122,18 @@ assertPackage(
     && typeof annotationImported.parseAndValidateKonvaSnapshot === 'function',
   'Built Annotation entry is missing its facade or snapshot validator.'
 )
+const capabilitiesImported = await import(resolve(projectRoot, 'dist/capabilities.js'))
+assertPackage(
+  typeof capabilitiesImported.createInkLayer === 'function'
+    && typeof capabilitiesImported.createLoggerCapability === 'function'
+    && typeof capabilitiesImported.createFetchCapability === 'function',
+  'Built Capabilities entry is missing Composition Root or Port factories.'
+)
+const annotationTypesImported = await import(resolve(projectRoot, 'dist/annotation-types.js'))
+assertPackage(
+  typeof annotationTypesImported.createAnnotationTypeRegistry === 'function',
+  'Built Annotation Types entry is missing its registry factory.'
+)
 const pdfJsImport = await import(resolve(projectRoot, 'dist/import/pdfjs.js'))
 const pdfExport = await import(resolve(projectRoot, 'dist/export/pdf.js'))
 const excelExport = await import(resolve(projectRoot, 'dist/export/excel.js'))
@@ -140,6 +152,8 @@ assertPackage(
 const required = require(resolve(projectRoot, 'dist/index.cjs'))
 const viewerRequired = require(resolve(projectRoot, 'dist/viewer.cjs'))
 const annotationRequired = require(resolve(projectRoot, 'dist/annotation.cjs'))
+const capabilitiesRequired = require(resolve(projectRoot, 'dist/capabilities.cjs'))
+const annotationTypesRequired = require(resolve(projectRoot, 'dist/annotation-types.cjs'))
 const pdfJsRequired = require(resolve(projectRoot, 'dist/import/pdfjs.cjs'))
 const pdfRequired = require(resolve(projectRoot, 'dist/export/pdf.cjs'))
 const excelRequired = require(resolve(projectRoot, 'dist/export/excel.cjs'))
@@ -148,6 +162,8 @@ assertPackage(
     && typeof required.downloadBlob === 'function'
     && typeof viewerRequired.createPdfViewerEngine === 'function'
     && typeof annotationRequired.createAnnotationEngine === 'function'
+    && typeof capabilitiesRequired.createInkLayer === 'function'
+    && typeof annotationTypesRequired.createAnnotationTypeRegistry === 'function'
     && typeof pdfJsRequired.importPdfJsAnnotations === 'function'
     && typeof pdfRequired.buildAnnotatedPdf === 'function'
     && typeof excelRequired.buildAnnotationWorkbook === 'function',
@@ -180,6 +196,12 @@ for (const expected of [
   'dist/annotation.js',
   'dist/annotation.cjs',
   'dist/annotation/index.d.ts',
+  'dist/capabilities.js',
+  'dist/capabilities.cjs',
+  'dist/capabilities/index.d.ts',
+  'dist/annotation-types.js',
+  'dist/annotation-types.cjs',
+  'dist/annotation-types/index.d.ts',
   'dist/import/pdfjs.js',
   'dist/import/pdfjs.cjs',
   'dist/import/pdfjs/index.d.ts',

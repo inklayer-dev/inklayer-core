@@ -103,6 +103,7 @@ class PdfViewerEngineImpl implements PdfViewerEngine {
   private passwordAttempt = 0
   private passwordProtected = false
   private pendingLoadError: InkLayerError | null = null
+  private readonly cancelledLoadGenerations = new Set<number>()
   private watermark: PdfWatermarkSpec | null = null
   private textSelection: PdfActiveTextSelection | null = null
   private readonly minScale: number
@@ -193,11 +194,11 @@ class PdfViewerEngineImpl implements PdfViewerEngine {
         documentProxy,
         this.options.thumbnailSurfaceProvider
       )
-      this.textLayers = new PdfTextLayerController(documentProxy, (selection) => {
-        this.setTextSelection({ kind: 'page', selection })
+      this.textLayers = new PdfTextLayerController(documentProxy, (selection, source) => {
+        this.setTextSelection({ kind: 'page', source, selection })
         this.emit({ type: 'textSelected', selection })
-      }, (selection) => {
-        this.setTextSelection({ kind: 'document', selection })
+      }, (selection, source) => {
+        this.setTextSelection({ kind: 'document', source, selection })
         this.emit({ type: 'documentTextSelected', selection })
       }, () => {
         this.resetTextSelection()
@@ -213,7 +214,12 @@ class PdfViewerEngineImpl implements PdfViewerEngine {
       this.emit({ type: 'documentLoaded', document: handle })
       return cloneDocumentHandle(handle)
     } catch (cause) {
-      const error = this.pendingLoadError ?? rangeError ?? normalizePdfError(cause, 'load')
+      const explicitlyCancelled = this.cancelledLoadGenerations.delete(generation)
+      const error = this.pendingLoadError ?? rangeError ?? (explicitlyCancelled
+        ? new InkLayerError('PDF_LOAD_CANCELLED', 'PDF document loading was cancelled.', {
+          operation: 'load', cause
+        })
+        : normalizePdfError(cause, 'load'))
       this.pendingLoadError = null
       if (this.isCurrentGeneration(generation)) {
         await this.releaseDocumentResources()
@@ -228,9 +234,12 @@ class PdfViewerEngineImpl implements PdfViewerEngine {
     }
   }
 
-  /** Cancels current loading and returns a live engine to idle. */
+  /** Cancels current loading with a distinct error and returns a live engine to idle. */
   public async cancelLoad(): Promise<void> {
     this.assertActive('cancelLoad')
+    if (this.snapshot.status === 'loading' || this.snapshot.status === 'awaiting-password') {
+      this.cancelledLoadGenerations.add(this.snapshot.generation)
+    }
     const generation = this.snapshot.generation + 1
     this.snapshot = { status: 'idle', generation, document: null, error: null, progress: null }
     await this.releaseDocumentResources()
@@ -276,16 +285,6 @@ class PdfViewerEngineImpl implements PdfViewerEngine {
     return () => {
       this.listeners.delete(listener)
     }
-  }
-
-  /** Returns the optional owned PDF.js web viewer. */
-  public getViewer(): PDFViewer | null {
-    return this.viewer
-  }
-
-  /** Returns the optional owned PDF.js EventBus. */
-  public getEventBus(): EventBus | null {
-    return this.eventBus
   }
 
   /** Applies a page-flow mode through PDF.js's virtualized web Viewer. */
@@ -914,6 +913,7 @@ function cloneActiveTextSelection(selection: PdfActiveTextSelection): PdfActiveT
   if (selection.kind === 'page') {
     return {
       kind: 'page',
+      source: selection.source,
       selection: {
         ...selection.selection,
         rects: selection.selection.rects.map((rect) => ({ ...rect }))
@@ -922,6 +922,7 @@ function cloneActiveTextSelection(selection: PdfActiveTextSelection): PdfActiveT
   }
   return {
     kind: 'document',
+    source: selection.source,
     selection: {
       text: selection.selection.text,
       fragments: selection.selection.fragments.map((fragment) => ({

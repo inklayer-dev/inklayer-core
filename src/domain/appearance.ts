@@ -146,11 +146,17 @@ export function resolveAnnotationAppearance(
 /** Validates one fully resolved canonical appearance against type capabilities. */
 export function validateResolvedAppearance(type: AnnotationType, value: AnnotationAppearance): void {
   const capabilities = CAPABILITIES[type]
-  if (!unit(value.opacity)) throw new RangeError('Annotation opacity must be between zero and one.')
+  validateAnnotationAppearance(value)
   if (!capabilities.stroke && value.stroke !== null) unsupported(type, 'stroke')
   if (!capabilities.fill && value.fill !== null) unsupported(type, 'fill')
   if (!capabilities.text && value.text !== null) unsupported(type, 'text')
   if (value.stroke !== null) validateStroke(type, value.stroke, capabilities)
+}
+
+/** Validates type-independent numeric, color, and line appearance invariants. */
+export function validateAnnotationAppearance(value: AnnotationAppearance): void {
+  if (!unit(value.opacity)) throw new RangeError('Annotation opacity must be between zero and one.')
+  if (value.stroke !== null) validateGenericStroke(value.stroke)
   if (value.fill !== null) {
     validateColor(value.fill.color)
     if (!unit(value.fill.opacity)) throw new RangeError('Fill opacity must be between zero and one.')
@@ -211,11 +217,20 @@ function validateStroke(
   stroke: AnnotationStrokeAppearance,
   capabilities: AnnotationAppearanceCapabilities
 ): void {
+  validateGenericStroke(stroke)
+  if (!capabilities.dash && (stroke.dash.length > 0 || stroke.dashOffset !== 0)) unsupported(type, 'dash')
+  if (!new Set(['butt', 'round', 'square']).has(stroke.lineCap)
+    || !new Set(['miter', 'round', 'bevel']).has(stroke.lineJoin)) {
+    throw new RangeError('Stroke line geometry is invalid.')
+  }
+}
+
+/** Validates stroke values without applying one type's component policy. */
+function validateGenericStroke(stroke: AnnotationStrokeAppearance): void {
   validateColor(stroke.color)
   if (!positive(stroke.width) || !unit(stroke.opacity)
     || !Number.isFinite(stroke.dashOffset) || stroke.dash.length > 32
     || stroke.dash.some((part) => !positive(part))) throw new RangeError('Stroke appearance is invalid.')
-  if (!capabilities.dash && (stroke.dash.length > 0 || stroke.dashOffset !== 0)) unsupported(type, 'dash')
   if (!new Set(['butt', 'round', 'square']).has(stroke.lineCap)
     || !new Set(['miter', 'round', 'bevel']).has(stroke.lineJoin)) {
     throw new RangeError('Stroke line geometry is invalid.')

@@ -31,6 +31,7 @@ export type {
   PdfThumbnailSurfaceProvider,
   PdfTextLayerAttachment,
   PdfTextSelection,
+  PdfTextSelectionSource,
   PdfTextSelectionRect,
   PdfUrlSource,
   PdfViewerEngine,

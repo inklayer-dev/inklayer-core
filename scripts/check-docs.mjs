@@ -1,0 +1,133 @@
+/**
+ * @file Maintained-document consistency gate.
+ * @description Compares release claims with package metadata, collected tests,
+ * browser revisions, exports, the VitePress site, and required Worker examples.
+ */
+
+import { execFile } from 'node:child_process'
+import { readFile, readdir } from 'node:fs/promises'
+import { promisify } from 'node:util'
+import { resolve } from 'node:path'
+
+const execFileAsync = promisify(execFile)
+const projectRoot = resolve(import.meta.dirname, '..')
+const diagnostics = []
+
+/** Records one failed documentation invariant without stopping later checks. */
+function check(condition, message) {
+  if (!condition) diagnostics.push(message)
+}
+
+/** Recursively counts maintained TypeScript implementation files. */
+async function countSourceFiles(directory) {
+  const entries = await readdir(directory, { withFileTypes: true })
+  let count = 0
+  for (const entry of entries) {
+    const path = resolve(directory, entry.name)
+    if (entry.isDirectory()) count += await countSourceFiles(path)
+    else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.d.ts')) count += 1
+  }
+  return count
+}
+
+/** Reads JSON emitted by one local executable without invoking a shell. */
+async function commandJson(command, args) {
+  const { stdout } = await execFileAsync(command, args, {
+    cwd: projectRoot,
+    maxBuffer: 20_000_000
+  })
+  return JSON.parse(stdout)
+}
+
+/** Recursively returns all maintained Markdown document paths. */
+async function collectMarkdown(directory) {
+  const paths = []
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const path = resolve(directory, entry.name)
+    if (entry.isDirectory() && entry.name !== '.vitepress') {
+      paths.push(...await collectMarkdown(path))
+    } else if (entry.name.endsWith('.md')) paths.push(path)
+  }
+  return paths
+}
+
+const packageJson = JSON.parse(await readFile(resolve(projectRoot, 'package.json'), 'utf8'))
+const readme = await readFile(resolve(projectRoot, 'README.md'), 'utf8')
+const api = await readFile(resolve(projectRoot, 'docs/api.md'), 'utf8')
+const gettingStarted = await readFile(resolve(projectRoot, 'docs/guide/getting-started.md'), 'utf8')
+const browserSupport = await readFile(resolve(projectRoot, 'docs/browser-support.md'), 'utf8')
+const vitePressConfig = await readFile(resolve(projectRoot, 'docs/.vitepress/config.mts'), 'utf8')
+const docsWorkflow = await readFile(resolve(projectRoot, '.github/workflows/docs.yml'), 'utf8')
+const schema = await readFile(resolve(projectRoot, 'src/domain/schema.ts'), 'utf8')
+const browsers = JSON.parse(await readFile(
+  resolve(projectRoot, 'node_modules/playwright-core/browsers.json'), 'utf8'
+)).browsers
+const vitest = await commandJson(resolve(projectRoot, 'node_modules/.bin/vitest'), ['list', '--json'])
+const playwright = await commandJson(resolve(projectRoot, 'node_modules/.bin/playwright'), [
+  'test', '--list', '--project=chromium', '--reporter=json'
+])
+const sourceFiles = await countSourceFiles(resolve(projectRoot, 'src'))
+const vitestFiles = new Set(vitest.map(test => test.file)).size
+const browserScenarios = playwright.stats?.skipped
+const exportEntries = Object.keys(packageJson.exports ?? {}).length
+const browserRevisions = Object.fromEntries(
+  browsers.filter(browser => ['chromium', 'firefox', 'webkit'].includes(browser.name))
+    .map(browser => [browser.name, browser.revision])
+)
+
+check(schema.includes(`CORE_VERSION = '${packageJson.version}'`),
+  'CORE_VERSION does not match package.json version.')
+check(browserSupport.includes(`${browserScenarios} automated Vanilla scenarios`),
+  `docs/browser-support.md must claim ${browserScenarios} scenarios per engine.`)
+for (const [name, revision] of Object.entries(browserRevisions)) {
+  const browserName = name === 'webkit' ? 'WebKit' : `${name[0].toUpperCase()}${name.slice(1)}`
+  const label = `${browserName} ${revision}`
+  check(browserSupport.includes(label), `docs/browser-support.md is missing ${label}.`)
+}
+for (const [path, contents] of [['README.md', readme], ['docs/api.md', api]]) {
+  check(contents.includes('const viewer = createPdfViewerEngine()'),
+    `${path} must show zero-configuration Worker construction.`)
+  check(contents.includes("workerSrc: '/assets/pdf.worker.min.mjs'"),
+    `${path} must show the optional self-hosted/CSP Worker override.`)
+  check(/do\s+not\s+need\s+to\s+download(?:, copy,)? or configure/iu.test(contents),
+    `${path} must state that Worker configuration is not mandatory.`)
+}
+check(gettingStarted.includes('const core = await createInkLayer({'),
+  'Getting started must show zero-configuration composed construction.')
+check(gettingStarted.includes("workerSrc: '/assets/pdf.worker.min.mjs'"),
+  'Getting started must show the optional self-hosted/CSP Worker override.')
+check(/do\s+not\s+need\s+to\s+download(?:, copy,)? or configure/iu.test(gettingStarted),
+  'Getting started must state that Worker configuration is not mandatory.')
+for (const entry of Object.keys(packageJson.exports)) {
+  const packageEntry = entry === '.' ? 'inklayer-core' : `inklayer-core${entry.slice(1)}`
+  check(api.includes(`\`${packageEntry}\``), `docs/api.md is missing package entry ${entry}.`)
+}
+check(packageJson.scripts?.['docs:build'] === 'vitepress build docs',
+  'package.json must expose the VitePress production build.')
+check(vitePressConfig.includes("link: '/guide/framework-integration'"),
+  'VitePress navigation must expose the framework integration guide.')
+check(docsWorkflow.includes('actions/deploy-pages@v4') && docsWorkflow.includes('npm run docs:build'),
+  'GitHub Pages workflow must build and deploy the VitePress site.')
+
+const retiredDocuments = [
+  'implementation-progress', 'roadmap', 'final-report', 'release-candidate',
+  'react-core-final-audit-whitepaper', 'source-behavior-baseline',
+  'source-debt-inventory', 'source-difference-matrix'
+]
+const maintainedText = [readme, ...await Promise.all(
+  (await collectMarkdown(resolve(projectRoot, 'docs'))).map(path => readFile(path, 'utf8'))
+)].join('\n')
+for (const retired of retiredDocuments) {
+  check(!maintainedText.includes(retired), `Public documentation references retired document ${retired}.`)
+}
+
+if (diagnostics.length > 0) {
+  process.stderr.write(`${diagnostics.join('\n')}\n`)
+  process.exitCode = 1
+} else {
+  process.stdout.write(
+    `Documentation consistency passed: ${packageJson.version}, ${sourceFiles} source files, `
+    + `${vitestFiles}/${vitest.length} Vitest, ${browserScenarios} browser scenarios, `
+    + `${exportEntries} package entries.\n`
+  )
+}

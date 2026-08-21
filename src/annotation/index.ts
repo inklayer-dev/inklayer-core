@@ -28,10 +28,12 @@ export {
   type AnnotationTransformMode
 } from './tools'
 export type {
+  AnnotationAccessibilityOptions,
   AnnotationAuthorLabelVisibility,
   AnnotationImageAsset,
   AnnotationImageTool,
   AnnotationInteractionTheme,
+  AnnotationKeyboardOptions,
   AnnotationPageAttachment
 } from './contracts'
 export {
@@ -55,7 +57,10 @@ export type {
   AnnotationStrokeAppearance,
   AnnotationStrokeAppearanceInput,
   AnnotationTextAppearance,
-  AnnotationTextAppearanceInput
+  AnnotationTextAppearanceInput,
+  AnnotationTypeData,
+  AnnotationTypeId,
+  CustomAnnotationType
 } from '../domain/annotation'
 export type { User } from '../domain/user'
 export type { AnnotationPermissions } from '../domain/permissions'

@@ -4,34 +4,36 @@
  * annotations with bounded strings, finite geometry, and structured failures.
  */
 
-import type {
-  Annotation,
-  AnnotationAppearance,
-  AnnotationBounds,
-  AnnotationContent,
-  AnnotationSource,
-  AnnotationSignatureContent,
-  AnnotationType,
-  KonvaRendererState
+import {
+  isAnnotationTypeId,
+  isBuiltInAnnotationType,
+  type Annotation,
+  type AnnotationAppearance,
+  type AnnotationBounds,
+  type AnnotationContent,
+  type AnnotationSource,
+  type AnnotationSignatureContent,
+  type AnnotationTypeData,
+  type AnnotationTypeId,
+  type KonvaRendererState
 } from './annotation'
-import { getDefaultAnnotationAppearance, validateResolvedAppearance } from './appearance'
+import {
+  getDefaultAnnotationAppearance,
+  validateAnnotationAppearance,
+  validateResolvedAppearance
+} from './appearance'
 import type { AnnotationComment, CommentStatus } from './comment'
 import { InkLayerError } from './errors'
 import { isValidReferenceNumber } from './numbering'
 import { isValidAnnotationReference } from './references'
 import type { User } from './user'
+import { parseJsonObject, parseJsonValue, type JsonObject } from './json-value'
 
 const MAX_ID_LENGTH = 512
 const MAX_TEXT_LENGTH = 1_000_000
 const MAX_RENDERER_STATE_LENGTH = 10_000_000
 const MAX_COMMENTS = 10_000
 const MAX_REFERENCES = 10_000
-const DANGEROUS_KEYS = new Set(['__proto__', 'prototype', 'constructor'])
-const ANNOTATION_TYPES = new Set<AnnotationType>([
-  'highlight', 'strikeout', 'underline', 'free-text', 'rectangle', 'circle',
-  'freehand', 'free-highlight', 'signature', 'stamp', 'note', 'line', 'arrow',
-  'polygon', 'polyline', 'cloud'
-])
 const COMMENT_STATUSES = new Set<CommentStatus>([
   'Accepted', 'Rejected', 'Cancelled', 'Completed', 'None', 'Closed'
 ])
@@ -42,7 +44,7 @@ export function parseAnnotation(input: unknown): Annotation {
     const value = requireRecord(input, 'annotation')
     const id = requireString(value['id'], 'id', MAX_ID_LENGTH)
     const schemaVersion = requireLiteral(value['schemaVersion'], 1, 'schemaVersion')
-    const type = requireEnum(value['type'], ANNOTATION_TYPES, 'type')
+    const type = parseAnnotationTypeId(value['type'])
     const pageIndex = requireNonNegativeInteger(value['pageIndex'], 'pageIndex')
     const bounds = parseBounds(value['bounds'])
     const coordinateSpace = requireEnum(
@@ -57,8 +59,13 @@ export function parseAnnotation(input: unknown): Annotation {
     const rendererState = parseRendererState(value['rendererState'])
     const content = value['content'] === undefined ? undefined : parseContent(value['content'])
     const appearance = value['appearance'] === undefined
-      ? getDefaultAnnotationAppearance(type)
+      ? isBuiltInAnnotationType(type)
+        ? getDefaultAnnotationAppearance(type)
+        : undefined
       : parseAppearance(value['appearance'], type)
+    if (appearance === undefined) {
+      throw invalid('Custom annotations require an explicit appearance.', 'parseAppearance')
+    }
     const updatedAt = value['updatedAt'] === undefined
       ? undefined
       : requireNullableString(value['updatedAt'], 'updatedAt', 256)
@@ -66,6 +73,7 @@ export function parseAnnotation(input: unknown): Annotation {
       ? undefined
       : requireReferenceNumber(value['referenceNumber'])
     const source = value['source'] === undefined ? undefined : parseSource(value['source'])
+    const typeData = value['typeData'] === undefined ? undefined : parseTypeData(value['typeData'])
     const extensions = value['extensions'] === undefined
       ? undefined
       : parseExtensions(value['extensions'])
@@ -87,6 +95,7 @@ export function parseAnnotation(input: unknown): Annotation {
       ...(updatedAt === undefined ? {} : { updatedAt }),
       ...(referenceNumber === undefined ? {} : { referenceNumber }),
       ...(source === undefined ? {} : { source }),
+      ...(typeData === undefined ? {} : { typeData }),
       ...(extensions === undefined ? {} : { extensions })
     }
   } catch (cause) {
@@ -179,7 +188,7 @@ function parseSignatureContent(input: unknown): AnnotationSignatureContent {
 }
 
 /** Parses optional appearance properties and their numeric ranges. */
-function parseAppearance(input: unknown, type: AnnotationType): AnnotationAppearance {
+function parseAppearance(input: unknown, type: AnnotationTypeId): AnnotationAppearance {
   const value = requireRecord(input, 'appearance')
   const appearance: AnnotationAppearance = {
     opacity: requireFiniteNumber(value['opacity'], 'appearance.opacity'),
@@ -188,7 +197,8 @@ function parseAppearance(input: unknown, type: AnnotationType): AnnotationAppear
     text: value['text'] === null ? null : parseTextAppearance(value['text'])
   }
   try {
-    validateResolvedAppearance(type, appearance)
+    if (isBuiltInAnnotationType(type)) validateResolvedAppearance(type, appearance)
+    else validateAnnotationAppearance(appearance)
   } catch (cause) {
     throw invalid('Annotation appearance is invalid for its type.', 'parseAppearance', cause)
   }
@@ -305,39 +315,25 @@ function parseSource(input: unknown): AnnotationSource {
 }
 
 /** Validates and detaches an extension object while rejecting prototype keys. */
-function parseExtensions(input: unknown): Record<string, unknown> {
-  const value = requireRecord(input, 'extensions')
-  validateExtensionValue(value, 0)
-  return structuredClone(value)
+function parseExtensions(input: unknown): JsonObject {
+  return parseJsonObject(input, 'parseExtensions')
 }
 
-/** Recursively validates extension JSON-like values to a bounded depth. */
-function validateExtensionValue(value: unknown, depth: number): void {
-  if (depth > 100) throw invalid('Extensions exceed the maximum depth.', 'parseExtensions')
-  if (typeof value === 'number' && !Number.isFinite(value)) {
-    throw invalid('Extensions cannot contain non-finite numbers.', 'parseExtensions')
+/** Parses independently versioned definition-owned lossless JSON. */
+function parseTypeData(input: unknown): AnnotationTypeData {
+  const value = requireRecord(input, 'typeData')
+  return {
+    schemaVersion: requirePositiveInteger(value['schemaVersion'], 'typeData.schemaVersion'),
+    payload: parseJsonValue(value['payload'], 'parseTypeData')
   }
-  if (typeof value === 'string' && value.length > MAX_TEXT_LENGTH) {
-    throw invalid('Extensions contain an oversized string.', 'parseExtensions')
+}
+
+/** Parses a protected built-in or bounded namespaced custom identity. */
+function parseAnnotationTypeId(value: unknown): AnnotationTypeId {
+  if (typeof value !== 'string' || !isAnnotationTypeId(value)) {
+    throw invalid('type has an unsupported or invalid identity.', 'parseAnnotationTypeId')
   }
-  if (value === null || typeof value === 'string' || typeof value === 'boolean'
-    || typeof value === 'number') return
-  if (Array.isArray(value)) {
-    value.forEach((entry) => validateExtensionValue(entry, depth + 1))
-    return
-  }
-  if (isRecord(value)) {
-    const prototype = Object.getPrototypeOf(value) as unknown
-    if (prototype !== Object.prototype && prototype !== null) {
-      throw invalid('Extensions must contain only plain objects.', 'parseExtensions')
-    }
-    for (const [key, entry] of Object.entries(value)) {
-      if (DANGEROUS_KEYS.has(key)) throw invalid('Extensions contain a dangerous key.', 'parseExtensions')
-      validateExtensionValue(entry, depth + 1)
-    }
-    return
-  }
-  throw invalid('Extensions must contain only JSON-compatible values.', 'parseExtensions')
+  return value
 }
 
 /** Requires a non-array object record. */
@@ -386,6 +382,14 @@ function requireFiniteNumber(value: unknown, path: string): number {
 function requireNonNegativeInteger(value: unknown, path: string): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
     throw invalid(`${path} must be a non-negative safe integer.`, 'validation')
+  }
+  return value
+}
+
+/** Requires a positive safe integer. */
+function requirePositiveInteger(value: unknown, path: string): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) {
+    throw invalid(`${path} must be a positive safe integer.`, 'validation')
   }
   return value
 }

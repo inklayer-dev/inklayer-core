@@ -5,7 +5,11 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import type { AnnotationType } from '../../../src/domain/annotation'
+import {
+  BUILT_IN_ANNOTATION_TYPES,
+  type Annotation,
+  type AnnotationType
+} from '../../../src/domain/annotation'
 import type { InkLayerError } from '../../../src/domain/errors'
 import { createMemoryAnnotationRepository } from '../../../src/repository/memory-annotation-repository'
 import { parseAndValidateKonvaSnapshot } from '../../../src/renderer/konva/snapshot'
@@ -13,20 +17,30 @@ import {
   createAnnotationEngine,
   type AnnotationEngineOptions
 } from '../../../src/annotation/annotation-engine'
-import { ANNOTATION_TOOL_DEFINITIONS } from '../../../src/annotation/tools'
 import { createTestAnnotation } from '../../helpers/annotation'
+import { createAnnotationTypeRegistry } from '../../../src/annotation-types/annotation-type-registry'
+import { createTestAnnotationTypeDefinition } from '../../helpers/annotation-type'
 
 /** Creates the root state surface used before a page renderer is attached. */
-function createRoot(): HTMLElement & { classNames: Set<string> } {
+function createRoot(): HTMLElement & { classNames: Set<string>; attributes: Map<string, string> } {
   const classNames = new Set<string>()
+  const attributes = new Map<string, string>()
   return {
     classNames,
+    attributes,
     dataset: {},
     classList: {
       add: (...tokens: string[]) => tokens.forEach((token) => classNames.add(token)),
       remove: (...tokens: string[]) => tokens.forEach((token) => classNames.delete(token))
-    }
-  } as unknown as HTMLElement & { classNames: Set<string> }
+    },
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    hasAttribute: (name: string) => attributes.has(name),
+    getAttribute: (name: string) => attributes.get(name) ?? null,
+    setAttribute: (name: string, value: string) => attributes.set(name, value),
+    removeAttribute: (name: string) => attributes.delete(name),
+    focus: vi.fn()
+  } as unknown as HTMLElement & { classNames: Set<string>; attributes: Map<string, string> }
 }
 
 /** Creates deterministic engine options and unique annotation identifiers. */
@@ -54,6 +68,35 @@ function toolFields(type: AnnotationType): Partial<Parameters<ReturnType<typeof 
 }
 
 describe('Annotation Engine tools', () => {
+  it('owns only fallback root semantics and validates keyboard movement steps', () => {
+    const root = createRoot()
+    const engine = createAnnotationEngine(createOptions({ root }))
+    expect(Object.fromEntries(root.attributes)).toEqual({
+      tabindex: '0', role: 'region', 'aria-label': 'PDF annotation canvas'
+    })
+    engine.destroy()
+    expect(root.attributes.size).toBe(0)
+
+    const labelled = createRoot()
+    labelled.attributes.set('role', 'document')
+    labelled.attributes.set('aria-label', 'Localized document')
+    const preserved = createAnnotationEngine(createOptions({
+      root: labelled,
+      keyboard: { enabled: false }
+    }))
+    expect(Object.fromEntries(labelled.attributes)).toEqual({
+      role: 'document', 'aria-label': 'Localized document'
+    })
+    preserved.destroy()
+    expect(Object.fromEntries(labelled.attributes)).toEqual({
+      role: 'document', 'aria-label': 'Localized document'
+    })
+
+    expect(() => createAnnotationEngine(createOptions({
+      keyboard: { nudgeStep: 0 }
+    }))).toThrowError(expect.objectContaining({ code: 'ANNOTATION_INVALID' }))
+  })
+
   it('publishes default and overridden interactive creation modes', () => {
     const engine = createAnnotationEngine(createOptions({
       creationModes: { rectangle: 'continuous' }
@@ -65,6 +108,85 @@ describe('Annotation Engine tools', () => {
       creationModes: { circle: 'invalid' as 'once' }
     }))).toThrowError(expect.objectContaining<Partial<InkLayerError>>({ code: 'ANNOTATION_INVALID' }))
     engine.destroy()
+  })
+
+  it('selects an installed custom tool through Definition metadata and resets it on unload', () => {
+    const registry = createAnnotationTypeRegistry()
+    const unregister = registry.register(createTestAnnotationTypeDefinition())
+    const engine = createAnnotationEngine(createOptions({ annotationTypes: registry }))
+
+    engine.setTool('custom:test/box')
+    expect(engine.getTool()).toBe('custom:test/box')
+    expect(engine.getCreationMode('custom:test/box')).toBe('once')
+    expect(engine.getAppearanceCapabilities('custom:test/box')).toMatchObject({
+      stroke: true, fill: true, text: false
+    })
+
+    unregister()
+    expect(engine.getTool()).toBe('select')
+    expect(() => engine.setTool('custom:test/box')).toThrowError(
+      expect.objectContaining({ code: 'ANNOTATION_TYPE_UNAVAILABLE' })
+    )
+    engine.destroy()
+    registry.destroy()
+  })
+
+  it('initializes and transforms custom canonical data through pure Definition callbacks', () => {
+    const registry = createAnnotationTypeRegistry()
+    const initialize = vi.fn((input: { readonly bounds: Annotation['bounds'] }) => {
+      expect(Object.isFrozen(input)).toBe(true)
+      expect(Object.isFrozen(input.bounds)).toBe(true)
+      return {
+        bounds: { ...input.bounds },
+        typeData: {
+          schemaVersion: 1,
+          payload: { width: input.bounds.width, height: input.bounds.height }
+        }
+      }
+    })
+    const base = createTestAnnotationTypeDefinition('custom:test/initialized', {
+      supportedSchemaVersions: [1],
+      /** Requires positive generated dimensions. */
+      validate(payload) {
+        if (typeof payload !== 'object' || payload === null) throw new Error('Invalid dimensions.')
+      }
+    })
+    registry.register({
+      ...base,
+      creation: { controller: 'drag-box', initialize },
+      interaction: {
+        /** Synchronizes dimensions after a direct transform. */
+        reduceTransform(_annotation, input) {
+          return {
+            bounds: { ...input.bounds },
+            typeData: {
+              schemaVersion: 1,
+              payload: { width: input.bounds.width, height: input.bounds.height }
+            }
+          }
+        }
+      }
+    })
+    const engine = createAnnotationEngine(createOptions({ annotationTypes: registry }))
+    const created = engine.createAnnotation({
+      type: 'custom:test/initialized', pageIndex: 0,
+      bounds: { x: 5, y: 6, width: 70, height: 30 }
+    })
+    expect(initialize).toHaveBeenCalledOnce()
+    expect(created.typeData).toEqual({
+      schemaVersion: 1, payload: { width: 70, height: 30 }
+    })
+
+    const transformed = engine.transformAnnotation(created.id, {
+      bounds: { x: 15, y: 16, width: 90, height: 40 },
+      serialized: 'custom-transform-does-not-trust-konva-input'
+    })
+    expect(transformed.bounds).toEqual({ x: 15, y: 16, width: 90, height: 40 })
+    expect(transformed.typeData).toEqual({
+      schemaVersion: 1, payload: { width: 90, height: 40 }
+    })
+    engine.destroy()
+    registry.destroy()
   })
 
   it('owns image placement assets and exposes active cursor readiness state', () => {
@@ -94,7 +216,7 @@ describe('Annotation Engine tools', () => {
 
   it('creates every persisted type with validated exact Konva state', () => {
     const engine = createAnnotationEngine(createOptions())
-    const types = Object.keys(ANNOTATION_TOOL_DEFINITIONS) as AnnotationType[]
+    const types = [...BUILT_IN_ANNOTATION_TYPES]
     expect(types).toHaveLength(16)
     for (const type of types) {
       const annotation = engine.createAnnotation({
@@ -404,6 +526,58 @@ describe('Annotation Engine tools', () => {
 })
 
 describe('Annotation Engine safety and lifecycle', () => {
+  it('preserves unavailable custom annotations, allows generic operations, and restores behavior', () => {
+    const repository = createMemoryAnnotationRepository()
+    const annotationTypes = createAnnotationTypeRegistry()
+    repository.add(createTestAnnotation({
+      type: 'custom:test/box',
+      rendererState: {
+        engine: 'konva', schemaVersion: 1, serialized: 'unknown-state-must-not-be-parsed'
+      },
+      typeData: { schemaVersion: 1, payload: { label: 'A' } }
+    }))
+    const engine = createAnnotationEngine(createOptions({
+      repository, annotationTypes, snapshotStrategy: 'strict'
+    }))
+
+    const commented = engine.addComment('annotation-1', {
+      id: 'comment-1', title: 'Alice', content: 'Preserved', date: null,
+      author: { id: 'alice', name: 'Alice' }
+    })
+    expect(commented.typeData).toEqual({ schemaVersion: 1, payload: { label: 'A' } })
+    expect(commented.rendererState.serialized).toBe('unknown-state-must-not-be-parsed')
+    expect(() => engine.updateAnnotation('annotation-1', (current) => current)).toThrowError(
+      expect.objectContaining<Partial<InkLayerError>>({ code: 'ANNOTATION_TYPE_UNAVAILABLE' })
+    )
+
+    const unregister = annotationTypes.register(createTestAnnotationTypeDefinition(
+      'custom:test/box',
+      {
+        supportedSchemaVersions: [1],
+        /** Accepts the fixture payload. */
+        validate() {}
+      }
+    ))
+    const updated = engine.updateAnnotation('annotation-1', (current) => ({
+      ...current, content: { text: 'Definition restored' }
+    }))
+    expect(updated.content?.text).toBe('Definition restored')
+    expect(updated.rendererState.serialized).not.toContain('unknown-state-must-not-be-parsed')
+    expect(parseAndValidateKonvaSnapshot(updated.rendererState.serialized).root.children?.[0]?.className)
+      .toBe('Rect')
+
+    unregister()
+    expect(() => engine.updateAppearance('annotation-1', { opacity: 0.5 })).toThrowError(
+      expect.objectContaining<Partial<InkLayerError>>({ code: 'ANNOTATION_TYPE_UNAVAILABLE' })
+    )
+    expect(engine.deleteAnnotation('annotation-1')?.typeData).toEqual({
+      schemaVersion: 1, payload: { label: 'A' }
+    })
+    engine.destroy()
+    repository.destroy()
+    annotationTypes.destroy()
+  })
+
   it('supports strict failure and observable lenient skipping', () => {
     const repository = createMemoryAnnotationRepository()
     repository.add(createTestAnnotation({ rendererState: {

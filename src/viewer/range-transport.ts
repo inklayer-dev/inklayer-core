@@ -50,9 +50,10 @@ export async function probePdfRangeSupport(
   options: Omit<PdfRangeTransportOptions, 'Transport' | 'onError'>
 ): Promise<PdfRangeProbe> {
   const chunkSize = normalizeChunkSize(options.chunkSize)
+  const fetch = options.fetch
   let head: Response
   try {
-    head = await options.fetch(options.url, {
+    head = await fetch(options.url, {
       method: 'HEAD',
       signal: options.signal,
       ...(options.headers === undefined ? {} : { headers: options.headers }),
@@ -133,9 +134,10 @@ async function fetchValidatedRange(
   begin: number,
   end: number
 ): Promise<Uint8Array> {
+  const fetch = options.fetch
   let response: Response
   try {
-    response = await options.fetch(options.url, {
+    response = await fetch(options.url, {
       method: 'GET',
       headers: { ...options.headers, Range: `bytes=${begin}-${end - 1}` },
       signal: options.signal,

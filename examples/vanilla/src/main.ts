@@ -1,6 +1,6 @@
 /**
  * @file Complete framework-free InkLayer Core browser demonstration.
- * @description Exercises real PDF.js rendering, two Annotation Engines, every
+ * @description Exercises real PDF.js rendering, one Annotation Engine, every
  * tool, comments, reload, zoom, byte exporters, downloads, and teardown.
  */
 
@@ -12,10 +12,12 @@ import {
   buildSecureRasterPrintPdf,
   CORE_VERSION,
   createAnnotationEngine,
+  createBrowserThumbnailSurfaceProvider,
   createPdfPageFlow,
   createPdfZoomGestureController,
   createPdfViewerEngine,
   downloadBlob,
+  InkLayerError,
   printPdfBlob,
   resolvePdfViewerScale,
   stepPdfViewerScale,
@@ -26,6 +28,7 @@ import {
   type PdfOutlineItem,
   type PdfPasswordRequest,
   type PdfPageFlowController,
+  type PdfSource,
   type PdfTextSelection,
   type PdfViewerEngine,
   type PdfViewerScale,
@@ -38,7 +41,7 @@ import {
 } from 'inklayer-core/import/pdfjs'
 import 'inklayer-core/style'
 import './demo.css'
-import { createSamplePdf } from './sample-pdf'
+import { createLongDocumentPdf, createMixedPagePdf, createSamplePdf } from './sample-pdf'
 
 const root = document.querySelector<HTMLElement>('#app')
 if (root === null) throw new Error('Vanilla example root was not found.')
@@ -48,11 +51,11 @@ root.innerHTML = `
     <header class="demo-header">
       <div>
         <h1>InkLayer Core <small>v${CORE_VERSION}</small></h1>
-        <p>Two independent, framework-free PDF and annotation instances. Choose a tool, drag on a page, add comments, zoom, reload, or export bytes.</p>
+        <p>A complete framework-free PDF workspace. Load, search, select text, annotate, zoom, print, export, and recover errors through Core APIs.</p>
       </div>
       <button id="destroy-all" type="button">Destroy / remount</button>
     </header>
-    <section id="instance-grid" class="instance-grid" aria-label="InkLayer demo instances"></section>
+    <section id="instance-grid" class="instance-grid" aria-label="InkLayer Core workspace"></section>
   </main>
 `
 
@@ -61,6 +64,15 @@ const destroyAll = requireElement<HTMLButtonElement>(root, '#destroy-all')
 const samplePdf = createSamplePdf()
 let instances: DemoInstance[] = []
 
+/** Product-owned presentation of one structured recovery outcome. */
+interface RecoveryOutcome {
+  state: 'error' | 'warning' | 'success'
+  summary: string
+  code: string
+  operation: string
+  context: string
+}
+
 /** Owns one complete demo Viewer and Annotation Engine lifecycle. */
 class DemoInstance {
   private readonly host: HTMLElement
@@ -68,10 +80,12 @@ class DemoInstance {
   private readonly textLayerHost: HTMLDivElement
   private readonly annotationHost: HTMLDivElement
   private readonly status: HTMLElement
+  private readonly loadProgress: HTMLOutputElement
   private readonly toolSelect: HTMLSelectElement
   private readonly appearanceColor: HTMLInputElement
   private readonly appearanceWidth: HTMLInputElement
   private readonly textSelectionMenu: HTMLDivElement
+  private textSelectionFocusReturn: HTMLElement | null = null
   private viewer: PdfViewerEngine
   private annotations: AnnotationEngine
   private document: PDFDocumentProxy | null = null
@@ -83,9 +97,13 @@ class DemoInstance {
   private unsubscribeViewer: () => void
   private unsubscribeAnnotations: () => void
   private pageFlow: PdfPageFlowController | null = null
+  private source: PdfSource = { data: samplePdf }
   private sourcePdf = samplePdf
   private sourceName = 'generated sample'
+  private loadCancelled = false
   private passwordRequestId: string | null = null
+  private failNextRasterEncode = false
+  private recoveryRetry: (() => Promise<void>) | null = null
   private resizeObserver: ResizeObserver | null = null
   private singlePageGesture: PdfZoomGestureController | null = null
   private gestureScale = 1
@@ -104,11 +122,29 @@ class DemoInstance {
     this.textLayerHost = requireElement(this.host, '.text-layer-host')
     this.annotationHost = requireElement(this.host, '.annotation-host')
     this.status = requireElement(this.host, '.instance-status')
+    this.loadProgress = requireElement(this.host, '.load-progress')
     this.toolSelect = requireElement(this.host, '.tool-select')
     this.appearanceColor = requireElement(this.host, '.appearance-color')
     this.appearanceWidth = requireElement(this.host, '.appearance-width')
     this.textSelectionMenu = requireElement(this.host, '.text-selection-menu')
-    this.viewer = createPdfViewerEngine()
+    const browserSurfaces = createBrowserThumbnailSurfaceProvider()
+    this.viewer = createPdfViewerEngine({
+      thumbnailSurfaceProvider: {
+        create: (width, height) => {
+          const surface = browserSurfaces.create(width, height)
+          return {
+            ...surface,
+            encode: async () => {
+              if (this.failNextRasterEncode) {
+                this.failNextRasterEncode = false
+                throw new Error('Intentional recovery-demo raster encoding failure.')
+              }
+              return await surface.encode()
+            }
+          }
+        }
+      }
+    })
     this.viewer.setWatermark({
       text: `${label} · InkLayer Core`,
       layout: 'repeated',
@@ -118,7 +154,11 @@ class DemoInstance {
     })
     this.annotations = createAnnotationEngine({
       root: this.host,
-      currentUser: { id: label.toLowerCase(), name: label }
+      currentUser: { id: label.toLowerCase(), name: label },
+      accessibility: {
+        rootLabel: `${label} PDF annotation workspace`,
+        pageLabel: (pageIndex) => `${label} annotations on page ${pageIndex + 1}`
+      }
     })
     this.annotations.setImageAsset('signature', createDemoSignature(label, accent))
     this.annotations.setImageAsset('stamp', createDemoStamp())
@@ -139,6 +179,9 @@ class DemoInstance {
     })
     this.unsubscribeViewer = this.viewer.subscribe((event) => {
       if (event.type === 'passwordRequired') this.showPasswordRequest(event.request)
+      if (event.type === 'documentLoaded' && event.document.passwordProtected) {
+        this.showRecoverySuccess('Password retry opened the protected PDF.')
+      }
       if (event.type === 'textSelectionChanged') this.handleTextSelectionChange(event.selection)
       if (event.type === 'loadProgress') {
         const label = event.progress.phase === 'probing'
@@ -147,6 +190,18 @@ class DemoInstance {
         const percentage = event.progress.percentage === null
           ? ''
           : ` · ${event.progress.percentage}%`
+        const bytes = event.progress.total === null
+          ? `${event.progress.loaded.toLocaleString()} bytes`
+          : `${event.progress.loaded.toLocaleString()}/${event.progress.total.toLocaleString()} bytes`
+        const mode = event.progress.range ? 'Range' : 'direct'
+        this.loadProgress.hidden = false
+        this.loadProgress.dataset['phase'] = event.progress.phase
+        this.loadProgress.dataset['range'] = String(event.progress.range)
+        this.loadProgress.dataset['loaded'] = String(event.progress.loaded)
+        this.loadProgress.dataset['total'] = event.progress.total === null
+          ? ''
+          : String(event.progress.total)
+        this.loadProgress.textContent = `${label} · ${bytes}${percentage} · ${mode}`
         this.setStatus(`${label}${percentage}`)
       }
     })
@@ -169,8 +224,9 @@ class DemoInstance {
       const wasContinuous = this.pageFlow !== null
       this.pageFlow?.destroy()
       this.pageFlow = null
-      const handle = await this.viewer.load({ data: this.sourcePdf })
+      const handle = await this.viewer.load(this.source)
       this.document = handle.document
+      if ('url' in this.source) this.sourcePdf = new Uint8Array(await handle.document.getData())
       this.currentPageIndex = Math.min(this.currentPageIndex, handle.numPages - 1)
       await this.loadDocumentControls()
       if (wasContinuous) return await this.showContinuous()
@@ -342,6 +398,11 @@ class DemoInstance {
   private handleTextSelectionChange(selection: PdfActiveTextSelection | null): void {
     if (selection === null) {
       this.textSelectionMenu.hidden = true
+      if (this.textSelectionMenu.contains(this.host.ownerDocument.activeElement)) {
+        this.restoreTextSelectionFocus()
+      } else {
+        this.textSelectionFocusReturn = null
+      }
       return
     }
     const tool = this.annotations.getTool()
@@ -356,6 +417,13 @@ class DemoInstance {
     this.textSelectionMenu.style.left = `${anchor.left + anchor.width / 2}px`
     this.textSelectionMenu.style.top = `${anchor.top}px`
     this.textSelectionMenu.hidden = false
+    if (selection.source === 'keyboard') {
+      const active = this.host.ownerDocument.activeElement
+      this.textSelectionFocusReturn = active instanceof HTMLElement && this.host.contains(active)
+        ? active
+        : this.host
+      queueMicrotask(() => this.textSelectionMenu.querySelector<HTMLButtonElement>('button')?.focus())
+    }
   }
 
   /** Creates page-scoped markup from the current retained Core selection. */
@@ -376,6 +444,7 @@ class DemoInstance {
       this.annotations.setSelection(primaryId === undefined ? { ids: [] } : { ids, primaryId })
     }
     this.viewer.clearTextSelection()
+    this.restoreTextSelectionFocus()
     this.setStatus(active.kind === 'document'
       ? `Created grouped ${type} from cross-page PDF text`
       : `Created ${type} from selected PDF text`)
@@ -419,6 +488,21 @@ class DemoInstance {
         this.applyTextMarkup(type)
       }
     })
+    this.textSelectionMenu.addEventListener('keydown', (event) => {
+      const buttons = [...this.textSelectionMenu.querySelectorAll<HTMLButtonElement>('button')]
+      const index = buttons.indexOf(event.target as HTMLButtonElement)
+      if ((event.key === 'ArrowRight' || event.key === 'ArrowDown') && index >= 0) {
+        buttons[(index + 1) % buttons.length]?.focus()
+        event.preventDefault()
+      } else if ((event.key === 'ArrowLeft' || event.key === 'ArrowUp') && index >= 0) {
+        buttons[(index - 1 + buttons.length) % buttons.length]?.focus()
+        event.preventDefault()
+      } else if (event.key === 'Escape') {
+        this.viewer.clearTextSelection()
+        this.restoreTextSelectionFocus()
+        event.preventDefault()
+      }
+    })
     requireElement<HTMLButtonElement>(this.host, '.add-sample').addEventListener('click', () => {
       void this.addSampleAnnotation()
     })
@@ -446,6 +530,32 @@ class DemoInstance {
     })
     requireElement<HTMLButtonElement>(this.host, '.password-sample').addEventListener('click', () => {
       void this.loadPasswordSample().catch((cause: unknown) => this.reportError(cause))
+    })
+    requireElement<HTMLButtonElement>(this.host, '.range-sample').addEventListener('click', () => {
+      void this.loadRangeSample().catch((cause: unknown) => this.reportError(cause))
+    })
+    requireElement<HTMLButtonElement>(this.host, '.mixed-sample').addEventListener('click', () => {
+      void this.replaceSource(createMixedPagePdf(), 'mixed-page fixture')
+        .catch((cause: unknown) => this.reportError(cause))
+    })
+    requireElement<HTMLButtonElement>(this.host, '.long-sample').addEventListener('click', () => {
+      void this.replaceSource(createLongDocumentPdf(), 'long-document fixture')
+        .catch((cause: unknown) => this.reportError(cause))
+    })
+    requireElement<HTMLButtonElement>(this.host, '.fail-url').addEventListener('click', () => {
+      void this.runUrlRecovery('url').catch((cause: unknown) => this.reportError(cause))
+    })
+    requireElement<HTMLButtonElement>(this.host, '.fail-range').addEventListener('click', () => {
+      void this.runUrlRecovery('range').catch((cause: unknown) => this.reportError(cause))
+    })
+    requireElement<HTMLButtonElement>(this.host, '.fail-render').addEventListener('click', () => {
+      void this.runRenderRecovery().catch((cause: unknown) => this.reportError(cause))
+    })
+    requireElement<HTMLButtonElement>(this.host, '.retry-recovery').addEventListener('click', () => {
+      void this.retryRecovery().catch((cause: unknown) => this.reportError(cause))
+    })
+    requireElement<HTMLButtonElement>(this.host, '.cancel-load').addEventListener('click', () => {
+      void this.cancelLoading().catch((cause: unknown) => this.reportError(cause))
     })
     requireElement<HTMLInputElement>(this.host, '.pdf-file').addEventListener('change', (event) => {
       void this.loadSelectedFile(event).catch((cause: unknown) => this.reportError(cause))
@@ -623,6 +733,66 @@ class DemoInstance {
     await this.replaceSource(new Uint8Array(await response.arrayBuffer()), 'password sample')
   }
 
+  /** Loads the delayed same-origin fixture through real automatic HTTP Range. */
+  private async loadRangeSample(): Promise<void> {
+    this.loadCancelled = false
+    try {
+      await this.replaceUrlSource('/range-sample.pdf?delay=120', 'URL Range sample')
+    } catch (cause) {
+      if (!this.loadCancelled) throw cause
+      if (cause instanceof InkLayerError) this.showStructuredError(cause, true)
+    }
+  }
+
+  /** Starts one deterministic fail-once URL or Range load and retains its retry. */
+  private async runUrlRecovery(kind: 'url' | 'range'): Promise<void> {
+    const requestId = `${kind}-${crypto.randomUUID()}`
+    const name = kind === 'url' ? 'recovery URL sample' : 'recovery Range sample'
+    const url = `/recovery-${kind}.pdf?request=${encodeURIComponent(requestId)}`
+    this.recoveryRetry = async () => {
+      await this.load(true)
+      this.showRecoverySuccess(`${kind === 'url' ? 'URL' : 'Range'} retry loaded the PDF.`)
+    }
+    this.setStatus(`Triggering one ${kind === 'url' ? 'URL' : 'Range'} failure…`)
+    await this.replaceUrlSource(url, name, kind === 'url' ? false : 'auto')
+  }
+
+  /** Forces one Core raster encode failure, leaving the identical request retryable. */
+  private async runRenderRecovery(): Promise<void> {
+    const pageIndex = this.currentPageIndex
+    this.failNextRasterEncode = true
+    this.recoveryRetry = async () => {
+      await this.viewer.renderPageRaster({ pageIndex, scale: this.scale, pixelRatio: 1 })
+      this.showRecoverySuccess(`Page ${pageIndex + 1} raster retry completed.`)
+    }
+    this.setStatus(`Triggering one page ${pageIndex + 1} raster failure…`)
+    await this.viewer.renderPageRaster({ pageIndex, scale: this.scale, pixelRatio: 1 })
+  }
+
+  /** Repeats the exact failed operation retained by the product-owned demo shell. */
+  private async retryRecovery(): Promise<void> {
+    const retry = this.recoveryRetry
+    if (retry === null) return
+    requireElement<HTMLButtonElement>(this.host, '.retry-recovery').disabled = true
+    this.setStatus('Retrying failed operation…')
+    await retry()
+  }
+
+  /** Cancels only current Viewer work and leaves the selected source retryable. */
+  private async cancelLoading(): Promise<void> {
+    this.loadCancelled = true
+    this.recoveryRetry = async () => {
+      this.loadCancelled = false
+      await this.load(true)
+      this.showRecoverySuccess('Cancelled load completed after retry.')
+    }
+    this.pageFlow?.destroy()
+    this.pageFlow = null
+    this.document = null
+    await this.viewer.cancelLoad()
+    this.setStatus('URL load cancelled · press Reload to retry')
+  }
+
   /** Loads a user-selected PDF without retaining the File object. */
   private async loadSelectedFile(event: Event): Promise<void> {
     const input = event.currentTarget as HTMLInputElement
@@ -641,6 +811,31 @@ class DemoInstance {
     this.annotations.setTool('select')
     this.nativeImports.clear()
     this.sourcePdf = new Uint8Array(bytes)
+    this.source = { data: this.sourcePdf }
+    this.sourceName = name
+    this.currentPageIndex = 0
+    this.document = null
+    await this.load(true)
+  }
+
+  /** Replaces the document with a same-origin URL source while retaining Range mode. */
+  private async replaceUrlSource(
+    url: string,
+    name: string,
+    range: 'auto' | false = 'auto'
+  ): Promise<void> {
+    this.pageFlow?.destroy()
+    this.pageFlow = null
+    this.annotations.repository.replaceAll([])
+    this.annotations.setTool('select')
+    this.nativeImports.clear()
+    this.source = {
+      url,
+      range,
+      rangeChunkSize: 32_768,
+      headers: { 'X-InkLayer-Demo': 'url-range' },
+      credentials: 'same-origin'
+    }
     this.sourceName = name
     this.currentPageIndex = 0
     this.document = null
@@ -655,6 +850,16 @@ class DemoInstance {
     message.textContent = request.reason === 'incorrect'
       ? `Incorrect password. Try again (attempt ${request.attempt}).`
       : `This PDF requires a password (attempt ${request.attempt}).`
+    if (request.reason === 'incorrect') {
+      this.recoveryRetry = null
+      this.showRecoveryOutcome({
+        state: 'warning',
+        summary: 'Password rejected; the active Core request accepts another credential.',
+        code: 'passwordRequired',
+        operation: 'submitPassword',
+        context: `reason=incorrect · attempt=${request.attempt}`
+      })
+    }
     if (!dialog.open) dialog.showModal()
     const input = requireElement<HTMLInputElement>(dialog, '.password-input')
     input.value = ''
@@ -811,10 +1016,62 @@ class DemoInstance {
     this.status.textContent = message
   }
 
+  /** Projects one Core error without losing its stable machine-readable context. */
+  private showStructuredError(error: InkLayerError, preserveStatus = false): void {
+    this.showRecoveryOutcome({
+      state: 'error',
+      summary: error.message,
+      code: error.code,
+      operation: error.operation ?? '—',
+      context: error.pageIndex === undefined ? '—' : `page=${error.pageIndex + 1}`
+    })
+    if (!preserveStatus) {
+      this.status.dataset['state'] = 'error'
+      this.status.textContent = `${error.code} · ${error.message}`
+    }
+  }
+
+  /** Marks a retained retry successful and disables it until the next failure. */
+  private showRecoverySuccess(summary: string): void {
+    this.recoveryRetry = null
+    this.setStatus(`Recovered · ${summary}`)
+    this.showRecoveryOutcome({
+      state: 'success',
+      summary,
+      code: 'RECOVERED',
+      operation: 'retry',
+      context: 'ready'
+    })
+  }
+
+  /** Updates the instance-owned recovery panel for errors and typed events. */
+  private showRecoveryOutcome(outcome: RecoveryOutcome): void {
+    const panel = requireElement<HTMLDivElement>(this.host, '.recovery-outcome')
+    panel.hidden = false
+    panel.dataset['state'] = outcome.state
+    requireElement<HTMLElement>(panel, '.recovery-summary').textContent = outcome.summary
+    requireElement<HTMLElement>(panel, '.recovery-code').textContent = outcome.code
+    requireElement<HTMLElement>(panel, '.recovery-operation').textContent = outcome.operation
+    requireElement<HTMLElement>(panel, '.recovery-context').textContent = outcome.context
+    requireElement<HTMLButtonElement>(this.host, '.retry-recovery').disabled =
+      this.recoveryRetry === null
+  }
+
   /** Presents an asynchronous failure without producing an unhandled rejection. */
   private reportError(cause: unknown): void {
+    if (cause instanceof InkLayerError) {
+      this.showStructuredError(cause)
+      return
+    }
     this.status.dataset['state'] = 'error'
     this.status.textContent = cause instanceof Error ? cause.message : 'Unexpected demo failure.'
+  }
+
+  /** Returns keyboard focus from the contextual TextLayer toolbar to its owner. */
+  private restoreTextSelectionFocus(): void {
+    const target = this.textSelectionFocusReturn
+    this.textSelectionFocusReturn = null
+    if (target?.isConnected === true) target.focus({ preventScroll: true })
   }
 }
 
@@ -862,6 +1119,10 @@ function instanceMarkup(label: string): string {
       <button class="prepare-print" type="button">Prepare print</button>
       <button class="print" type="button">Print</button>
       <button class="password-sample" type="button">Password PDF</button>
+      <button class="range-sample" type="button">URL Range PDF</button>
+      <button class="mixed-sample" type="button">Mixed PDF</button>
+      <button class="long-sample" type="button">Long PDF</button>
+      <button class="cancel-load" type="button">Cancel load</button>
       <label class="file-control">Open PDF<input class="pdf-file" type="file" accept="application/pdf,.pdf"></label>
       <button class="reload" type="button">Reload</button>
       <button class="export-pdf" type="button">Export PDF</button>
@@ -880,6 +1141,27 @@ function instanceMarkup(label: string): string {
         <div class="search-results" aria-live="polite"></div>
       </section>
     </div>
+    <section class="recovery-tools" aria-label="${label} error recovery examples">
+      <div class="recovery-heading">
+        <strong>Error recovery</strong>
+        <span>Each failure is intentional and retryable.</span>
+      </div>
+      <div class="recovery-actions">
+        <button class="fail-url" type="button">Fail URL once</button>
+        <button class="fail-range" type="button">Fail Range once</button>
+        <button class="fail-render" type="button">Fail render once</button>
+        <button class="retry-recovery" type="button" disabled>Retry last failure</button>
+      </div>
+      <p class="recovery-hint">Password PDF + a wrong password demonstrates the typed password retry event. URL Range PDF + Cancel load demonstrates cancelled-work recovery.</p>
+      <div class="recovery-outcome" role="status" aria-live="polite" hidden>
+        <p class="recovery-summary"></p>
+        <dl>
+          <div><dt>Code / event</dt><dd><code class="recovery-code"></code></dd></div>
+          <div><dt>Operation</dt><dd><code class="recovery-operation"></code></dd></div>
+          <div><dt>Context</dt><dd><code class="recovery-context"></code></dd></div>
+        </dl>
+      </div>
+    </section>
     <div class="thumbnail-items" aria-label="Page thumbnails"></div>
     <div class="text-selection-menu" role="toolbar" aria-label="Text annotation actions" hidden>
       <button type="button" data-text-markup="highlight">Highlight</button>
@@ -895,6 +1177,7 @@ function instanceMarkup(label: string): string {
     </div>
     <div class="flow-scroll" aria-label="Continuous PDF pages" hidden></div>
     <p class="instance-status" role="status" aria-live="polite">Idle</p>
+    <output class="load-progress" aria-label="PDF load progress" aria-live="polite" hidden></output>
     <dialog class="password-dialog" aria-labelledby="${label}-password-title">
       <form class="password-form">
         <h3 id="${label}-password-title">Open protected PDF</h3>
@@ -1005,11 +1288,10 @@ function createDemoStamp() {
   return { image: canvas.toDataURL('image/png'), width: 140, height: 60, text: 'Approved stamp' }
 }
 
-/** Mounts both isolated demo instances and loads their PDF pages. */
+/** Mounts the public single-workspace demo and loads its PDF. */
 async function mountInstances(): Promise<void> {
   instances = [
-    new DemoInstance(grid, 'Alice', '#175cd3'),
-    new DemoInstance(grid, 'Bob', '#b54708')
+    new DemoInstance(grid, 'Demo', '#175cd3')
   ]
   await Promise.all(instances.map(async (instance) => instance.load()))
 }

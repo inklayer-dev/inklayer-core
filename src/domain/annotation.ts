@@ -7,8 +7,9 @@
 import type { AnnotationComment } from './comment'
 import type { AnnotationReference } from './references'
 import type { User } from './user'
+import type { JsonObject, JsonValue } from './json-value'
 
-/** Persisted annotation kinds supported by Core and native PDF import. */
+/** Persisted built-in annotation kinds protected and implemented by Core. */
 export type AnnotationType =
   | 'highlight'
   | 'strikeout'
@@ -26,6 +27,50 @@ export type AnnotationType =
   | 'polygon'
   | 'polyline'
   | 'cloud'
+
+/** Stable namespaced identity owned by an external annotation definition. */
+export type CustomAnnotationType = `custom:${string}/${string}`
+
+/** Persisted identity of either a protected built-in or custom annotation. */
+export type AnnotationTypeId = AnnotationType | CustomAnnotationType
+
+/** Definition-owned, independently versioned canonical JSON payload. */
+export interface AnnotationTypeData {
+  /** Positive schema version interpreted only by the owning definition. */
+  schemaVersion: number
+  /** Lossless JSON semantic payload. */
+  payload: JsonValue
+}
+
+/** Protected built-in identities in stable canonical order. */
+export const BUILT_IN_ANNOTATION_TYPES: readonly AnnotationType[] = [
+  'highlight', 'strikeout', 'underline', 'free-text', 'rectangle', 'circle',
+  'freehand', 'free-highlight', 'signature', 'stamp', 'note', 'line', 'arrow',
+  'polygon', 'polyline', 'cloud'
+]
+
+const BUILT_IN_ANNOTATION_TYPE_SET = new Set<string>(BUILT_IN_ANNOTATION_TYPES)
+const CUSTOM_TYPE_PATTERN = /^custom:([a-z0-9][a-z0-9._-]*)\/([a-z0-9][a-z0-9._-]*)$/
+
+/** Returns whether a persisted identity is a protected Core built-in. */
+export function isBuiltInAnnotationType(value: string): value is AnnotationType {
+  return BUILT_IN_ANNOTATION_TYPE_SET.has(value)
+}
+
+/** Returns whether a string is a valid bounded namespaced custom identity. */
+export function isCustomAnnotationType(value: string): value is CustomAnnotationType {
+  if (value.length > 256) return false
+  const match = CUSTOM_TYPE_PATTERN.exec(value)
+  const namespace = match?.[1]
+  const name = match?.[2]
+  return namespace !== undefined && name !== undefined
+    && namespace.length <= 120 && name.length <= 120
+}
+
+/** Returns whether a string is a supported built-in or valid custom identity. */
+export function isAnnotationTypeId(value: string): value is AnnotationTypeId {
+  return isBuiltInAnnotationType(value) || isCustomAnnotationType(value)
+}
 
 /** Explicit coordinate system used by annotation bounds and renderer data. */
 export type AnnotationCoordinateSpace = 'konva-stage' | 'pdf-user-space'
@@ -167,7 +212,7 @@ export interface Annotation {
   /** Canonical annotation schema version. */
   schemaVersion: 1
   /** Persisted annotation kind; selection is intentionally excluded. */
-  type: AnnotationType
+  type: AnnotationTypeId
   /** Zero-based PDF page index. */
   pageIndex: number
   /** Axis-aligned bounds in `coordinateSpace`. */
@@ -194,8 +239,10 @@ export interface Annotation {
   rendererState: KonvaRendererState
   /** Optional external-format provenance. */
   source?: AnnotationSource
+  /** Optional semantic JSON owned by the annotation type definition. */
+  typeData?: AnnotationTypeData
   /** Unknown application metadata preserved across Core operations. */
-  extensions?: Record<string, unknown>
+  extensions?: JsonObject
 }
 
 /** Returns a structurally detached canonical annotation. */
