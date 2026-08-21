@@ -12,6 +12,7 @@ import {
   PDFHexString,
   PDFName,
   PDFNumber,
+  PDFString,
   rgb,
   StandardFonts,
   appendBezierCurve,
@@ -94,6 +95,13 @@ export interface PdfExportOptions {
   watermarkTarget?: 'print' | 'export'
   /** Instance Registry required to render and export custom annotation types. */
   annotationTypes?: AnnotationTypeRegistry
+  /**
+   * Native PDF annotation identifiers owned by the caller, including entries
+   * deleted since import. Matching replaceable dictionaries are removed before
+   * current annotations are written; current annotation and reply IDs are
+   * included automatically.
+   */
+  managedNativeAnnotationIds?: readonly string[]
 }
 
 /** Internal annotation plus its validated renderer representation. */
@@ -152,6 +160,11 @@ export async function buildAnnotatedPdf(
     options.annotationTypes,
     options.watermarkTarget === 'print' ? 'print' : 'export'
   )
+  const managedNativeAnnotationIds = resolveManagedNativeAnnotationIds(
+    annotationsInput,
+    prepared,
+    options.managedNativeAnnotationIds
+  )
   const byPage = new Map<number, PreparedAnnotation[]>()
   for (const item of prepared) {
     const pageItems = byPage.get(item.annotation.pageIndex) ?? []
@@ -159,9 +172,15 @@ export async function buildAnnotatedPdf(
     byPage.set(item.annotation.pageIndex, pageItems)
   }
 
-  for (const [pageIndex, items] of byPage) {
+  const pageIndexes = managedNativeAnnotationIds.size === 0
+    ? [...byPage.keys()]
+    : Array.from({ length: document.getPageCount() }, (_, pageIndex) => pageIndex)
+  for (const pageIndex of pageIndexes) {
     const page = document.getPage(pageIndex)
-    const annots = retainedAnnotationArray(document, page)
+    const items = byPage.get(pageIndex) ?? []
+    const existing = page.node.lookupMaybe(PDFName.of('Annots'), PDFArray)
+    if (existing === undefined && items.length === 0) continue
+    const annots = retainedAnnotationArray(document, page, managedNativeAnnotationIds)
     page.node.set(PDFName.of('Annots'), annots)
     for (const item of items) await writeAnnotation(document, page, item, annots)
   }
@@ -333,23 +352,76 @@ function validateCustomPdfSnapshot(snapshot: ValidatedKonvaSnapshot): void {
   }
 }
 
-/** Copies existing unsupported annotations into a new page annotation array. */
-function retainedAnnotationArray(document: PDFDocument, page: PDFPage): PDFArray {
+/** Copies existing annotations except caller-owned dictionaries being reconciled. */
+function retainedAnnotationArray(
+  document: PDFDocument,
+  page: PDFPage,
+  managedNativeAnnotationIds: ReadonlySet<string>
+): PDFArray {
   const retained = PDFArray.withContext(document.context)
   const existing = page.node.lookupMaybe(PDFName.of('Annots'), PDFArray)
   if (existing === undefined) return retained
   for (let index = 0; index < existing.size(); index += 1) {
     const entry = existing.get(index)
     const dictionary = document.context.lookup(entry)
-    if (!(dictionary instanceof PDFDict) || !isReplaceableDictionary(dictionary)) retained.push(entry)
+    if (!(dictionary instanceof PDFDict)
+      || !isReplaceableDictionary(dictionary)
+      || !isManagedNativeDictionary(dictionary, managedNativeAnnotationIds)) retained.push(entry)
   }
   return retained
+}
+
+/** Returns whether a native dictionary has an owned `/NM` identifier. */
+function isManagedNativeDictionary(
+  dictionary: PDFDict,
+  managedNativeAnnotationIds: ReadonlySet<string>
+): boolean {
+  const value = dictionary.lookup(PDFName.of('NM'))
+  if (!(value instanceof PDFHexString) && !(value instanceof PDFString)) return false
+  return managedNativeAnnotationIds.has(value.decodeText())
 }
 
 /** Returns whether an existing native dictionary belongs to Core's replaceable set. */
 function isReplaceableDictionary(dictionary: PDFDict): boolean {
   const subtype = dictionary.lookupMaybe(PDFName.of('Subtype'), PDFName)
   return subtype !== undefined && REPLACEABLE_SUBTYPES.has(subtype.asString().replace(/^\//, ''))
+}
+
+/** Resolves exact native IDs to replace while preserving failed lenient entries. */
+function resolveManagedNativeAnnotationIds(
+  input: readonly Annotation[],
+  prepared: readonly PreparedAnnotation[],
+  explicitlyManagedIds: readonly string[] | undefined
+): Set<string> {
+  const candidateIds = new Set(input.flatMap(candidateOwnedIds))
+  const preparedIds = new Set(prepared.flatMap(item => annotationOwnedIds(item.annotation)))
+  const failedCandidateIds = new Set(
+    [...candidateIds].filter(identifier => !preparedIds.has(identifier))
+  )
+  const managedIds = new Set(
+    (explicitlyManagedIds ?? []).filter(identifier => !failedCandidateIds.has(identifier))
+  )
+  for (const identifier of preparedIds) managedIds.add(identifier)
+  return managedIds
+}
+
+/** Reads potentially invalid candidate ownership IDs without trusting its shape. */
+function candidateOwnedIds(candidate: Annotation): string[] {
+  if (candidate === null || typeof candidate !== 'object') return []
+  const value = candidate as Partial<Annotation>
+  const identifiers = typeof value.id === 'string' ? [value.id] : []
+  if (!Array.isArray(value.comments)) return identifiers
+  for (const comment of value.comments) {
+    if (comment !== null && typeof comment === 'object' && typeof comment.id === 'string') {
+      identifiers.push(comment.id)
+    }
+  }
+  return identifiers
+}
+
+/** Returns main and reply IDs owned by one validated canonical annotation. */
+function annotationOwnedIds(annotation: Annotation): string[] {
+  return [annotation.id, ...annotation.comments.map(comment => comment.id)]
 }
 
 /** Writes one annotation and all of its reply dictionaries. */

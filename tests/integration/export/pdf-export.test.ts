@@ -83,6 +83,51 @@ describe('buildAnnotatedPdf', () => {
     expect(numberValue(freeText, 'InkLayerFontSize')).toBe(14)
   })
 
+  it('replaces only matching native IDs and preserves unmatched supported dictionaries', async () => {
+    const replacement = exportAnnotation('rectangle', 0)
+    const source = await createNativeAnnotationSource([
+      { id: replacement.id, subtype: 'Square' },
+      { id: 'untouched-line', subtype: 'Line' },
+      { id: 'untouched-link', subtype: 'Link' }
+    ])
+
+    const bytes = await buildAnnotatedPdf(source, [replacement])
+    const dictionaries = annotationDictionaries(await PDFDocument.load(bytes))
+
+    expect(dictionaries).toHaveLength(3)
+    expect(dictionaries.filter(entry => textValue(entry, 'NM') === replacement.id)).toHaveLength(1)
+    expect(dictionaries.some(entry => textValue(entry, 'NM') === 'untouched-line')).toBe(true)
+    expect(dictionaries.some(entry => textValue(entry, 'NM') === 'untouched-link')).toBe(true)
+  })
+
+  it('removes managed native IDs even when every managed annotation was deleted', async () => {
+    const source = await createNativeAnnotationSource([
+      { id: 'deleted-square', subtype: 'Square' },
+      { id: 'untouched-line', subtype: 'Line' }
+    ])
+
+    const bytes = await buildAnnotatedPdf(source, [], {
+      managedNativeAnnotationIds: ['deleted-square']
+    })
+    const dictionaries = annotationDictionaries(await PDFDocument.load(bytes))
+
+    expect(dictionaries.map(entry => textValue(entry, 'NM'))).toEqual(['untouched-line'])
+  })
+
+  it('keeps the original native dictionary when lenient export skips its invalid replacement', async () => {
+    const source = await createNativeAnnotationSource([{ id: 'bad', subtype: 'Square' }])
+    const invalid = createTestAnnotation({ id: 'bad', pageIndex: 9 })
+
+    const bytes = await buildAnnotatedPdf(source, [invalid], {
+      strategy: 'lenient',
+      managedNativeAnnotationIds: ['bad']
+    })
+    const dictionaries = annotationDictionaries(await PDFDocument.load(bytes))
+
+    expect(dictionaries).toHaveLength(1)
+    expect(textValue(dictionaries[0], 'NM')).toBe('bad')
+  })
+
   it('preflights strictly and skips only invalid entries in lenient mode', async () => {
     const source = await createSourcePdf()
     const valid = exportAnnotation('rectangle', 0)
@@ -220,6 +265,26 @@ async function createSourcePdf(): Promise<Uint8Array> {
   const link = document.context.obj({ Type: 'Annot', Subtype: 'Link', Rect: [0, 0, 10, 10] })
   const annots = PDFArray.withContext(document.context)
   annots.push(document.context.register(link))
+  page.node.set(PDFName.of('Annots'), annots)
+  return document.save()
+}
+
+/** Builds source bytes containing identified native annotation dictionaries. */
+async function createNativeAnnotationSource(
+  entries: readonly { id: string; subtype: string }[]
+): Promise<Uint8Array> {
+  const document = await PDFDocument.create()
+  const page = document.addPage([200, 300])
+  const annots = PDFArray.withContext(document.context)
+  for (const entry of entries) {
+    const dictionary = document.context.obj({
+      Type: 'Annot',
+      Subtype: entry.subtype,
+      Rect: [0, 0, 10, 10],
+      NM: PDFHexString.fromText(entry.id)
+    })
+    annots.push(document.context.register(dictionary))
+  }
   page.node.set(PDFName.of('Annots'), annots)
   return document.save()
 }

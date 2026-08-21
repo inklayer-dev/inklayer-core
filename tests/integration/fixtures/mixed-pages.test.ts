@@ -4,7 +4,7 @@
  * annotations, text extraction, export, and watermarking against one document.
  */
 
-import { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName } from 'pdf-lib'
+import { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFString } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { describe, expect, it } from 'vitest'
 import { readFile } from 'node:fs/promises'
@@ -80,8 +80,7 @@ describe('CORE-021 mixed-page fixture', () => {
     const document = await PDFDocument.load(bytes)
     expectPageGeometry(document)
     const dictionary = annotationDictionaries(document, 1)
-      .find((entry) => entry.lookupMaybe(PDFName.of('NM'), PDFHexString)?.decodeText()
-        === 'cropbox-export')
+      .find((entry) => annotationIdentifier(entry) === 'cropbox-export')
     expect(dictionary).toBeDefined()
     expect(pdfNumbers(dictionary, 'Rect')).toEqual([350, 120, 430, 210])
   })
@@ -126,6 +125,14 @@ function annotationDictionaries(document: PDFDocument, pageIndex: number): PDFDi
     const value = document.context.lookup(entry)
     return value instanceof PDFDict ? [value] : []
   })
+}
+
+/** Reads a PDF annotation `/NM` from either legal PDF string encoding. */
+function annotationIdentifier(dictionary: PDFDict): string | undefined {
+  const value = dictionary.lookup(PDFName.of('NM'))
+  return value instanceof PDFHexString || value instanceof PDFString
+    ? value.decodeText()
+    : undefined
 }
 
 /** Reads one low-level numeric array. */
