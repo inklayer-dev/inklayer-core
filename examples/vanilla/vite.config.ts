@@ -118,6 +118,7 @@ function rangeSamplePlugin(): Plugin {
   }
   return {
     name: 'inklayer-range-sample',
+    /** Emits the Range fixture beside the nested production demo entry. */
     generateBundle() {
       this.emitFile({ type: 'asset', fileName: 'range-sample.pdf', source: bytes })
     },
