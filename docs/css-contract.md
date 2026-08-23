@@ -3,7 +3,7 @@
 Import the engine stylesheet once in a browser application:
 
 ```ts
-import 'inklayer-core/style'
+import '@inklayer-dev/core/style'
 ```
 
 Every Annotation Engine instance adds `.inklayer-engine`,

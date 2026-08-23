@@ -9,10 +9,10 @@ artifact, and runs the following pinned production-build matrix.
 | Consumer | Pinned toolchain | Target | Executable evidence |
 |---|---|---|---|
 | Vite | Vite 8.2.1, TypeScript 6.0.3 | Browser ESM plus Node import | Typechecks every public entry, builds production assets, imports public CSS, emits the bundled PDF Worker, and imports the package root in Node. |
-| Webpack | Webpack 5.101.3, webpack-cli 6.0.1, css-loader 7.1.2, mini-css-extract-plugin 2.9.4 | Browser ES2022 | Imports the root and Viewer entries, extracts `inklayer-core/style`, and emits the version-matched `pdf.worker.min.mjs` as a production asset. |
+| Webpack | Webpack 5.101.3, webpack-cli 6.0.1, css-loader 7.1.2, mini-css-extract-plugin 2.9.4 | Browser ES2022 | Imports the root and Viewer entries, extracts `@inklayer-dev/core/style`, and emits the version-matched `pdf.worker.min.mjs` as a production asset. |
 | Webpack SSR | Webpack 5.101.3 | Node 20 target | Bundles root and Viewer imports, executes the production CommonJS server bundle in Node, constructs a Viewer without browser globals, observes `idle`, and destroys it cleanly. |
 
-The package Node engine contract remains `^20.19.0 || >=22.12.0`. Local release
+The package Node engine contract is `^22.13.0 || >=24.0.0`. Local release
 evidence currently runs with Node 24.18.0. Exact matrix versions live in
 `scripts/check-consumer.mjs`; changing one is a reviewed support decision rather
 than an incidental install update.
@@ -21,11 +21,11 @@ than an incidental install update.
 
 The matrix guarantees that:
 
-- `inklayer-core` and `inklayer-core/viewer` resolve from the packed `exports`
+- `@inklayer-dev/core` and `@inklayer-dev/core/viewer` resolve from the packed `exports`
   map in browser and SSR production builds;
 - importing or constructing the Viewer during SSR does not evaluate browser-only
   PDF.js runtime code;
-- `inklayer-core/style` resolves as CSS and can be extracted by Webpack;
+- `@inklayer-dev/core/style` resolves as CSS and can be extracted by Webpack;
 - the default PDF.js Worker is emitted from the package with no consumer-owned
   download or `workerSrc` configuration;
 - the Worker remains a separate `.mjs` asset larger than one megabyte, preventing

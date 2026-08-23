@@ -23,8 +23,8 @@ elements and render product UI around them.
 ## Adapter lifecycle
 
 ```ts
-import type { InkLayerInstance, PdfViewerEvent } from 'inklayer-core'
-import { createInkLayer } from 'inklayer-core/capabilities'
+import type { InkLayerInstance, PdfViewerEvent } from '@inklayer-dev/core'
+import { createInkLayer } from '@inklayer-dev/core/capabilities'
 
 export async function mountPdfAdapter(
   root: HTMLElement,

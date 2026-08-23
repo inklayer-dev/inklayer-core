@@ -91,7 +91,7 @@ remain immediate and do not depend on animation completion.
 
 ## Adapter acceptance checklist
 
-- Import `inklayer-core/style` so focus indicators are present.
+- Import `@inklayer-dev/core/style` so focus indicators are present.
 - Give every product control an accessible localized name.
 - Preserve Core focus for Canvas-origin selection and product focus for
   sidebar-origin selection.

@@ -1,5 +1,5 @@
 {
-  "name": "inklayer-core",
+  "name": "@inklayer-dev/core",
   "version": "0.1.0",
   "description": "Framework-independent PDF.js and Konva engine for InkLayer.",
   "keywords": [
@@ -15,14 +15,18 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Laomai-codefee/inklayer-core.git"
+    "url": "git+https://github.com/inklayer-dev/inklayer-core.git"
   },
   "bugs": {
-    "url": "https://github.com/Laomai-codefee/inklayer-core/issues"
+    "url": "https://github.com/inklayer-dev/inklayer-core/issues"
   },
-  "homepage": "https://inklayer.dev",
+  "homepage": "https://inklayer-dev.github.io/inklayer-core/",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "engines": {
-    "node": "^20.19.0 || >=22.12.0"
+    "node": "^22.13.0 || >=24.0.0"
   },
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -100,6 +104,7 @@
     "check:dependencies": "node scripts/check-dependencies.mjs",
     "check:api": "node scripts/check-public-api.mjs",
     "check:package": "node scripts/check-package.mjs",
+    "check:release": "node scripts/check-release.mjs",
     "check:consumer": "node scripts/check-consumer.mjs",
     "benchmark": "npm run build && npm run build:example && node --expose-gc scripts/benchmark.mjs",
     "check": "npm run typecheck && npm run lint && npm run check:comments && npm run check:docs && npm run check:dependencies && npm run test && npm run test:browser && npm run build && npm run build:example && npm run docs:build && npm run check:api && npm run check:package && npm run check:consumer"

@@ -1,7 +1,7 @@
 /**
  * @file Build-only engine style entry.
  * @description Ensures the public instance-scoped CSS asset is emitted by the
- * library build; consumers import `inklayer-core/style` rather than this module.
+ * library build; consumers import `@inklayer-dev/core/style` rather than this module.
  */
 
 import './styles/engine.css'

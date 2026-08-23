@@ -3,7 +3,7 @@
 ## Vector PDF export
 
 ```ts
-import { buildAnnotatedPdf } from 'inklayer-core/export/pdf'
+import { buildAnnotatedPdf } from '@inklayer-dev/core/export/pdf'
 
 const output = await buildAnnotatedPdf(sourceBytes, annotations, {
   strategy: 'strict',
@@ -22,7 +22,7 @@ Use vector print preparation for ordinary documents. For password-protected or
 sensitive documents already opened by PDF.js, use secure raster preparation:
 
 ```ts
-import { buildSecureRasterPrintPdf, printPdfBlob } from 'inklayer-core'
+import { buildSecureRasterPrintPdf, printPdfBlob } from '@inklayer-dev/core'
 
 const printable = await buildSecureRasterPrintPdf({
   viewer: core.viewer,
@@ -56,8 +56,8 @@ high-value policy on a trusted backend as well.
 ## Download and Excel
 
 ```ts
-import { buildAnnotationWorkbook } from 'inklayer-core/export/excel'
-import { downloadBlob } from 'inklayer-core'
+import { buildAnnotationWorkbook } from '@inklayer-dev/core/export/excel'
+import { downloadBlob } from '@inklayer-dev/core'
 
 const workbook = await buildAnnotationWorkbook(annotations)
 downloadBlob({

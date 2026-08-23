@@ -18,33 +18,33 @@ export default defineConfig({
   plugins: [rangeSamplePlugin()],
   resolve: {
     alias: [
-      { find: /^inklayer-core$/, replacement: resolve(projectRoot, 'src/index.ts') },
+      { find: /^@inklayer-dev\/core$/, replacement: resolve(projectRoot, 'src/index.ts') },
       {
-        find: /^inklayer-core\/viewer$/,
+        find: /^@inklayer-dev\/core\/viewer$/,
         replacement: resolve(projectRoot, 'src/viewer/index.ts')
       },
       {
-        find: /^inklayer-core\/annotation$/,
+        find: /^@inklayer-dev\/core\/annotation$/,
         replacement: resolve(projectRoot, 'src/annotation/index.ts')
       },
       {
-        find: /^inklayer-core\/annotation-types$/,
+        find: /^@inklayer-dev\/core\/annotation-types$/,
         replacement: resolve(projectRoot, 'src/annotation-types/index.ts')
       },
       {
-        find: /^inklayer-core\/import\/pdfjs$/,
+        find: /^@inklayer-dev\/core\/import\/pdfjs$/,
         replacement: resolve(projectRoot, 'src/import/pdfjs/index.ts')
       },
       {
-        find: /^inklayer-core\/export\/pdf$/,
+        find: /^@inklayer-dev\/core\/export\/pdf$/,
         replacement: resolve(projectRoot, 'src/export/pdf/index.ts')
       },
       {
-        find: /^inklayer-core\/export\/excel$/,
+        find: /^@inklayer-dev\/core\/export\/excel$/,
         replacement: resolve(projectRoot, 'src/export/excel/index.ts')
       },
       {
-        find: /^inklayer-core\/style$/,
+        find: /^@inklayer-dev\/core\/style$/,
         replacement: resolve(projectRoot, 'src/styles/engine.css')
       }
     ]

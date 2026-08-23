@@ -13,13 +13,13 @@ business workflow.
 ## Install
 
 ```bash
-npm install inklayer-core
+npm install @inklayer-dev/core
 ```
 
 Import the public engine CSS once in your browser application:
 
 ```ts
-import 'inklayer-core/style'
+import '@inklayer-dev/core/style'
 ```
 
 ## Create an instance
@@ -29,7 +29,7 @@ the Viewer, Annotation Engine, optional Page Flow, Capabilities, and teardown as
 one lifecycle.
 
 ```ts
-import { createInkLayer } from 'inklayer-core/capabilities'
+import { createInkLayer } from '@inklayer-dev/core/capabilities'
 
 const root = document.querySelector<HTMLElement>('#pdf-workspace')!
 const core = await createInkLayer({

@@ -48,6 +48,7 @@ const program = ts.createProgram(typedEntries.map(([, path]) => path), {
 })
 const checker = program.getTypeChecker()
 const entries = {}
+const entrySignatures = {}
 
 for (const [entry, path] of typedEntries) {
   const source = program.getSourceFile(path)
@@ -70,6 +71,7 @@ for (const [entry, path] of typedEntries) {
     exportCount: signatures.length,
     signatureHash: hash(signatures)
   }
+  entrySignatures[entry] = signatures
 }
 
 const current = {
@@ -84,10 +86,45 @@ if (process.argv.includes('--print')) {
   process.exit(0)
 }
 
+const signatureEntryArgument = process.argv.find(argument => argument.startsWith('--print-signatures='))
+if (signatureEntryArgument !== undefined) {
+  const entry = signatureEntryArgument.slice('--print-signatures='.length)
+  if (entrySignatures[entry] === undefined) throw new Error(`Unknown package entry: ${entry}`)
+  process.stdout.write(`${JSON.stringify(entrySignatures[entry], null, 2)}\n`)
+  process.exit(0)
+}
+
 const frozen = JSON.parse(await readFile(manifestPath, 'utf8'))
 if (JSON.stringify(current) !== JSON.stringify(frozen)) {
+  const differences = []
+  if (current.schemaVersion !== frozen.schemaVersion) {
+    differences.push(`schemaVersion: expected ${frozen.schemaVersion}, received ${current.schemaVersion}`)
+  }
+  if (current.packageVersion !== frozen.packageVersion) {
+    differences.push(`packageVersion: expected ${frozen.packageVersion}, received ${current.packageVersion}`)
+  }
+  if (JSON.stringify(current.packageEntries) !== JSON.stringify(frozen.packageEntries)) {
+    differences.push('packageEntries changed')
+  }
+  for (const entry of new Set([...Object.keys(frozen.entries ?? {}), ...Object.keys(current.entries)])) {
+    const expected = frozen.entries?.[entry]
+    const received = current.entries[entry]
+    if (expected?.exportCount !== received?.exportCount) {
+      differences.push(
+        `${entry} exportCount: expected ${expected?.exportCount ?? 'missing'}, `
+        + `received ${received?.exportCount ?? 'missing'}`
+      )
+    }
+    if (expected?.signatureHash !== received?.signatureHash) {
+      differences.push(
+        `${entry} signatureHash: expected ${expected?.signatureHash ?? 'missing'}, `
+        + `received ${received?.signatureHash ?? 'missing'}`
+      )
+    }
+  }
   throw new Error(
-    'Public API differs from api/public-api-v1.json. Review the change and update the V1 manifest explicitly.'
+    'Public API differs from api/public-api-v1.json. Review the change and update the V1 manifest explicitly.\n'
+    + differences.map(difference => `- ${difference}`).join('\n')
   )
 }
 

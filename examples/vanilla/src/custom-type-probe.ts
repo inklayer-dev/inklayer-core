@@ -4,10 +4,10 @@
  * surface without adding controls or state to the interactive Vanilla demo.
  */
 
-import { createAnnotationEngine } from 'inklayer-core/annotation'
-import { createAnnotationTypeRegistry } from 'inklayer-core/annotation-types'
-import { createMemoryAnnotationRepository } from 'inklayer-core'
-import type { AnnotationTypeDefinition } from 'inklayer-core/annotation-types'
+import { createAnnotationEngine } from '@inklayer-dev/core/annotation'
+import { createAnnotationTypeRegistry } from '@inklayer-dev/core/annotation-types'
+import { createMemoryAnnotationRepository } from '@inklayer-dev/core'
+import type { AnnotationTypeDefinition } from '@inklayer-dev/core/annotation-types'
 
 /** Observable pixel and accessibility evidence returned to browser tests. */
 export interface CustomTypeProbeResult {

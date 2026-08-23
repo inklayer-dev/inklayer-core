@@ -31,8 +31,8 @@ route. It provides the document engines and normalized state needed to build
 those interfaces once in the framework you already use.
 
 ```ts
-import { createInkLayer } from 'inklayer-core/capabilities'
-import 'inklayer-core/style'
+import { createInkLayer } from '@inklayer-dev/core/capabilities'
+import '@inklayer-dev/core/style'
 
 const core = await createInkLayer({ root: workspaceElement })
 await core.load({ url: '/documents/review.pdf', range: 'auto' })

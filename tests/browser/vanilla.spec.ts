@@ -67,7 +67,6 @@ test('keeps long-document virtual pages and thumbnail resources bounded through 
 
   await viewer.getByRole('button', { name: 'Continuous' }).click()
   await expect(viewer.locator('.inklayer-page-flow-page')).toHaveCount(96, { timeout: 30_000 })
-  const mountedCounts: number[] = []
   for (const pageIndex of [0, 23, 47, 71, 95]) {
     await viewer.locator('.thumbnail-button').nth(pageIndex).click()
     await expect(viewer.locator('.instance-status')).toContainText(`page ${pageIndex + 1}/96`)
@@ -78,9 +77,7 @@ test('keeps long-document virtual pages and thumbnail resources bounded through 
       const count = await mountedPages.count()
       return count >= 1 && count <= 6
     }).toBe(true)
-    mountedCounts.push(await mountedPages.count())
   }
-  expect(mountedCounts.every((count) => count >= 1 && count <= 6)).toBe(true)
 
   for (let cycle = 0; cycle < 3; cycle += 1) {
     await viewer.getByRole('button', { name: 'Zoom +' }).click()

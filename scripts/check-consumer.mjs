@@ -54,7 +54,7 @@ try {
   await writeFile(resolve(matrixRoot, 'package.json'), JSON.stringify({
     private: true,
     type: 'module',
-    dependencies: { 'inklayer-core': `file:./${filename}` },
+    dependencies: { '@inklayer-dev/core': `file:./${filename}` },
     devDependencies: {
       'css-loader': '7.1.2',
       'mini-css-extract-plugin': '2.9.4',
@@ -67,24 +67,24 @@ try {
   await run(matrixRoot, 'npm', ['install', '--ignore-scripts'])
   await writeFile(resolve(viteRoot, 'index.html'), '<main id="app"></main><script type="module" src="/src.ts"></script>')
   await writeFile(resolve(viteRoot, 'src.ts'), `
-import { CORE_VERSION, createMemoryAnnotationRepository } from 'inklayer-core'
-import { createPdfViewerEngine, type PdfSearchOptions } from 'inklayer-core/viewer'
-import { createAnnotationEngine } from 'inklayer-core/annotation'
+import { CORE_VERSION, createMemoryAnnotationRepository } from '@inklayer-dev/core'
+import { createPdfViewerEngine, type PdfSearchOptions } from '@inklayer-dev/core/viewer'
+import { createAnnotationEngine } from '@inklayer-dev/core/annotation'
 import {
   INKLAYER_CAPABILITY_SERVICE_KEYS,
   createClockCapability,
   createInkLayer,
   createLoggerCapability,
   createTextInputCapability
-} from 'inklayer-core/capabilities'
+} from '@inklayer-dev/core/capabilities'
 import {
   createAnnotationTypeRegistry,
   type AnnotationTypeDefinition
-} from 'inklayer-core/annotation-types'
-import { importPdfJsAnnotations } from 'inklayer-core/import/pdfjs'
-import { buildAnnotatedPdf } from 'inklayer-core/export/pdf'
-import { buildAnnotationWorkbook } from 'inklayer-core/export/excel'
-import 'inklayer-core/style'
+} from '@inklayer-dev/core/annotation-types'
+import { importPdfJsAnnotations } from '@inklayer-dev/core/import/pdfjs'
+import { buildAnnotatedPdf } from '@inklayer-dev/core/export/pdf'
+import { buildAnnotationWorkbook } from '@inklayer-dev/core/export/excel'
+import '@inklayer-dev/core/style'
 const app = document.querySelector('#app')
 if (app === null) throw new Error('Consumer root is missing.')
 const annotationTypes = createAnnotationTypeRegistry()
@@ -144,7 +144,7 @@ app.textContent = [CORE_VERSION, createMemoryAnnotationRepository,
   const rootImport = await execFileAsync('node', [
     '--input-type=module',
     '--eval',
-    "import('inklayer-core').then((core) => { if (core.CORE_VERSION !== '0.1.0') process.exit(1) })"
+    "import('@inklayer-dev/core').then((core) => { if (core.CORE_VERSION !== '0.1.0') process.exit(1) })"
   ], { cwd: viteRoot })
   if (rootImport.stderr.trim() !== '') throw new Error(rootImport.stderr)
   const builtIndex = await readFile(resolve(viteRoot, 'dist/index.html'), 'utf8')
@@ -154,9 +154,9 @@ app.textContent = [CORE_VERSION, createMemoryAnnotationRepository,
     throw new Error('Temporary consumer build is missing the bundled PDF.js worker asset.')
   }
   await writeFile(resolve(webpackRoot, 'client.mjs'), `
-import { CORE_VERSION, createMemoryAnnotationRepository } from 'inklayer-core'
-import { createPdfViewerEngine } from 'inklayer-core/viewer'
-import 'inklayer-core/style'
+import { CORE_VERSION, createMemoryAnnotationRepository } from '@inklayer-dev/core'
+import { createPdfViewerEngine } from '@inklayer-dev/core/viewer'
+import '@inklayer-dev/core/style'
 const viewer = createPdfViewerEngine()
 const app = document.querySelector('#app')
 if (app === null) throw new Error('Webpack consumer root is missing.')
@@ -165,8 +165,8 @@ app.textContent = [CORE_VERSION, typeof createMemoryAnnotationRepository,
 void viewer.destroy()
 `)
   await writeFile(resolve(webpackRoot, 'server.mjs'), `
-import { CORE_VERSION, createMemoryAnnotationRepository } from 'inklayer-core'
-import { createPdfViewerEngine } from 'inklayer-core/viewer'
+import { CORE_VERSION, createMemoryAnnotationRepository } from '@inklayer-dev/core'
+import { createPdfViewerEngine } from '@inklayer-dev/core/viewer'
 const viewer = createPdfViewerEngine()
 process.stdout.write(JSON.stringify({
   version: CORE_VERSION,

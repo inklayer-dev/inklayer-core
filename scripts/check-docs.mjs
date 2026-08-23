@@ -99,7 +99,7 @@ check(gettingStarted.includes("workerSrc: '/assets/pdf.worker.min.mjs'"),
 check(/do\s+not\s+need\s+to\s+download(?:, copy,)? or configure/iu.test(gettingStarted),
   'Getting started must state that Worker configuration is not mandatory.')
 for (const entry of Object.keys(packageJson.exports)) {
-  const packageEntry = entry === '.' ? 'inklayer-core' : `inklayer-core${entry.slice(1)}`
+  const packageEntry = entry === '.' ? '@inklayer-dev/core' : `@inklayer-dev/core${entry.slice(1)}`
   check(api.includes(`\`${packageEntry}\``), `docs/api.md is missing package entry ${entry}.`)
 }
 check(packageJson.scripts?.['docs:build'] === 'vitepress build docs',

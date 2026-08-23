@@ -64,11 +64,16 @@ async function listFiles(directory) {
 }
 
 const packageJson = JSON.parse(await readFile(resolve(projectRoot, 'package.json'), 'utf8'))
-assertPackage(packageJson.name === 'inklayer-core', 'Package name must be inklayer-core.')
+assertPackage(packageJson.name === '@inklayer-dev/core', 'Package name must be @inklayer-dev/core.')
 assertPackage(packageJson.version === '0.1.0', 'Unexpected Phase 1 package version.')
 assertPackage(
-  packageJson.repository?.url === 'git+https://github.com/Laomai-codefee/inklayer-core.git',
+  packageJson.repository?.url === 'git+https://github.com/inklayer-dev/inklayer-core.git',
   'Package repository metadata is incorrect.'
+)
+assertPackage(packageJson.publishConfig?.access === 'public', 'Package must publish publicly.')
+assertPackage(
+  packageJson.publishConfig?.registry === 'https://registry.npmjs.org/',
+  'Package registry must be the public npm registry.'
 )
 await Promise.all(['README.md', 'LICENSE'].map(assertExists))
 

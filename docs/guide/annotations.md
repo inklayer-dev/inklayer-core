@@ -98,7 +98,7 @@ network status separately, but must not create a second annotation model.
 
 ## Custom annotation types
 
-Register namespaced definitions through `inklayer-core/annotation-types`.
+Register namespaced definitions through `@inklayer-dev/core/annotation-types`.
 Definitions receive validated data and return controlled renderer-neutral scene
 values; they never receive Konva nodes or PDF.js internals. See the
 [Public API](../api.md#annotation-type-definitions) for registration, missing

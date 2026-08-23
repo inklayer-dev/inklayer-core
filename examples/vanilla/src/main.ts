@@ -33,13 +33,13 @@ import {
   type PdfViewerEngine,
   type PdfViewerScale,
   type PdfZoomGestureController
-} from 'inklayer-core'
+} from '@inklayer-dev/core'
 import {
   hideImportedPdfJsAnnotations,
   importPdfJsAnnotationsWithMetadata,
   type ImportPdfJsAnnotationsWithMetadataResult
-} from 'inklayer-core/import/pdfjs'
-import 'inklayer-core/style'
+} from '@inklayer-dev/core/import/pdfjs'
+import '@inklayer-dev/core/style'
 import './demo.css'
 import { createLongDocumentPdf, createMixedPagePdf, createSamplePdf } from './sample-pdf'
 
@@ -945,7 +945,7 @@ class DemoInstance {
 
   /** Exports and downloads annotated PDF bytes. */
   private async exportPdf(): Promise<void> {
-    const { buildAnnotatedPdf } = await import('inklayer-core/export/pdf')
+    const { buildAnnotatedPdf } = await import('@inklayer-dev/core/export/pdf')
     const bytes = await buildAnnotatedPdf(this.sourcePdf, this.annotations.repository.getAll())
     downloadBlob({ content: bytes, filename: 'inklayer-annotations.pdf', mimeType: 'application/pdf' })
     this.setStatus(`Exported PDF · ${bytes.byteLength} bytes`)
@@ -953,7 +953,7 @@ class DemoInstance {
 
   /** Exports and downloads annotation workbook bytes. */
   private async exportExcel(): Promise<void> {
-    const { buildAnnotationWorkbook } = await import('inklayer-core/export/excel')
+    const { buildAnnotationWorkbook } = await import('@inklayer-dev/core/export/excel')
     const bytes = await buildAnnotationWorkbook(this.annotations.repository.getAll())
     downloadBlob({
       content: bytes,

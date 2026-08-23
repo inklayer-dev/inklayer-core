@@ -10,15 +10,15 @@ declaration signatures are enforced by `npm run check:api`.
 
 | Entry | Purpose | Heavy runtime |
 |---|---|---|
-| `inklayer-core` | Domain, repository, collaboration, Viewer/Annotation factories, browser ports | PDF.js/Konva loaded only when used |
-| `inklayer-core/capabilities` | Composition Root, Capability contracts, lifecycle types | Viewer/Annotation runtimes only when composed |
-| `inklayer-core/annotation-types` | Custom type IDs, Definition Registry, controlled scene contracts | None until an Annotation page is attached |
-| `inklayer-core/viewer` | PDF.js Viewer facade and lifecycle types | PDF.js |
-| `inklayer-core/annotation` | Annotation facade, tools, events, ports, snapshot validator | Konva after page attach |
-| `inklayer-core/import/pdfjs` | Native decoding, optional metadata inspection, storage hiding | pdf-lib only during metadata inspection |
-| `inklayer-core/export/pdf` | Existing PDF bytes → annotated PDF bytes | pdf-lib |
-| `inklayer-core/export/excel` | Canonical annotations → XLSX bytes | ExcelJS |
-| `inklayer-core/style` | Generated instance-scoped engine CSS | CSS only |
+| `@inklayer-dev/core` | Domain, repository, collaboration, Viewer/Annotation factories, browser ports | PDF.js/Konva loaded only when used |
+| `@inklayer-dev/core/capabilities` | Composition Root, Capability contracts, lifecycle types | Viewer/Annotation runtimes only when composed |
+| `@inklayer-dev/core/annotation-types` | Custom type IDs, Definition Registry, controlled scene contracts | None until an Annotation page is attached |
+| `@inklayer-dev/core/viewer` | PDF.js Viewer facade and lifecycle types | PDF.js |
+| `@inklayer-dev/core/annotation` | Annotation facade, tools, events, ports, snapshot validator | Konva after page attach |
+| `@inklayer-dev/core/import/pdfjs` | Native decoding, optional metadata inspection, storage hiding | pdf-lib only during metadata inspection |
+| `@inklayer-dev/core/export/pdf` | Existing PDF bytes → annotated PDF bytes | pdf-lib |
+| `@inklayer-dev/core/export/excel` | Canonical annotations → XLSX bytes | ExcelJS |
+| `@inklayer-dev/core/style` | Generated instance-scoped engine CSS | CSS only |
 
 ## Composition Root and Capabilities
 
@@ -30,7 +30,7 @@ import {
   createLoggerCapability,
   createPrintCapability,
   createTextInputCapability
-} from 'inklayer-core/capabilities'
+} from '@inklayer-dev/core/capabilities'
 
 const instance = await createInkLayer({
   root,
@@ -129,7 +129,7 @@ printability, exportability, and PDF strategy. Their `renderer.strategy` is
 rejected on external registration.
 
 ```ts
-import { createAnnotationTypeRegistry } from 'inklayer-core/annotation-types'
+import { createAnnotationTypeRegistry } from '@inklayer-dev/core/annotation-types'
 
 const annotationTypes = createAnnotationTypeRegistry()
 const unregister = annotationTypes.register(measurementDefinition)
@@ -484,7 +484,8 @@ continues standard decoding.
 
 ```ts
 const pdfBytes = await buildAnnotatedPdf(sourcePdf, annotations, {
-  strategy: 'strict'
+  strategy: 'strict',
+  managedNativeAnnotationIds: importedNativeIds
 })
 const workbookBytes = await buildAnnotationWorkbook(annotations)
 
@@ -499,6 +500,13 @@ Exporters return content only. PDF strict mode rejects invalid annotations befor
 returning bytes; lenient mode skips individual invalid values and emits warnings.
 Unsupported existing PDF dictionaries are retained. Workbook sheet/header labels
 may be localized, but canonical type/status/reference values are not translated.
+
+When editing annotations imported from the source PDF, pass every native ID that
+the application owns through `managedNativeAnnotationIds`, including IDs deleted
+after import. Export reconciles replaceable dictionaries by `/NM`: current Core
+annotations replace matching originals, deleted managed entries are removed, and
+unrelated or unsupported PDF dictionaries remain intact. Current annotation and
+reply IDs are included automatically.
 
 `downloadBlob` is an optional browser action boundary; it owns and releases its
 temporary anchor and object URL.

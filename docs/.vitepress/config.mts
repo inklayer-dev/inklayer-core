@@ -17,7 +17,7 @@ export default defineConfig({
       { text: 'Guide', link: '/guide/getting-started' },
       { text: 'API', link: '/api' },
       { text: 'Architecture', link: '/architecture' },
-      { text: 'Demo', link: 'https://laomai-codefee.github.io/inklayer-core/demo/' }
+      { text: 'Demo', link: 'https://inklayer-dev.github.io/inklayer-core/demo/' }
     ],
     sidebar: [
       {
@@ -59,12 +59,12 @@ export default defineConfig({
       }
     ],
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/Laomai-codefee/inklayer-core' }
+      { icon: 'github', link: 'https://github.com/inklayer-dev/inklayer-core' }
     ],
     search: { provider: 'local' },
     outline: { level: [2, 3] },
     editLink: {
-      pattern: 'https://github.com/Laomai-codefee/inklayer-core/edit/main/docs/:path',
+      pattern: 'https://github.com/inklayer-dev/inklayer-core/edit/main/docs/:path',
       text: 'Edit this page on GitHub'
     },
     footer: {
