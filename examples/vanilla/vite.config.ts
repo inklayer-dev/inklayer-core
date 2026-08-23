@@ -15,6 +15,7 @@ const projectRoot = resolve(import.meta.dirname, '../..')
 
 export default defineConfig({
   root: import.meta.dirname,
+  base: './',
   plugins: [rangeSamplePlugin()],
   resolve: {
     alias: [
@@ -117,6 +118,9 @@ function rangeSamplePlugin(): Plugin {
   }
   return {
     name: 'inklayer-range-sample',
+    generateBundle() {
+      this.emitFile({ type: 'asset', fileName: 'range-sample.pdf', source: bytes })
+    },
     configureServer: server => { server.middlewares.use(middleware) },
     configurePreviewServer: server => { server.middlewares.use(middleware) }
   }

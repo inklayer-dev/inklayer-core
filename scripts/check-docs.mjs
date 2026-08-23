@@ -57,6 +57,7 @@ const api = await readFile(resolve(projectRoot, 'docs/api.md'), 'utf8')
 const gettingStarted = await readFile(resolve(projectRoot, 'docs/guide/getting-started.md'), 'utf8')
 const browserSupport = await readFile(resolve(projectRoot, 'docs/browser-support.md'), 'utf8')
 const vitePressConfig = await readFile(resolve(projectRoot, 'docs/.vitepress/config.mts'), 'utf8')
+const exampleViteConfig = await readFile(resolve(projectRoot, 'examples/vanilla/vite.config.ts'), 'utf8')
 const docsWorkflow = await readFile(resolve(projectRoot, '.github/workflows/docs.yml'), 'utf8')
 const schema = await readFile(resolve(projectRoot, 'src/domain/schema.ts'), 'utf8')
 const browsers = JSON.parse(await readFile(
@@ -108,6 +109,10 @@ check(vitePressConfig.includes("link: '/guide/framework-integration'"),
   'VitePress navigation must expose the framework integration guide.')
 check(docsWorkflow.includes('actions/deploy-pages@v4') && docsWorkflow.includes('npm run docs:build'),
   'GitHub Pages workflow must build and deploy the VitePress site.')
+check(exampleViteConfig.includes("base: './'"),
+  'Vanilla production assets must use a relative base for nested GitHub Pages deployment.')
+check(exampleViteConfig.includes("fileName: 'range-sample.pdf'"),
+  'Vanilla production output must include its base-aware Range sample PDF.')
 
 const retiredDocuments = [
   'implementation-progress', 'roadmap', 'final-report', 'release-candidate',

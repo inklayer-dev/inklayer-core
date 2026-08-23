@@ -737,7 +737,8 @@ class DemoInstance {
   private async loadRangeSample(): Promise<void> {
     this.loadCancelled = false
     try {
-      await this.replaceUrlSource('/range-sample.pdf?delay=120', 'URL Range sample')
+      const source = new URL('range-sample.pdf?delay=120', window.location.href)
+      await this.replaceUrlSource(source.href, 'URL Range sample')
     } catch (cause) {
       if (!this.loadCancelled) throw cause
       if (cause instanceof InkLayerError) this.showStructuredError(cause, true)
