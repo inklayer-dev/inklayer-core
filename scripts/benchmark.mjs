@@ -106,11 +106,11 @@ async function startExampleServer() {
   return { server, url: `http://127.0.0.1:${address.port}` }
 }
 
-/** Waits until both Vanilla instances report ready. */
+/** Waits until the single Vanilla workspace reports ready. */
 async function waitForReady(page) {
   await page.waitForFunction(() => {
     const statuses = [...globalThis.document.querySelectorAll('.instance-status')]
-    return statuses.length === 2 && statuses.every((status) => status.textContent?.startsWith('Ready'))
+    return statuses.length === 1 && statuses.every((status) => status.textContent?.startsWith('Ready'))
   })
 }
 
@@ -176,7 +176,7 @@ try {
   })
   page.on('pageerror', (error) => process.stderr.write(`Browser benchmark page error: ${error.message}\n`))
   const loadStart = performance.now()
-  await page.goto(url)
+  await page.goto(`${url}/?clean=1`)
   await waitForReady(page)
   metrics.milliseconds.browserInitialLoad = Number((performance.now() - loadStart).toFixed(2))
   const zoomStart = performance.now()
@@ -185,7 +185,7 @@ try {
   metrics.milliseconds.zoomAndPageReattach = Number((performance.now() - zoomStart).toFixed(2))
   const previousInstance = await page.locator('.instance-card').first().getAttribute('data-inklayer-instance')
   const remountStart = performance.now()
-  await page.getByRole('button', { name: 'Destroy / remount' }).click()
+  await page.getByRole('button', { name: 'Restart Core' }).click()
   await page.waitForFunction((instance) =>
     globalThis.document.querySelector('.instance-card')?.getAttribute('data-inklayer-instance') !== instance,
   previousInstance)

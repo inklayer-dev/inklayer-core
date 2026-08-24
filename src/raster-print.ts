@@ -68,6 +68,7 @@ export async function buildSecureRasterPrintPdf(
     : createAnnotationEngine({
         root: temporaryRoot,
         repository: options.annotations.repository,
+        annotationTypes: options.annotations.annotationTypes,
         snapshotStrategy: 'strict'
       })
   try {

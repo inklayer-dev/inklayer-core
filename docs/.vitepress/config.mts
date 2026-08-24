@@ -9,7 +9,8 @@ export default defineConfig({
   cleanUrls: true,
   lastUpdated: true,
   head: [
-    ['meta', { name: 'theme-color', content: '#175cd3' }]
+    ['meta', { name: 'theme-color', content: '#6e56cf' }],
+    ['link', { rel: 'icon', type: 'image/svg+xml', href: `${base}logo.svg` }]
   ],
   themeConfig: {
     logo: { src: '/logo.svg', alt: 'InkLayer Core' },

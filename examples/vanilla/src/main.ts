@@ -8,9 +8,7 @@ import type { PDFDocumentProxy } from 'pdfjs-dist'
 import passwordPdfUrl from '../../../tests/fixtures/pdf/pr6531_1.pdf?url'
 
 import {
-  ANNOTATION_TOOL_DEFINITIONS,
   buildSecureRasterPrintPdf,
-  CORE_VERSION,
   createAnnotationEngine,
   createBrowserThumbnailSurfaceProvider,
   createPdfPageFlow,
@@ -42,22 +40,16 @@ import {
 import '@inklayer-dev/core/style'
 import './demo.css'
 import { createLongDocumentPdf, createMixedPagePdf, createSamplePdf } from './sample-pdf'
+import { appMarkup, instanceMarkup } from './ui/demo-shell'
+import { toolIcon } from './ui/tool-catalog'
+import { WorkspaceView } from './ui/workspace-view'
+
+const DEMO_MEASUREMENT_TYPE = 'custom:demo/measurement' as const
 
 const root = document.querySelector<HTMLElement>('#app')
 if (root === null) throw new Error('Vanilla example root was not found.')
 
-root.innerHTML = `
-  <main class="demo-shell">
-    <header class="demo-header">
-      <div>
-        <h1>InkLayer Core <small>v${CORE_VERSION}</small></h1>
-        <p>A complete framework-free PDF workspace. Load, search, select text, annotate, zoom, print, export, and recover errors through Core APIs.</p>
-      </div>
-      <button id="destroy-all" type="button">Destroy / remount</button>
-    </header>
-    <section id="instance-grid" class="instance-grid" aria-label="InkLayer Core workspace"></section>
-  </main>
-`
+root.innerHTML = appMarkup()
 
 const grid = requireElement<HTMLElement>(root, '#instance-grid')
 const destroyAll = requireElement<HTMLButtonElement>(root, '#destroy-all')
@@ -84,7 +76,12 @@ class DemoInstance {
   private readonly toolSelect: HTMLSelectElement
   private readonly appearanceColor: HTMLInputElement
   private readonly appearanceWidth: HTMLInputElement
+  private readonly appearanceFillColor: HTMLInputElement
+  private readonly appearanceOpacity: HTMLInputElement
+  private readonly appearanceDash: HTMLSelectElement
+  private readonly appearanceFontSize: HTMLInputElement
   private readonly textSelectionMenu: HTMLDivElement
+  private readonly view: WorkspaceView
   private textSelectionFocusReturn: HTMLElement | null = null
   private viewer: PdfViewerEngine
   private annotations: AnnotationEngine
@@ -109,6 +106,7 @@ class DemoInstance {
   private gestureScale = 1
   private pendingGestureScale: number | null = null
   private gestureScaleCommit: Promise<void> | null = null
+  private customMeasurementDisposer: (() => void) | null = null
   private readonly nativeImports = new Map<number, ImportPdfJsAnnotationsWithMetadataResult>()
 
   /** Creates DOM and Core instances for one isolated card. */
@@ -118,6 +116,7 @@ class DemoInstance {
     this.host.style.setProperty('--inklayer-author-label-background', accent)
     this.host.innerHTML = instanceMarkup(label)
     parent.append(this.host)
+    this.view = new WorkspaceView(this.host)
     this.canvas = requireElement(this.host, '.pdf-canvas')
     this.textLayerHost = requireElement(this.host, '.text-layer-host')
     this.annotationHost = requireElement(this.host, '.annotation-host')
@@ -126,6 +125,10 @@ class DemoInstance {
     this.toolSelect = requireElement(this.host, '.tool-select')
     this.appearanceColor = requireElement(this.host, '.appearance-color')
     this.appearanceWidth = requireElement(this.host, '.appearance-width')
+    this.appearanceFillColor = requireElement(this.host, '.appearance-fill-color')
+    this.appearanceOpacity = requireElement(this.host, '.appearance-opacity')
+    this.appearanceDash = requireElement(this.host, '.appearance-dash')
+    this.appearanceFontSize = requireElement(this.host, '.appearance-font-size')
     this.textSelectionMenu = requireElement(this.host, '.text-selection-menu')
     const browserSurfaces = createBrowserThumbnailSurfaceProvider()
     this.viewer = createPdfViewerEngine({
@@ -166,11 +169,17 @@ class DemoInstance {
     this.annotations.setAuthorLabelVisibility('auto')
     this.updateAppearanceControls()
     this.unsubscribeAnnotations = this.annotations.subscribe((event) => {
+      this.pushEvent(`annotation · ${event.type}`)
       if (event.type === 'selectionChanged' || event.type === 'annotationUpdated') {
         this.updateAppearanceControls()
       }
+      if (event.type === 'annotationAdded' || event.type === 'annotationUpdated'
+        || event.type === 'annotationDeleted' || event.type === 'selectionChanged') {
+        this.renderAnnotationList()
+      }
       if (event.type === 'toolChanged') {
         this.toolSelect.value = event.tool
+        this.syncToolButtons()
         this.updateAppearanceControls()
       }
       if (event.type === 'imageAssetRequired') {
@@ -178,6 +187,7 @@ class DemoInstance {
       }
     })
     this.unsubscribeViewer = this.viewer.subscribe((event) => {
+      this.pushEvent(`viewer · ${event.type}`)
       if (event.type === 'passwordRequired') this.showPasswordRequest(event.request)
       if (event.type === 'documentLoaded' && event.document.passwordProtected) {
         this.showRecoverySuccess('Password retry opened the protected PDF.')
@@ -202,10 +212,13 @@ class DemoInstance {
           ? ''
           : String(event.progress.total)
         this.loadProgress.textContent = `${label} · ${bytes}${percentage} · ${mode}`
+        const stageProgress = requireElement<HTMLElement>(this.host, '.stage-progress')
+        stageProgress.hidden = false
         this.setStatus(`${label}${percentage}`)
       }
     })
     this.bindControls()
+    this.bindWorkspaceShell()
     this.attachSinglePageGesture()
     if (typeof ResizeObserver === 'function') {
       const pageScroll = requireElement<HTMLDivElement>(this.host, '.page-scroll')
@@ -232,6 +245,32 @@ class DemoInstance {
       if (wasContinuous) return await this.showContinuous()
     }
     await this.renderCurrentPage()
+  }
+
+  /** Seeds the public showcase while the deterministic test harness stays empty. */
+  public seedShowcase(): void {
+    if (this.annotations.repository.getAll().length > 0) return
+    this.annotations.createTextMarkup('highlight', {
+      pageIndex: 0,
+      text: 'Overview and document navigation',
+      rects: [{ x: 24, y: 78, width: 188, height: 18 }]
+    })
+    const rectangle = this.annotations.createAnnotation({
+      type: 'rectangle', pageIndex: 0,
+      bounds: { x: 42, y: 126, width: 152, height: 58 },
+      content: { text: 'Review area' }
+    })
+    this.annotations.createAnnotation({
+      type: 'signature', pageIndex: 0,
+      bounds: { x: 220, y: 182, width: 150, height: 50 },
+      content: {
+        text: 'Demo signature',
+        signature: { kind: 'image', image: this.requireImageAsset('signature').image }
+      }
+    })
+    this.annotations.setSelection({ ids: [rectangle.id], primaryId: rectangle.id })
+    this.renderAnnotationList()
+    this.setStatus(`Ready · ${this.sourceName} · page 1/${this.document?.numPages ?? 0} · 3 annotations`)
   }
 
   /** Renders canvas, TextLayer, native annotations, and Core annotation overlay. */
@@ -292,6 +331,11 @@ class DemoInstance {
       scale: this.scale
     })
     this.updateScaleControls()
+    requireElement<HTMLElement>(this.host, '.stage-progress').hidden = true
+    requireElement<HTMLOutputElement>(this.host, '.page-count').value = String(document.numPages)
+    requireElement<HTMLInputElement>(this.host, '.page-number').value = String(this.currentPageIndex + 1)
+    requireElement<HTMLElement>(this.host, '.status-page').textContent = `Page ${this.currentPageIndex + 1} of ${document.numPages}`
+    this.updateActiveThumbnail()
     this.setStatus(`Ready · ${this.sourceName} · page ${this.currentPageIndex + 1}/${document.numPages} · ${this.annotations.repository.getAll().length} annotations`)
   }
 
@@ -299,6 +343,8 @@ class DemoInstance {
   public async destroy(): Promise<void> {
     this.pageFlow?.destroy()
     this.pageFlow = null
+    this.customMeasurementDisposer?.()
+    this.customMeasurementDisposer = null
     this.renderTask?.cancel()
     this.renderTask = null
     this.unsubscribeViewer()
@@ -340,6 +386,7 @@ class DemoInstance {
       const button = documentFor(this.host).createElement('button')
       button.type = 'button'
       button.className = 'thumbnail-button'
+      button.dataset['pageIndex'] = String(pageIndex)
       button.setAttribute('aria-label', `Open page ${pageIndex + 1}`)
       const image = documentFor(this.host).createElement('img')
       image.src = url
@@ -473,6 +520,10 @@ class DemoInstance {
     })
     this.appearanceColor.addEventListener('input', () => this.applyAppearanceControl())
     this.appearanceWidth.addEventListener('input', () => this.applyAppearanceControl())
+    this.appearanceFillColor.addEventListener('input', () => this.applyAppearanceControl())
+    this.appearanceOpacity.addEventListener('input', () => this.applyAppearanceControl())
+    this.appearanceDash.addEventListener('change', () => this.applyAppearanceControl())
+    this.appearanceFontSize.addEventListener('input', () => this.applyAppearanceControl())
     requireElement<HTMLSelectElement>(this.host, '.tag-visibility').addEventListener('change', (event) => {
       const visibility = (event.currentTarget as HTMLSelectElement).value
       if (visibility === 'auto' || visibility === 'always' || visibility === 'hidden') {
@@ -592,6 +643,223 @@ class DemoInstance {
     })
   }
 
+  /** Connects the product workspace chrome without leaking it into Core. */
+  private bindWorkspaceShell(): void {
+    for (const button of this.host.querySelectorAll<HTMLButtonElement>('[data-side-tab]')) {
+      button.addEventListener('click', () => this.activatePanel('side', button.dataset['sideTab'] ?? 'pages'))
+    }
+    for (const button of this.host.querySelectorAll<HTMLButtonElement>('[data-right-tab]')) {
+      button.addEventListener('click', () => this.activatePanel('right', button.dataset['rightTab'] ?? 'tools'))
+    }
+    for (const button of this.host.querySelectorAll<HTMLButtonElement>('[data-tool], [data-tool-shortcut]')) {
+      button.addEventListener('click', () => {
+        const tool = button.dataset['tool'] ?? button.dataset['toolShortcut']
+        if (tool === undefined) return
+        this.toolSelect.value = tool
+        this.toolSelect.dispatchEvent(new Event('change', { bubbles: true }))
+        if (window.matchMedia('(max-width: 960px)').matches) this.closeMobilePanels()
+      })
+    }
+    for (const button of this.host.querySelectorAll<HTMLButtonElement>('.mobile-panel-toggle')) {
+      button.addEventListener('click', () => this.openMobilePanel(button.dataset['panel'] === 'left' ? 'left' : 'right'))
+    }
+    for (const button of this.host.querySelectorAll<HTMLButtonElement>('.mobile-panel-close')) {
+      button.addEventListener('click', () => this.closeMobilePanels())
+    }
+    requireElement<HTMLElement>(this.host, '.mobile-scrim').addEventListener('click', () => this.closeMobilePanels())
+
+    requireElement<HTMLButtonElement>(this.host, '.previous-page').addEventListener('click', () => {
+      void this.showPage(Math.max(0, this.currentPageIndex - 1)).catch((cause: unknown) => this.reportError(cause))
+    })
+    requireElement<HTMLButtonElement>(this.host, '.next-page').addEventListener('click', () => {
+      void this.showPage(Math.min((this.document?.numPages ?? 1) - 1, this.currentPageIndex + 1))
+        .catch((cause: unknown) => this.reportError(cause))
+    })
+    requireElement<HTMLInputElement>(this.host, '.page-number').addEventListener('change', (event) => {
+      const page = Number.parseInt((event.currentTarget as HTMLInputElement).value, 10)
+      void this.showPage(page - 1).catch((cause: unknown) => this.reportError(cause))
+    })
+
+    const outputToggle = requireElement<HTMLButtonElement>(this.host, '.output-toggle')
+    const outputMenu = requireElement<HTMLElement>(this.host, '.output-menu')
+    outputToggle.addEventListener('click', () => {
+      outputMenu.hidden = !outputMenu.hidden
+      outputToggle.setAttribute('aria-expanded', String(!outputMenu.hidden))
+    })
+    outputMenu.addEventListener('click', () => {
+      outputMenu.hidden = true
+      outputToggle.setAttribute('aria-expanded', 'false')
+    })
+
+    const lab = requireElement<HTMLDialogElement>(this.host, '.capability-dialog')
+    const labToggle = requireElement<HTMLButtonElement>(this.host, '.capability-toggle')
+    labToggle.addEventListener('click', () => {
+      lab.showModal()
+      labToggle.setAttribute('aria-expanded', 'true')
+    })
+    requireElement<HTMLButtonElement>(this.host, '.capability-close').addEventListener('click', () => lab.close())
+    lab.addEventListener('close', () => labToggle.setAttribute('aria-expanded', 'false'))
+    lab.addEventListener('click', (event) => {
+      if (event.target === lab) lab.close()
+    })
+    for (const button of lab.querySelectorAll<HTMLButtonElement>(
+      '.password-sample, .mixed-sample, .long-sample'
+    )) {
+      button.addEventListener('click', () => lab.close())
+    }
+    requireElement<HTMLButtonElement>(this.host, '.restart-instance').addEventListener('click', () => destroyAll.click())
+
+    const watermarkEnabled = requireElement<HTMLInputElement>(this.host, '.watermark-enabled')
+    const watermarkText = requireElement<HTMLInputElement>(this.host, '.watermark-text')
+    const updateWatermark = (): void => {
+      this.viewer.setWatermark(watermarkEnabled.checked ? {
+        text: watermarkText.value.trim() || 'InkLayer Core',
+        layout: 'repeated', opacity: 0.1, rotation: -28,
+        targets: { viewer: true, print: true, export: true, thumbnails: false }
+      } : null)
+      void this.load(true).catch((cause: unknown) => this.reportError(cause))
+    }
+    watermarkEnabled.addEventListener('change', updateWatermark)
+    watermarkText.addEventListener('change', updateWatermark)
+    requireElement<HTMLInputElement>(this.host, '.owner-only').addEventListener('change', (event) => {
+      const enabled = (event.currentTarget as HTMLInputElement).checked
+      this.annotations.setPermissions(enabled ? { mode: 'owner-only' } : { mode: 'unrestricted' })
+      this.pushEvent(`capability · permissions ${enabled ? 'owner-only' : 'unrestricted'}`)
+      this.setStatus(`Annotation permissions: ${enabled ? 'owner-only' : 'unrestricted'}`)
+    })
+    requireElement<HTMLButtonElement>(this.host, '.plugin-install').addEventListener('click', () => {
+      void this.installMeasurementPlugin(false).catch((cause: unknown) => this.reportError(cause))
+    })
+    requireElement<HTMLButtonElement>(this.host, '.plugin-unload').addEventListener('click', () => {
+      this.unloadMeasurementPlugin()
+    })
+    requireElement<HTMLButtonElement>(this.host, '.plugin-reload').addEventListener('click', () => {
+      void this.installMeasurementPlugin(true).catch((cause: unknown) => this.reportError(cause))
+    })
+    this.syncToolButtons()
+  }
+
+  /** Registers the sample Definition and exposes it as a real drawing tool. */
+  private async installMeasurementPlugin(restored: boolean): Promise<void> {
+    if (this.customMeasurementDisposer !== null) return
+    const plugin = await import('./annotation-plugins/measurement')
+    this.customMeasurementDisposer = this.annotations.annotationTypes.register(
+      plugin.createDemoMeasurementDefinition()
+    )
+    this.mountMeasurementTool()
+    this.updateMeasurementPluginUi(
+      'installed',
+      restored
+        ? 'Definition restored. Existing Measurement annotations are editable again.'
+        : 'Definition registered. Measurement is now an active drawing tool.'
+    )
+    this.toolSelect.value = DEMO_MEASUREMENT_TYPE
+    this.toolSelect.dispatchEvent(new Event('change', { bubbles: true }))
+    this.pushEvent(`annotation type · ${restored ? 'restored' : 'registered'} Measurement`)
+    this.setStatus(restored
+      ? 'Measurement plugin restored · retained annotations recovered'
+      : 'Measurement plugin installed · draw a box on the PDF')
+  }
+
+  /** Unregisters behavior while deliberately retaining persisted custom annotations. */
+  private unloadMeasurementPlugin(): void {
+    if (this.customMeasurementDisposer === null) return
+    const retained = this.annotations.repository.getAll()
+      .filter((annotation) => annotation.type === DEMO_MEASUREMENT_TYPE).length
+    this.customMeasurementDisposer()
+    this.customMeasurementDisposer = null
+    this.unmountMeasurementTool()
+    this.updateMeasurementPluginUi(
+      'unloaded',
+      `${retained} Measurement annotation${retained === 1 ? '' : 's'} retained in safe fallback mode.`
+    )
+    this.pushEvent('annotation type · unloaded Measurement; canonical data retained')
+    this.setStatus(`Measurement plugin unloaded · ${retained} retained in fallback mode`)
+  }
+
+  /** Adds the plugin-owned control to both visible and accessible tool selectors. */
+  private mountMeasurementTool(): void {
+    if (this.host.querySelector('[data-plugin-tool="measurement"]') !== null) return
+    const group = documentFor(this.host).createElement('section')
+    group.className = 'tool-group plugin-tool-group'
+    group.dataset['pluginTool'] = 'measurement'
+    group.innerHTML = `<h3>Plugin · newly registered</h3><div class="tool-grid"><button class="tool-button" type="button" data-tool="${DEMO_MEASUREMENT_TYPE}" aria-label="Measurement" title="Measurement">${toolIcon('rectangle')}<span>Measurement</span></button></div>`
+    requireElement<HTMLElement>(this.host, '.tool-palette').append(group)
+    const option = documentFor(this.host).createElement('option')
+    option.value = DEMO_MEASUREMENT_TYPE
+    option.textContent = 'Measurement (plugin)'
+    option.dataset['pluginTool'] = 'measurement'
+    this.toolSelect.append(option)
+    requireElement<HTMLButtonElement>(group, '[data-tool]').addEventListener('click', () => {
+      this.toolSelect.value = DEMO_MEASUREMENT_TYPE
+      this.toolSelect.dispatchEvent(new Event('change', { bubbles: true }))
+      if (window.matchMedia('(max-width: 960px)').matches) this.closeMobilePanels()
+    })
+  }
+
+  /** Removes only product controls; persisted annotations remain in the repository. */
+  private unmountMeasurementTool(): void {
+    this.host.querySelector('.plugin-tool-group[data-plugin-tool="measurement"]')?.remove()
+    this.toolSelect.querySelector('option[data-plugin-tool="measurement"]')?.remove()
+    this.syncToolButtons()
+  }
+
+  /** Makes the current registry lifecycle state explicit in the visible plugin card. */
+  private updateMeasurementPluginUi(
+    state: 'installed' | 'unloaded',
+    message: string
+  ): void {
+    const card = requireElement<HTMLElement>(this.host, '.plugin-showcase')
+    card.dataset['state'] = state
+    requireElement<HTMLElement>(card, '.plugin-state').textContent = state === 'installed'
+      ? 'Installed'
+      : 'Unloaded'
+    requireElement<HTMLOutputElement>(card, '.plugin-result').value = message
+    requireElement<HTMLButtonElement>(card, '.plugin-install').hidden = true
+    requireElement<HTMLButtonElement>(card, '.plugin-unload').hidden = state !== 'installed'
+    requireElement<HTMLButtonElement>(card, '.plugin-reload').hidden = state !== 'unloaded'
+  }
+
+  /** Switches one sidebar tab while preserving accessible selected state. */
+  private activatePanel(region: 'side' | 'right', name: string): void {
+    this.view.activatePanel(region, name)
+  }
+
+  /** Opens a responsive navigation or inspector drawer. */
+  private openMobilePanel(region: 'left' | 'right'): void {
+    this.view.openMobilePanel(region)
+  }
+
+  /** Closes every responsive drawer. */
+  private closeMobilePanels(): void {
+    this.view.closeMobilePanels()
+  }
+
+  /** Mirrors the active Core tool into every product-owned tool control. */
+  private syncToolButtons(): void {
+    this.view.syncToolButtons(this.annotations.getTool())
+  }
+
+  /** Adds one compact sanitized Core activity item for the developer lab. */
+  private pushEvent(message: string): void {
+    this.view.pushEvent(message)
+  }
+
+  /** Renders the canonical repository as a navigable product review list. */
+  private renderAnnotationList(): void {
+    const annotations = this.annotations.repository.getAll()
+    const selectedId = this.annotations.repository.getSelection().primaryId
+    this.view.renderAnnotationList(annotations, selectedId, (annotation) => {
+        this.annotations.setSelection({ ids: [annotation.id], primaryId: annotation.id }, 'sidebar')
+        void this.showPage(annotation.pageIndex).catch((cause: unknown) => this.reportError(cause))
+    })
+  }
+
+  /** Marks the current thumbnail for keyboard and visual navigation. */
+  private updateActiveThumbnail(): void {
+    this.view.updateActiveThumbnail(this.currentPageIndex)
+  }
+
   /** Connects the manual single-page surface to Core's shared pinch/wheel recognizer. */
   private attachSinglePageGesture(): void {
     const container = requireElement<HTMLDivElement>(this.host, '.page-scroll')
@@ -631,16 +899,48 @@ class DemoInstance {
     if (type === null) {
       this.appearanceColor.disabled = true
       this.appearanceWidth.disabled = true
+      this.appearanceFillColor.disabled = true
+      this.appearanceOpacity.disabled = true
+      this.appearanceDash.disabled = true
+      this.appearanceFontSize.disabled = true
+      requireElement<HTMLElement>(this.host, '.appearance-target').textContent = 'Choose a drawing tool'
+      return
+    }
+    if (!this.annotations.annotationTypes.has(type)) {
+      this.appearanceColor.disabled = true
+      this.appearanceWidth.disabled = true
+      this.appearanceFillColor.disabled = true
+      this.appearanceOpacity.disabled = true
+      this.appearanceDash.disabled = true
+      this.appearanceFontSize.disabled = true
+      requireElement<HTMLElement>(this.host, '.appearance-target').textContent = `Selected ${type} · plugin unavailable`
       return
     }
     const appearance = selected?.appearance ?? this.annotations.getToolAppearance(type)
     const capabilities = this.annotations.getAppearanceCapabilities(type)
+    requireElement<HTMLElement>(this.host, '.appearance-target').textContent = selected === undefined
+      ? `New ${type}` : `Selected ${type}`
     this.appearanceColor.disabled = appearance.stroke === null
       && appearance.fill === null && appearance.text === null
     this.appearanceColor.value = appearance.stroke?.color
       ?? appearance.fill?.color ?? appearance.text?.color ?? '#000000'
     this.appearanceWidth.disabled = !capabilities.stroke || appearance.stroke === null
     this.appearanceWidth.value = String(appearance.stroke?.width ?? 2)
+    requireElement<HTMLOutputElement>(this.host, '.appearance-width-value').value = `${appearance.stroke?.width ?? 2} pt`
+    this.appearanceFillColor.disabled = !capabilities.fill
+    this.appearanceFillColor.value = appearance.fill?.color ?? '#ffffff'
+    this.appearanceOpacity.disabled = false
+    this.appearanceOpacity.value = String(appearance.opacity)
+    requireElement<HTMLOutputElement>(this.host, '.appearance-opacity-value').value = `${Math.round(appearance.opacity * 100)}%`
+    this.appearanceDash.disabled = !capabilities.dash || appearance.stroke === null
+    const dash = appearance.stroke?.dash ?? []
+    this.appearanceDash.value = dash.length === 0 ? 'solid' : dash[0] === 1 ? 'dotted' : 'dashed'
+    this.appearanceFontSize.disabled = !capabilities.text || appearance.text === null
+    this.appearanceFontSize.value = String(appearance.text?.fontSize ?? 14)
+    requireElement<HTMLElement>(this.host, '.appearance-fill-field').hidden = !capabilities.fill
+    requireElement<HTMLElement>(this.host, '.appearance-width-field').hidden = !capabilities.stroke
+    requireElement<HTMLElement>(this.host, '.appearance-dash-field').hidden = !capabilities.dash
+    requireElement<HTMLElement>(this.host, '.appearance-font-field').hidden = !capabilities.text
   }
 
   /** Applies demo controls through Core APIs to future creation or the primary selection. */
@@ -652,11 +952,30 @@ class DemoInstance {
     const current = selected?.appearance ?? this.annotations.getToolAppearance(type)
     const color = this.appearanceColor.value
     const width = Number.parseFloat(this.appearanceWidth.value)
-    const override = current.stroke !== null
-      ? { stroke: { color, ...(Number.isFinite(width) && width > 0 ? { width } : {}) } }
-      : current.fill !== null ? { fill: { color } } : { text: { color } }
+    const opacity = Number.parseFloat(this.appearanceOpacity.value)
+    const fontSize = Number.parseFloat(this.appearanceFontSize.value)
+    const capabilities = this.annotations.getAppearanceCapabilities(type)
+    const dash = this.appearanceDash.value === 'dashed' ? [6, 4]
+      : this.appearanceDash.value === 'dotted' ? [1, 3] : []
+    const override = {
+      ...(Number.isFinite(opacity) ? { opacity } : {}),
+      ...(current.stroke !== null ? { stroke: {
+        color,
+        ...(Number.isFinite(width) && width > 0 ? { width } : {}),
+        ...(capabilities.dash ? { dash } : {})
+      } } : {}),
+      ...(capabilities.fill ? { fill: {
+        color: this.appearanceFillColor.value,
+        opacity: current.fill?.opacity ?? 0.2
+      } } : {}),
+      ...(current.text !== null ? { text: {
+        color,
+        ...(Number.isFinite(fontSize) && fontSize > 0 ? { fontSize } : {})
+      } } : {})
+    }
     if (selectedId === undefined) this.annotations.setToolAppearance(type, override)
     else this.annotations.updateAppearance(selectedId, override)
+    this.updateAppearanceControls()
   }
 
   /** Switches from the single-page surface to Core-owned virtual page flow. */
@@ -687,6 +1006,7 @@ class DemoInstance {
     this.gestureScale = this.scale
     this.updateScaleControls()
     this.pageFlow.scrollToPage(this.currentPageIndex)
+    this.updateLayoutControls(true)
     this.setStatus(`Continuous · page ${this.currentPageIndex + 1}/${this.document?.numPages ?? 0}`)
   }
 
@@ -701,6 +1021,7 @@ class DemoInstance {
     this.pageFlow = null
     requireElement<HTMLDivElement>(this.host, '.flow-scroll').hidden = true
     requireElement<HTMLElement>(this.host, '.page-scroll').hidden = false
+    this.updateLayoutControls(false)
     await this.renderCurrentPage()
   }
 
@@ -814,6 +1135,7 @@ class DemoInstance {
     this.sourcePdf = new Uint8Array(bytes)
     this.source = { data: this.sourcePdf }
     this.sourceName = name
+    this.setDocumentName(name)
     this.currentPageIndex = 0
     this.document = null
     await this.load(true)
@@ -838,6 +1160,7 @@ class DemoInstance {
       credentials: 'same-origin'
     }
     this.sourceName = name
+    this.setDocumentName(name)
     this.currentPageIndex = 0
     this.document = null
     await this.load(true)
@@ -890,6 +1213,17 @@ class DemoInstance {
     if (tool === 'highlight' || tool === 'underline' || tool === 'strikeout') {
       annotation = this.annotations.createTextMarkup(tool, {
         pageIndex: 0, text: 'InkLayer Core Vanilla', rects: [bounds]
+      })
+    } else if (tool === DEMO_MEASUREMENT_TYPE) {
+      annotation = this.annotations.createAnnotation({
+        type: DEMO_MEASUREMENT_TYPE,
+        pageIndex: 0,
+        bounds,
+        content: { text: 'Measurement box' },
+        typeData: {
+          schemaVersion: 1,
+          payload: { width: bounds.width, height: bounds.height, unit: 'pt' }
+        }
       })
     } else if (tool === 'free-text') {
       annotation = await this.annotations.requestFreeText(0, bounds)
@@ -947,7 +1281,9 @@ class DemoInstance {
   /** Exports and downloads annotated PDF bytes. */
   private async exportPdf(): Promise<void> {
     const { buildAnnotatedPdf } = await import('@inklayer-dev/core/export/pdf')
-    const bytes = await buildAnnotatedPdf(this.sourcePdf, this.annotations.repository.getAll())
+    const bytes = await buildAnnotatedPdf(this.sourcePdf, this.annotations.repository.getAll(), {
+      annotationTypes: this.annotations.annotationTypes
+    })
     downloadBlob({ content: bytes, filename: 'inklayer-annotations.pdf', mimeType: 'application/pdf' })
     this.setStatus(`Exported PDF · ${bytes.byteLength} bytes`)
   }
@@ -1009,12 +1345,25 @@ class DemoInstance {
       ? requested
       : 'custom'
     requireElement<HTMLOutputElement>(this.host, '.scale-value').value = `${Math.round(this.scale * 100)}%`
+    requireElement<HTMLElement>(this.host, '.status-scale').textContent = `${Math.round(this.scale * 100)}%`
+  }
+
+  /** Synchronizes layout buttons and the persistent status rail. */
+  private updateLayoutControls(continuous: boolean): void {
+    this.view.updateLayoutControls(continuous)
+  }
+
+  /** Updates product-owned file labels without changing the loaded source. */
+  private setDocumentName(name: string): void {
+    this.view.setDocumentName(name)
   }
 
   /** Updates the accessible status region. */
   private setStatus(message: string): void {
     this.status.dataset['state'] = 'ok'
     this.status.textContent = message
+    const count = this.annotations.repository.getAll().length
+    requireElement<HTMLElement>(this.host, '.status-annotations').textContent = `${count} annotations`
   }
 
   /** Projects one Core error without losing its stable machine-readable context. */
@@ -1074,123 +1423,6 @@ class DemoInstance {
     this.textSelectionFocusReturn = null
     if (target?.isConnected === true) target.focus({ preventScroll: true })
   }
-}
-
-/** Builds one accessible demo card shell. */
-function instanceMarkup(label: string): string {
-  const tools = ['text-select', 'select', ...Object.keys(ANNOTATION_TOOL_DEFINITIONS)]
-    .map((tool) => `<option value="${tool}">${tool}</option>`).join('')
-  return `
-    <h2>${label}</h2>
-    <div class="toolbar" aria-label="${label} annotation controls">
-      <label>Tool <select class="tool-select">${tools}</select></label>
-      <label>Color <input class="appearance-color" type="color" value="#ff6b6b"></label>
-      <label>Width <input class="appearance-width" type="range" min="1" max="20" step="1" value="2"></label>
-      <label>Tags
-        <select class="tag-visibility">
-          <option value="auto" selected>Hover / selected</option>
-          <option value="always">Always</option>
-          <option value="hidden">Hidden</option>
-        </select>
-      </label>
-      <button class="add-sample" type="button">Add sample</button>
-      <button class="comment" type="button">Add comment</button>
-      <button class="delete" type="button">Delete</button>
-      <button class="zoom-out" type="button" aria-label="Zoom out">Zoom −</button>
-      <button class="zoom-in" type="button">Zoom +</button>
-      <label>Scale
-        <select class="scale-select">
-          <option value="auto">Auto</option>
-          <option value="page-actual">Actual</option>
-          <option value="page-fit">Page fit</option>
-          <option value="page-width">Page width</option>
-          <option value="page-height">Page height</option>
-          <option value="0.5">50%</option>
-          <option value="0.75">75%</option>
-          <option value="1" selected>100%</option>
-          <option value="1.25">125%</option>
-          <option value="1.5">150%</option>
-          <option value="2">200%</option>
-          <option value="custom" disabled>Custom</option>
-        </select>
-      </label>
-      <output class="scale-value">100%</output>
-      <button class="continuous" type="button">Continuous</button>
-      <button class="single" type="button">Single</button>
-      <button class="prepare-print" type="button">Prepare print</button>
-      <button class="print" type="button">Print</button>
-      <button class="password-sample" type="button">Password PDF</button>
-      <button class="range-sample" type="button">URL Range PDF</button>
-      <button class="mixed-sample" type="button">Mixed PDF</button>
-      <button class="long-sample" type="button">Long PDF</button>
-      <button class="cancel-load" type="button">Cancel load</button>
-      <label class="file-control">Open PDF<input class="pdf-file" type="file" accept="application/pdf,.pdf"></label>
-      <button class="reload" type="button">Reload</button>
-      <button class="export-pdf" type="button">Export PDF</button>
-      <button class="export-excel" type="button">Export Excel</button>
-    </div>
-    <div class="document-tools" aria-label="${label} document controls">
-      <section>
-        <strong>Outline</strong>
-        <div class="outline-items"></div>
-      </section>
-      <section>
-        <form class="search-form">
-          <label>Search <input class="search-input" type="search" value="Core"></label>
-          <button type="submit">Find</button>
-        </form>
-        <div class="search-results" aria-live="polite"></div>
-      </section>
-    </div>
-    <section class="recovery-tools" aria-label="${label} error recovery examples">
-      <div class="recovery-heading">
-        <strong>Error recovery</strong>
-        <span>Each failure is intentional and retryable.</span>
-      </div>
-      <div class="recovery-actions">
-        <button class="fail-url" type="button">Fail URL once</button>
-        <button class="fail-range" type="button">Fail Range once</button>
-        <button class="fail-render" type="button">Fail render once</button>
-        <button class="retry-recovery" type="button" disabled>Retry last failure</button>
-      </div>
-      <p class="recovery-hint">Password PDF + a wrong password demonstrates the typed password retry event. URL Range PDF + Cancel load demonstrates cancelled-work recovery.</p>
-      <div class="recovery-outcome" role="status" aria-live="polite" hidden>
-        <p class="recovery-summary"></p>
-        <dl>
-          <div><dt>Code / event</dt><dd><code class="recovery-code"></code></dd></div>
-          <div><dt>Operation</dt><dd><code class="recovery-operation"></code></dd></div>
-          <div><dt>Context</dt><dd><code class="recovery-context"></code></dd></div>
-        </dl>
-      </div>
-    </section>
-    <div class="thumbnail-items" aria-label="Page thumbnails"></div>
-    <div class="text-selection-menu" role="toolbar" aria-label="Text annotation actions" hidden>
-      <button type="button" data-text-markup="highlight">Highlight</button>
-      <button type="button" data-text-markup="underline">Underline</button>
-      <button type="button" data-text-markup="strikeout">Strikeout</button>
-    </div>
-    <div class="page-scroll">
-      <div class="page-surface">
-        <canvas class="pdf-canvas" aria-label="Rendered PDF page"></canvas>
-        <div class="text-layer-host" aria-label="Selectable PDF text"></div>
-        <div class="annotation-host" aria-label="Annotation canvas"></div>
-      </div>
-    </div>
-    <div class="flow-scroll" aria-label="Continuous PDF pages" hidden></div>
-    <p class="instance-status" role="status" aria-live="polite">Idle</p>
-    <output class="load-progress" aria-label="PDF load progress" aria-live="polite" hidden></output>
-    <dialog class="password-dialog" aria-labelledby="${label}-password-title">
-      <form class="password-form">
-        <h3 id="${label}-password-title">Open protected PDF</h3>
-        <p class="password-message"></p>
-        <label>Password<input class="password-input" type="password" autocomplete="current-password" required></label>
-        <div class="dialog-actions">
-          <button class="cancel-password" type="button">Cancel</button>
-          <button type="submit">Unlock</button>
-        </div>
-      </form>
-    </dialog>
-  `
 }
 
 /** Requires one descendant with a narrowed DOM element type. */
@@ -1295,6 +1527,9 @@ async function mountInstances(): Promise<void> {
     new DemoInstance(grid, 'Demo', '#175cd3')
   ]
   await Promise.all(instances.map(async (instance) => instance.load()))
+  if (new URL(window.location.href).searchParams.get('clean') !== '1') {
+    instances[0]?.seedShowcase()
+  }
 }
 
 destroyAll.addEventListener('click', () => {

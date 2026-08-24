@@ -46,13 +46,14 @@ test('keeps long-document virtual pages and thumbnail resources bounded through 
       }
     })
   })
-  await page.goto('/')
+  await page.goto('/?clean=1')
   await expect(page.locator('.instance-status')).toHaveText(
     'Ready · generated sample · page 1/3 · 0 annotations'
   )
   const viewer = page.locator('.instance-card').first()
   expect(await readObjectUrlMetrics(page)).toEqual({ active: 3, created: 3, revoked: 0 })
 
+  await openCapabilityLab(viewer)
   await viewer.getByRole('button', { name: 'Long PDF' }).click()
   await expect(viewer.locator('.instance-status')).toContainText(
     'Ready · long-document fixture · page 1/96', { timeout: 30_000 }
@@ -60,11 +61,13 @@ test('keeps long-document virtual pages and thumbnail resources bounded through 
   await expect(viewer.locator('.thumbnail-button')).toHaveCount(96, { timeout: 30_000 })
   expect(await readObjectUrlMetrics(page)).toEqual({ active: 96, created: 99, revoked: 3 })
 
+  await viewer.getByRole('tab', { name: 'Search', exact: true }).click()
   await viewer.locator('.search-input').fill('lifecycle stress search token')
   await viewer.getByRole('button', { name: 'Find', exact: true }).click()
   await expect(viewer.locator('.search-results button')).toHaveCount(30)
   await expect(viewer.locator('.instance-status')).toHaveText('30 search results (limited)')
 
+  await viewer.getByRole('tab', { name: 'Pages', exact: true }).click()
   await viewer.getByRole('button', { name: 'Continuous' }).click()
   await expect(viewer.locator('.inklayer-page-flow-page')).toHaveCount(96, { timeout: 30_000 })
   for (const pageIndex of [0, 23, 47, 71, 95]) {
@@ -104,11 +107,12 @@ test('keeps long-document virtual pages and thumbnail resources bounded through 
 
 test('keeps mixed CropBox pages aligned through viewer, text, annotations, thumbnails, print, and export', async ({ page }) => {
   const failures = collectBrowserFailures(page)
-  await page.goto('/')
+  await page.goto('/?clean=1')
   await expect(page.locator('.instance-status')).toHaveText(
     'Ready · generated sample · page 1/3 · 0 annotations'
   )
   const viewer = page.locator('.instance-card').first()
+  await openCapabilityLab(viewer)
   await viewer.getByRole('button', { name: 'Mixed PDF' }).click()
   await expect(viewer.locator('.instance-status')).toContainText('mixed-page fixture · page 1/3 · 1 annotations')
 
@@ -172,11 +176,13 @@ test('keeps mixed CropBox pages aligned through viewer, text, annotations, thumb
   expect(selection).toContain('Selection continues')
   await expect(viewer.locator('.inklayer-annotation-a11y-list button')).toHaveCount(4)
 
-  await viewer.getByRole('button', { name: 'Prepare print' }).click()
+  await openOutputMenu(viewer)
+  await viewer.getByRole('button', { name: 'Prepare secure print' }).click()
   await expect(viewer.locator('.instance-status')).toContainText('Prepared raster print')
 
   const downloadPromise = page.waitForEvent('download')
-  await viewer.getByRole('button', { name: 'Export PDF' }).click()
+  await openOutputMenu(viewer)
+  await viewer.getByRole('button', { name: 'Annotated PDF' }).click()
   const download = await downloadPromise
   const downloadPath = await download.path()
   if (downloadPath === null) throw new Error('Mixed-page export did not produce a local file.')
@@ -192,7 +198,7 @@ test('keeps mixed CropBox pages aligned through viewer, text, annotations, thumb
 
 test('renders unknown custom annotations safely and restores a controlled Definition', async ({ page }) => {
   const failures = collectBrowserFailures(page)
-  await page.goto('/')
+  await page.goto('/?clean=1')
   const result = await page.evaluate(async () => {
     const path = '/src/custom-type-probe.ts'
     const probe = await import(path) as typeof CustomTypeProbeModule
@@ -207,7 +213,7 @@ test('renders unknown custom annotations safely and restores a controlled Defini
 
 test('runs a custom type through pointer creation, transform, print scene, unload, and restore', async ({ page }) => {
   const failures = collectBrowserFailures(page)
-  await page.goto('/')
+  await page.goto('/?clean=1')
   await page.evaluate(async () => {
     const path = '/src/custom-type-probe.ts'
     const probe = await import(path) as typeof CustomTypeProbeModule
@@ -302,7 +308,7 @@ test('runs a custom type through pointer creation, transform, print scene, unloa
 
 test('opens and focuses FreeText after a real canvas click', async ({ page }) => {
   const failures = collectBrowserFailures(page)
-  await page.goto('/')
+  await page.goto('/?clean=1')
   const alice = page.locator('.instance-card').first()
   await expect(alice.locator('.instance-status')).toContainText('Ready')
   await alice.locator('.tool-select').selectOption('free-text')
@@ -322,14 +328,14 @@ test('opens and focuses FreeText after a real canvas click', async ({ page }) =>
 
 test('owns direct-document keyboard focus, movement, selection, and deletion', async ({ page }) => {
   const failures = collectBrowserFailures(page)
-  await page.goto('/')
+  await page.goto('/?clean=1')
   const alice = page.locator('.instance-card').first()
   await expect(alice).toHaveAttribute('role', 'region')
   await expect(alice).toHaveAttribute('tabindex', '0')
   await expect(alice).toHaveAttribute('aria-label', 'Demo PDF annotation workspace')
   const canvas = alice.locator('.konvajs-content')
   await alice.locator('.tool-select').selectOption('rectangle')
-  await alice.getByRole('button', { name: 'Add sample' }).click()
+  await alice.getByRole('button', { name: 'Place sample' }).click()
   const item = alice.locator('.inklayer-annotation-a11y-list button')
   await expect(item).toHaveCount(1)
 
@@ -362,7 +368,7 @@ test('owns direct-document keyboard focus, movement, selection, and deletion', a
 
 test('hands keyboard TextLayer selection focus to and from the product menu', async ({ page }) => {
   const failures = collectBrowserFailures(page)
-  await page.goto('/')
+  await page.goto('/?clean=1')
   const alice = page.locator('.instance-card').first()
   await expect(alice.locator('.instance-status')).toContainText('Ready')
   await page.evaluate(() => {
@@ -392,7 +398,7 @@ test('hands keyboard TextLayer selection focus to and from the product menu', as
 test('coerces smooth page navigation when reduced motion is requested', async ({ page }) => {
   const failures = collectBrowserFailures(page)
   await page.emulateMedia({ reducedMotion: 'reduce' })
-  await page.goto('/')
+  await page.goto('/?clean=1')
   expect(await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches)).toBe(true)
   const alice = page.locator('.instance-card').first()
   await expect(alice.locator('.instance-status')).toContainText('Ready')
@@ -411,6 +417,7 @@ test('coerces smooth page navigation when reduced motion is requested', async ({
       })
     }
   })
+  await alice.getByRole('tab', { name: 'Outline', exact: true }).click()
   await alice.getByRole('button', { name: 'Text Selection', exact: true }).click()
   await expect.poll(() => page.evaluate(() => (
     window as typeof window & { inklayerLastScrollBehavior?: ScrollBehavior }
@@ -420,7 +427,7 @@ test('coerces smooth page navigation when reduced motion is requested', async ({
 
 test('places visible image-backed Signature and Stamp annotations from canvas clicks', async ({ page }) => {
   const failures = collectBrowserFailures(page)
-  await page.goto('/')
+  await page.goto('/?clean=1')
   const alice = page.locator('.instance-card').first()
   await expect(alice.locator('.instance-status')).toContainText('Ready')
   const canvas = alice.locator('.konvajs-content')
@@ -448,7 +455,7 @@ test('places visible image-backed Signature and Stamp annotations from canvas cl
 
 test('selects annotations imported from an annotated PDF opened by the demo', async ({ page }) => {
   const failures = collectBrowserFailures(page)
-  await page.goto('/')
+  await page.goto('/?clean=1')
   const alice = page.locator('.instance-card').first()
   await expect(alice.locator('.instance-status')).toContainText('Ready')
   const bytes = await createNativeAnnotationPdf()
@@ -494,11 +501,12 @@ test('loads the local URL fixture through Range and keeps cancel and reload reco
     }
   })
 
-  await page.goto('/')
+  await page.goto('/?clean=1')
   const alice = page.locator('.instance-card').first()
   const progress = alice.locator('.load-progress')
   await expect(alice.locator('.instance-status')).toContainText('Ready · generated sample')
 
+  await openCapabilityLab(alice)
   await alice.getByRole('button', { name: 'URL Range PDF' }).click()
   await expect(progress).toHaveAttribute('data-phase', 'probing')
   await expect(progress).toHaveAttribute('data-range', 'true')
@@ -540,7 +548,7 @@ test('recovers URL, Range, password, render, and cancelled work from structured 
   page
 }) => {
   const failures = collectBrowserFailures(page)
-  await page.goto('/')
+  await page.goto('/?clean=1')
   const alice = page.locator('.instance-card').first()
   const status = alice.locator('.instance-status')
   const progress = alice.locator('.load-progress')
@@ -548,6 +556,7 @@ test('recovers URL, Range, password, render, and cancelled work from structured 
   const retry = alice.getByRole('button', { name: 'Retry last failure' })
   await expect(status).toContainText('Ready · generated sample')
 
+  await openCapabilityLab(alice)
   await alice.getByRole('button', { name: 'Fail URL once' }).click()
   await expect(outcome.locator('.recovery-code')).toHaveText('PDF_LOAD_FAILED', {
     timeout: 30_000
@@ -580,6 +589,7 @@ test('recovers URL, Range, password, render, and cancelled work from structured 
   await retry.click()
   await expect(status).toContainText('Cancelled load completed after retry')
 
+  await openCapabilityLab(alice)
   await alice.getByRole('button', { name: 'Password PDF' }).click()
   const dialog = alice.getByRole('dialog', { name: 'Open protected PDF' })
   await expect(dialog).toBeVisible()
@@ -599,7 +609,7 @@ test('recovers URL, Range, password, render, and cancelled work from structured 
 
 test('runs the complete Vanilla engine flow without console errors', async ({ page }) => {
   const failures = collectBrowserFailures(page)
-  await page.goto('/')
+  await page.goto('/?clean=1')
   await expect(page).toHaveTitle('InkLayer Core Vanilla Example')
   await expect(page.locator('.instance-status')).toHaveText(
     'Ready · generated sample · page 1/3 · 0 annotations'
@@ -628,6 +638,7 @@ test('runs the complete Vanilla engine flow without console errors', async ({ pa
   await expect(alice.locator('.outline-items button')).toHaveText([
     'Overview', 'Viewer Features', 'Text Selection'
   ])
+  await alice.getByRole('tab', { name: 'Search', exact: true }).click()
   await alice.getByRole('button', { name: 'Find' }).click()
   await expect(alice.locator('.search-results button')).toHaveCount(2)
   await expect(alice.locator('mark[data-inklayer-search-match="active"]')).toHaveCount(1)
@@ -636,6 +647,7 @@ test('runs the complete Vanilla engine flow without console errors', async ({ pa
     'rgba(249, 115, 22, 0.6)'
   )
 
+  await alice.getByRole('tab', { name: 'Pages', exact: true }).click()
   await alice.getByRole('button', { name: 'Continuous' }).click()
   await expect(alice.locator('.inklayer-page-flow-page')).toHaveCount(3)
   await alice.locator('.scale-select').selectOption('page-width')
@@ -653,6 +665,7 @@ test('runs the complete Vanilla engine flow without console errors', async ({ pa
   await expect(alice.locator('[data-inklayer-flow-page="0"]')).toHaveAttribute(
     'data-inklayer-flow-mounted', 'true'
   )
+  await alice.getByRole('tab', { name: 'Outline', exact: true }).click()
   await alice.getByRole('button', { name: 'Text Selection', exact: true }).click()
   await expect(alice.locator('[data-inklayer-flow-page="2"]')).toHaveAttribute(
     'data-inklayer-flow-mounted', 'true'
@@ -730,9 +743,11 @@ test('runs the complete Vanilla engine flow without console errors', async ({ pa
   await expect(alice.locator('.flow-scroll')).toBeHidden()
   await expect(alice.locator('.instance-status')).toContainText('2 annotations')
 
-  await alice.getByRole('button', { name: 'Prepare print' }).click()
+  await openOutputMenu(alice)
+  await alice.getByRole('button', { name: 'Prepare secure print' }).click()
   await expect(alice.locator('.instance-status')).toContainText('Prepared raster print')
 
+  await alice.getByRole('tab', { name: 'Outline', exact: true }).click()
   await alice.getByRole('button', { name: 'Text Selection', exact: true }).click()
   await expect(alice.locator('.instance-status')).toContainText('page 3/3')
   await alice.locator('.tool-select').selectOption('text-select')
@@ -815,19 +830,37 @@ test('runs the complete Vanilla engine flow without console errors', async ({ pa
 
   await expect(alice.locator('.inklayer-author-label').first()).toHaveCSS('background-color', 'rgb(23, 92, 211)')
 
+  await expect(alice.getByRole('button', { name: 'Measurement', exact: true })).toHaveCount(0)
+  await alice.getByRole('button', { name: 'Install Measurement plugin' }).click()
+  await expect(alice.locator('.plugin-state')).toHaveText('Installed')
+  await expect(alice.getByRole('button', { name: 'Measurement', exact: true })).toBeVisible()
+  await expect(alice.locator('.tool-select')).toHaveValue('custom:demo/measurement')
+  await alice.getByRole('button', { name: 'Place sample' }).click()
+  await expect(alice.locator('.instance-status')).toContainText('custom:demo/measurement')
+  await alice.getByRole('button', { name: 'Unload plugin' }).click()
+  await expect(alice.locator('.plugin-state')).toHaveText('Unloaded')
+  await expect(alice.getByRole('button', { name: 'Measurement', exact: true })).toHaveCount(0)
+  await expect(alice.locator('.plugin-result')).toContainText('1 Measurement annotation retained')
+  await alice.getByRole('button', { name: 'Reload plugin' }).click()
+  await expect(alice.locator('.plugin-state')).toHaveText('Installed')
+  await expect(alice.getByRole('button', { name: 'Measurement', exact: true })).toBeVisible()
+  await expect(alice.locator('.plugin-result')).toContainText('editable again')
+
   await alice.getByRole('button', { name: 'Zoom +' }).click()
   await expect(alice.locator('.instance-status')).toHaveText(
-    `Ready · generated sample · page 1/3 · ${TOOLS.length + 5} annotations`
+    `Ready · generated sample · page 1/3 · ${TOOLS.length + 6} annotations`
   )
   await expect(alice.locator('.pdf-canvas')).toHaveAttribute('width', '463')
 
-  await alice.getByRole('button', { name: 'Export PDF' }).click()
+  await openOutputMenu(alice)
+  await alice.getByRole('button', { name: 'Annotated PDF' }).click()
   await expect(alice.locator('.instance-status')).toContainText('Exported PDF · ')
-  await alice.getByRole('button', { name: 'Export Excel' }).click()
+  await openOutputMenu(alice)
+  await alice.getByRole('button', { name: 'Annotation workbook' }).click()
   await expect(alice.locator('.instance-status')).toContainText('Exported workbook · ')
 
   const firstInstance = await alice.getAttribute('data-inklayer-instance')
-  await page.getByRole('button', { name: 'Destroy / remount' }).click()
+  await page.getByRole('button', { name: 'Restart Core' }).click()
   await expect(page.locator('.instance-status')).toHaveText(
     'Ready · generated sample · page 1/3 · 0 annotations'
   )
@@ -840,14 +873,30 @@ test('runs the complete Vanilla engine flow without console errors', async ({ pa
 test('keeps the single-workspace demo readable at the mobile breakpoint', async ({ page }) => {
   const failures = collectBrowserFailures(page)
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.goto('/')
+  await page.goto('/?clean=1')
   await expect(page.locator('.instance-status')).toHaveText(
     'Ready · generated sample · page 1/3 · 0 annotations'
   )
-  await expect(page.locator('.instance-grid')).toHaveCSS('grid-template-columns', '358px')
+  await expect(page.locator('.instance-grid')).toHaveCSS('width', '390px')
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390)
   expect(failures).toEqual([])
 })
+
+/** Opens the technical scenario drawer only when a test needs lab-owned controls. */
+async function openCapabilityLab(card: Locator): Promise<void> {
+  const dialog = card.locator('.capability-dialog')
+  if (!await dialog.isVisible()) {
+    await card.getByRole('button', { name: 'Capability Lab', exact: true }).click()
+  }
+}
+
+/** Opens the compact output menu only when a test needs one of its actions. */
+async function openOutputMenu(card: Locator): Promise<void> {
+  const menu = card.locator('.output-menu')
+  if (!await menu.isVisible()) {
+    await card.getByRole('button', { name: 'Export', exact: true }).click()
+  }
+}
 
 /** Verifies the CSS layout size shared by Canvas, TextLayer, and Annotation overlay. */
 async function expectPageSize(card: Locator, width: number, height: number): Promise<void> {
@@ -888,7 +937,7 @@ async function addToolFixture(
   tool: typeof TOOLS[number]
 ): Promise<void> {
   await card.locator('.tool-select').selectOption(tool)
-  await card.getByRole('button', { name: 'Add sample' }).click()
+  await card.getByRole('button', { name: 'Place sample' }).click()
   if (tool === 'free-text') {
     const input = card.locator('.inklayer-text-input')
     await expect(input).toBeVisible()
