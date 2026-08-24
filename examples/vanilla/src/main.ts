@@ -1112,6 +1112,11 @@ class DemoInstance {
     this.pageFlow = null
     this.document = null
     await this.viewer.cancelLoad()
+    this.showStructuredError(new InkLayerError(
+      'PDF_LOAD_CANCELLED',
+      'PDF document loading was cancelled.',
+      { operation: 'load' }
+    ), true)
     this.setStatus('URL load cancelled · press Reload to retry')
   }
 

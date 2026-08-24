@@ -538,8 +538,8 @@ test('loads the local URL fixture through Range and keeps cancel and reload reco
     request => request.demo === 'url-range'
   )).toBe(true)
   expect(statuses).toContain(206)
-  const intentionalHeadAbort = /^HEAD: (?:net::ERR_ABORTED|NS_BINDING_ABORTED|cancelled)$/
-  expect(networkFailures.filter(failure => !intentionalHeadAbort.test(failure))).toEqual([])
+  const intentionalRequestAbort = /^(?:HEAD|GET): (?:net::ERR_ABORTED|NS_BINDING_ABORTED|cancelled)$/
+  expect(networkFailures.filter(failure => !intentionalRequestAbort.test(failure))).toEqual([])
   expect(failures).toEqual([])
 })
 
