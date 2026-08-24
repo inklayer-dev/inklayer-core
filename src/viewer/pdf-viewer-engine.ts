@@ -215,11 +215,11 @@ class PdfViewerEngineImpl implements PdfViewerEngine {
       return cloneDocumentHandle(handle)
     } catch (cause) {
       const explicitlyCancelled = this.cancelledLoadGenerations.delete(generation)
-      const error = this.pendingLoadError ?? rangeError ?? (explicitlyCancelled
+      const error = explicitlyCancelled
         ? new InkLayerError('PDF_LOAD_CANCELLED', 'PDF document loading was cancelled.', {
           operation: 'load', cause
         })
-        : normalizePdfError(cause, 'load'))
+        : this.pendingLoadError ?? rangeError ?? normalizePdfError(cause, 'load')
       this.pendingLoadError = null
       if (this.isCurrentGeneration(generation)) {
         await this.releaseDocumentResources()

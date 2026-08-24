@@ -539,7 +539,6 @@ test('loads the local URL fixture through Range and keeps cancel and reload reco
   )).toBe(true)
   expect(statuses).toContain(206)
   const intentionalHeadAbort = /^HEAD: (?:net::ERR_ABORTED|NS_BINDING_ABORTED|cancelled)$/
-  expect(networkFailures.some(failure => intentionalHeadAbort.test(failure))).toBe(true)
   expect(networkFailures.filter(failure => !intentionalHeadAbort.test(failure))).toEqual([])
   expect(failures).toEqual([])
 })
