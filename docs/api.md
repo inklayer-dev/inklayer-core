@@ -99,12 +99,12 @@ Repository commands and events, explicit engine/output methods, existing Ports,
 and adapter-owned UI composition.
 
 These seams are not reserved string keys and must not be simulated with no-op
-providers. [ADR 0005](./adr/0005-optional-capability-seams.md) defines the
-consumer evidence, lifecycle/error contract, privacy boundary, and tests needed
-before any one of them can enter the public API. In particular, a future
-telemetry interface cannot receive raw engine events containing document or
-annotation content, and a future synchronization interface cannot define
-conflict policy by mutating Repository internals.
+providers. Before any one of them enters the public API, it needs a real
+consumer plus defined lifecycle, cancellation, structured-error, privacy, and
+executable-test contracts. In particular, a future telemetry interface cannot
+receive raw engine events containing document or annotation content, and a
+future synchronization interface cannot define conflict policy by mutating
+Repository internals.
 
 Canonical Viewer search supports `matchCase`, `wholeWord`,
 `matchDiacritics`, and `maxResults`. Diacritics are folded by default to retain
@@ -127,6 +127,9 @@ controller, one-shot/continuous lifecycle, direct-manipulation capabilities,
 printability, exportability, and PDF strategy. Their `renderer.strategy` is
 `core`: this delegates to verified private Konva snapshot builders and is
 rejected on external registration.
+
+See the [built-in annotation type table](./guide/annotations.md#built-in-annotation-types)
+for the complete IDs, geometry, creation modes, and PDF strategies.
 
 ```ts
 import { createAnnotationTypeRegistry } from '@inklayer-dev/core/annotation-types'

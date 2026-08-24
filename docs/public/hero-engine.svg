@@ -1,0 +1,84 @@
+<svg width="640" height="500" viewBox="0 0 640 500" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="backPage" x1="142" y1="104" x2="452" y2="424" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F8FAFD"/>
+      <stop offset="1" stop-color="#E9EDF5"/>
+    </linearGradient>
+    <linearGradient id="frontPage" x1="216" y1="64" x2="466" y2="438" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#F7F8FC"/>
+    </linearGradient>
+    <linearGradient id="backPageDark" x1="142" y1="104" x2="452" y2="424" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#313641"/>
+      <stop offset="1" stop-color="#252932"/>
+    </linearGradient>
+    <linearGradient id="frontPageDark" x1="216" y1="64" x2="466" y2="438" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#343945"/>
+      <stop offset="1" stop-color="#292D37"/>
+    </linearGradient>
+    <linearGradient id="brandStroke" x1="258" y1="164" x2="420" y2="382" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#175CD3"/>
+      <stop offset="1" stop-color="#7C3AED"/>
+    </linearGradient>
+    <filter id="backShadow" x="76" y="54" width="448" height="432" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#182230" flood-opacity="0.1"/>
+    </filter>
+    <filter id="frontShadow" x="162" y="18" width="358" height="478" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="14" stdDeviation="14" flood-color="#182230" flood-opacity="0.17"/>
+    </filter>
+    <filter id="backShadowDark" x="76" y="54" width="448" height="432" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#000000" flood-opacity="0.28"/>
+    </filter>
+    <filter id="frontShadowDark" x="162" y="18" width="358" height="478" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="14" stdDeviation="14" flood-color="#000000" flood-opacity="0.38"/>
+    </filter>
+    <style>
+      .back-stack { filter: url(#backShadow); }
+      .front-sheet { filter: url(#frontShadow); }
+      .back-page { fill: url(#backPage); stroke: #DCE2EC; }
+      .front-page { fill: url(#frontPage); }
+      .fold { fill: #E7EAF2; stroke: #D0D5DD; }
+      .heading-line { stroke: #344054; }
+      .body-line { stroke: #98A2B3; }
+      .highlight-line { stroke: #667085; }
+      @media (prefers-color-scheme: dark) {
+        .back-stack { filter: url(#backShadowDark); }
+        .front-sheet { filter: url(#frontShadowDark); }
+        .back-page { fill: url(#backPageDark); stroke: #4C5361; }
+        .front-page { fill: url(#frontPageDark); }
+        .fold { fill: #414754; stroke: #596171; }
+        .heading-line { stroke: #F2F4F7; }
+        .body-line { stroke: #98A2B3; }
+        .highlight-line { stroke: #D0D5DD; }
+      }
+    </style>
+  </defs>
+
+  <g class="back-stack" opacity="0.86">
+    <rect class="back-page" x="136" y="123" width="278" height="322" rx="25" stroke-width="2" transform="rotate(-6 136 123)"/>
+    <rect class="back-page" x="184" y="88" width="278" height="340" rx="25" stroke-width="2" transform="rotate(4 184 88)"/>
+  </g>
+
+  <g class="front-sheet">
+    <path class="front-page" d="M214 87C214 70.984 226.984 58 243 58H395L468 131V413C468 429.016 455.016 442 439 442H243C226.984 442 214 429.016 214 413V87Z"/>
+    <path class="fold" d="M395 58V107C395 120.255 405.745 131 419 131H468"/>
+  </g>
+
+  <path class="heading-line" d="M260 134H354" stroke-width="12" stroke-linecap="round" stroke-opacity="0.88"/>
+  <path class="body-line" d="M260 171H418" stroke-width="8" stroke-linecap="round" stroke-opacity="0.52"/>
+  <path class="body-line" d="M260 194H390" stroke-width="8" stroke-linecap="round" stroke-opacity="0.4"/>
+
+  <rect x="244" y="222" width="188" height="40" rx="9" fill="#74D13D" fill-opacity="0.38"/>
+  <path class="highlight-line" d="M260 242H416" stroke-width="8" stroke-linecap="round" stroke-opacity="0.72"/>
+
+  <path class="body-line" d="M260 287H420" stroke-width="8" stroke-linecap="round" stroke-opacity="0.46"/>
+  <path class="body-line" d="M260 310H374" stroke-width="8" stroke-linecap="round" stroke-opacity="0.34"/>
+
+  <rect x="242" y="342" width="156" height="70" rx="10" fill="#7C3AED" fill-opacity="0.07" stroke="#7C3AED" stroke-width="4" stroke-dasharray="12 9"/>
+  <circle cx="242" cy="342" r="8" fill="#7C3AED"/>
+  <circle cx="398" cy="342" r="8" fill="#7C3AED"/>
+  <circle cx="242" cy="412" r="8" fill="#7C3AED"/>
+  <circle cx="398" cy="412" r="8" fill="#7C3AED"/>
+
+  <path d="M263 393C279 359 295 405 314 374C331 347 348 405 371 367" stroke="url(#brandStroke)" stroke-width="7" stroke-linecap="round"/>
+</svg>

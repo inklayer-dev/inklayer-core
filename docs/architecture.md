@@ -46,7 +46,6 @@ flowchart TB
   not enter Viewer or Annotation entry bundles.
 - `platform/browser` implements ports and performs browser actions only when a
   function is invoked.
-- `compat/legacy` is the only module that understands historical storage fields.
 
 `npm run check:dependencies` resolves all local TypeScript imports, rejects
 cycles and forbidden layer edges, and rejects framework packages.

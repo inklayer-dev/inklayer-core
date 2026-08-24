@@ -1,75 +1,132 @@
 # InkLayer Core
 
-Framework-independent PDF viewing and annotation engine for browser applications.
-InkLayer Core owns the PDF.js viewer, text selection, annotations, page flow,
-printing, and export. React, Vue, and other adapters only need to provide their
-application UI and state integration.
+> One PDF engine for every web framework.
 
-[Documentation](https://inklayer-dev.github.io/inklayer-core/) ·
+[![npm](https://img.shields.io/npm/v/%40inklayer-dev%2Fcore)](https://www.npmjs.com/package/@inklayer-dev/core)
+[![downloads](https://img.shields.io/npm/dm/%40inklayer-dev%2Fcore)](https://www.npmjs.com/package/@inklayer-dev/core)
+[![Core CI](https://github.com/inklayer-dev/inklayer-core/actions/workflows/ci.yml/badge.svg)](https://github.com/inklayer-dev/inklayer-core/actions/workflows/ci.yml)
+[![license](https://img.shields.io/npm/l/%40inklayer-dev%2Fcore)](https://github.com/inklayer-dev/inklayer-core/blob/main/LICENSE)
+
+Build a PDF viewer and annotation experience in React, Vue, Svelte, Angular,
+Web Components, or plain TypeScript without rewriting document behavior for
+each framework.
+
+[Get started](https://inklayer-dev.github.io/inklayer-core/guide/getting-started) ·
 [Live demo](https://inklayer-dev.github.io/inklayer-core/demo/) ·
-[API reference](https://inklayer-dev.github.io/inklayer-core/api)
+[Documentation](https://inklayer-dev.github.io/inklayer-core/) ·
+[简体中文](./README.zh-CN.md)
 
-## Install
+## Show a PDF
 
 ```bash
 npm install @inklayer-dev/core
 ```
-
-InkLayer Core includes a version-matched PDF.js worker. Applications do not need
-to download, copy, or configure one.
-
-## Quick start
 
 ```ts
 import { createInkLayer } from '@inklayer-dev/core/capabilities'
 import '@inklayer-dev/core/style'
 
 const core = await createInkLayer({
-  root: document.querySelector<HTMLElement>('#viewer')!
+  root: document.querySelector<HTMLElement>('#pdf-workspace')!,
+  pageFlow: {
+    container: document.querySelector<HTMLElement>('#pages')!,
+    scale: 'page-width'
+  }
 })
 
-await core.load({ url: '/documents/example.pdf' })
+await core.load({ url: '/documents/review.pdf', range: 'auto' })
 
-// Release the viewer, annotation engine, capabilities, and DOM resources.
+// Framework unmount
 await core.destroy()
 ```
 
-`createInkLayer()` is the recommended Composition Root. Lower-level viewer and
-annotation factories remain available when an adapter needs to own composition.
+`pageFlow` displays a virtualized, continuously scrolling PDF. Core ships with
+a version-matched PDF.js Worker, so ordinary Vite and Webpack applications do
+not need to download, copy, or configure `pdf.worker`.
 
-## What Core owns
+Follow the [5-minute Viewer guide](https://inklayer-dev.github.io/inklayer-core/guide/getting-started)
+for the required DOM/CSS, loading UI, password handling, and cleanup.
 
-| InkLayer Core | Application or framework adapter |
-| --- | --- |
-| PDF loading, passwords, range requests, progress | Toolbar, dialogs, routing |
-| Pages, zoom, layouts, thumbnails, outline, search | Visual layout and product styling |
-| Text selection and selection geometry | Selection menu UI |
-| Annotation gestures, transforms, hit testing, tags | Tool palette and appearance controls |
-| Canonical annotation data and typed events | Persistence, collaboration transport, auth |
-| Watermarks, print, PDF and Excel output | File naming, upload and download policy |
+## What you can build
 
-Core includes all 16 built-in annotation types and supports instance-scoped
-custom annotation definitions. Signature and Stamp accept PNG or JPEG data URLs
-prepared by the application; Core owns placement, rendering, transforms, print,
-and PDF export.
+- URL, local-file, password, and chunked HTTP Range loading with progress,
+  cancellation, retry, headers, and permissions;
+- single, continuous, and facing page layouts with virtualized page flow;
+- zoom presets, page navigation, thumbnails, outline, search, and real PDF text
+  selection;
+- 16 built-in annotation types with drawing, hit testing, transforms, keyboard
+  behavior, comments, and tags;
+- image-backed Signature and Stamp, FreeText, multi-stroke Freehand, corrected
+  Free Highlight, Polygon, Polyline, and Cloud interactions;
+- watermarks, browser print, secure raster print, annotated PDF, and Excel output;
+- instance-level ability plugins and namespaced custom annotation types;
+- structured errors, deterministic cleanup, multiple isolated viewers, and
+  SSR-safe imports.
 
-## Viewer
+[Browse the task guides →](https://inklayer-dev.github.io/inklayer-core/guide/first-annotation)
+
+## Core handles documents; your app handles UI
+
+InkLayer Core is headless. It does not ship a fixed toolbar, sidebar, password
+dialog, search panel, or product workflow.
+
+| InkLayer Core | Your application or framework adapter |
+|---|---|
+| PDF loading, Worker, pages, scale, navigation | Layout, toolbar, route state |
+| Search, TextLayer selection, page coordinates | Search field, results, selection menu |
+| Annotation gestures, transforms, hit testing | Tool palette, appearance controls, panels |
+| Annotation data and typed events | Server persistence, auth, sync policy |
+| Watermarks, print/export composition | Buttons, filenames, uploads, download policy |
+
+This boundary gives React, Vue, and future adapters the same behavior without
+forcing them to share presentation.
+
+## Extend one instance
+
+Install product services with ability plugins:
+
+```ts
+const core = await createInkLayer({
+  root,
+  pageFlow: { container },
+  capabilities: [
+    createLoggerCapability(appLogger),
+    createAnnotationRepositoryCapability(repository)
+  ]
+})
+```
+
+Add a namespaced drawing tool with an Annotation Type Definition:
+
+```ts
+const core = await createInkLayer({
+  root,
+  pageFlow: { container },
+  annotationTypes: [reviewArea]
+})
+
+core.annotations.setTool('custom:acme/review-area')
+```
+
+Core still owns gestures, validation, controlled rendering, persistence, print,
+PDF export, and cleanup. Plugins never receive Konva or PDF.js private objects.
+
+[Plugin overview](https://inklayer-dev.github.io/inklayer-core/guide/plugins) ·
+[Your first Capability plugin](https://inklayer-dev.github.io/inklayer-core/guide/capability-plugin) ·
+[Custom annotation type](https://inklayer-dev.github.io/inklayer-core/guide/custom-annotation-type)
+
+## Low-level Viewer
+
+Applications that mount pages themselves can create the Viewer directly. Worker
+configuration is still automatic:
 
 ```ts
 import { createPdfViewerEngine } from '@inklayer-dev/core/viewer'
 
 const viewer = createPdfViewerEngine()
-const pdf = await viewer.load({ url: '/documents/example.pdf' })
-
-console.log(pdf.numPages)
-console.log(await viewer.getOutline())
-console.log(await viewer.search('contract'))
-
-await viewer.destroy()
 ```
 
-The packaged worker is the normal path. A self-hosted worker is still available
-for restrictive deployment or Content Security Policy requirements:
+Override `workerSrc` only for a self-hosted CSP or deployment requirement:
 
 ```ts
 const viewer = createPdfViewerEngine({
@@ -77,51 +134,29 @@ const viewer = createPdfViewerEngine({
 })
 ```
 
-Viewer features include single, continuous, and facing layouts; virtualized page
-flow; numeric and fit zoom modes; touch pinch zoom; thumbnails; outline; search
-highlighting; same-page and cross-page text selection; encrypted PDFs; byte-range
-loading; structured progress; permissions; and screen/print watermark policies.
-
-## Annotations and output
-
-```ts
-import { createAnnotationEngine } from '@inklayer-dev/core/annotation'
-import { importPdfJsAnnotations } from '@inklayer-dev/core/import/pdfjs'
-import { buildAnnotatedPdf } from '@inklayer-dev/core/export/pdf'
-import { buildAnnotationWorkbook } from '@inklayer-dev/core/export/excel'
-```
-
-PDF and workbook exporters return bytes. Applications decide whether to save,
-upload, or download them. Existing native PDF annotations can be imported and
-reconciled by their native IDs during export, while unrelated PDF dictionaries
-are preserved.
-
 ## Package entries
 
 | Entry | Purpose |
-| --- | --- |
+|---|---|
 | `@inklayer-dev/core` | Domain model, validation, repository, shared types |
-| `@inklayer-dev/core/capabilities` | Composition Root and optional capabilities |
-| `@inklayer-dev/core/viewer` | PDF viewer and page flow |
+| `@inklayer-dev/core/capabilities` | `createInkLayer()` and ability plugins |
+| `@inklayer-dev/core/viewer` | PDF Viewer and page flow |
 | `@inklayer-dev/core/annotation` | Annotation engine and interactions |
-| `@inklayer-dev/core/annotation-types` | Built-in and custom annotation definitions |
+| `@inklayer-dev/core/annotation-types` | Built-in and custom type definitions |
 | `@inklayer-dev/core/import/pdfjs` | Native PDF.js annotation import |
 | `@inklayer-dev/core/export/pdf` | Annotated PDF and print output |
 | `@inklayer-dev/core/export/excel` | Annotation workbook output |
-| `@inklayer-dev/core/style` | Scoped engine CSS contract |
-
-For complete options, events, lifecycle rules, and framework integration
-examples, use the [public API reference](https://inklayer-dev.github.io/inklayer-core/api)
-and [framework integration guide](https://inklayer-dev.github.io/inklayer-core/guide/framework-integration).
+| `@inklayer-dev/core/style` | Scoped engine CSS |
 
 ## Compatibility
 
-- Browser runtime: current Chromium, Firefox, WebKit, and Safari releases
+- Browser runtime: current Chromium, Firefox, and WebKit baselines
 - Consumer builds: Vite, Webpack browser, and Node SSR import
 - Node tooling: `^22.13.0 || >=24.0.0`
 
-See the maintained [browser support matrix](https://inklayer-dev.github.io/inklayer-core/browser-support)
-and [consumer build matrix](https://inklayer-dev.github.io/inklayer-core/consumer-build-matrix).
+See [browser support](https://inklayer-dev.github.io/inklayer-core/browser-support),
+[build-tool support](https://inklayer-dev.github.io/inklayer-core/consumer-build-matrix),
+and the [public API](https://inklayer-dev.github.io/inklayer-core/api).
 
 ## Development
 
@@ -132,4 +167,4 @@ npm run docs:dev  # VitePress documentation
 npm run check     # complete release quality gate
 ```
 
-Released under the MIT License.
+Released under the [MIT License](https://github.com/inklayer-dev/inklayer-core/blob/main/LICENSE).

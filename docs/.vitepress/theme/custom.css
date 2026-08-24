@@ -18,6 +18,13 @@
   border-color: color-mix(in srgb, var(--vp-c-divider) 74%, var(--vp-c-brand-1));
 }
 
+@media (min-width: 960px) {
+  .VPHomeHero .image-src {
+    max-width: 430px;
+    max-height: 352px;
+  }
+}
+
 .vp-doc table {
   display: table;
   width: 100%;

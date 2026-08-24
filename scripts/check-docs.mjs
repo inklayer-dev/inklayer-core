@@ -18,6 +18,15 @@ function check(condition, message) {
   if (!condition) diagnostics.push(message)
 }
 
+/** Returns translation-stable Markdown structure counts. */
+function markdownShape(contents) {
+  return {
+    headings: contents.match(/^#{1,3} /gmu)?.length ?? 0,
+    codeBlocks: (contents.match(/```/gu)?.length ?? 0) / 2,
+    tableRows: contents.match(/^\|/gmu)?.length ?? 0
+  }
+}
+
 /** Recursively counts maintained TypeScript implementation files. */
 async function countSourceFiles(directory) {
   const entries = await readdir(directory, { withFileTypes: true })
@@ -55,6 +64,7 @@ const packageJson = JSON.parse(await readFile(resolve(projectRoot, 'package.json
 const readme = await readFile(resolve(projectRoot, 'README.md'), 'utf8')
 const api = await readFile(resolve(projectRoot, 'docs/api.md'), 'utf8')
 const gettingStarted = await readFile(resolve(projectRoot, 'docs/guide/getting-started.md'), 'utf8')
+const chineseReadme = await readFile(resolve(projectRoot, 'README.zh-CN.md'), 'utf8')
 const browserSupport = await readFile(resolve(projectRoot, 'docs/browser-support.md'), 'utf8')
 const vitePressConfig = await readFile(resolve(projectRoot, 'docs/.vitepress/config.mts'), 'utf8')
 const exampleViteConfig = await readFile(resolve(projectRoot, 'examples/vanilla/vite.config.ts'), 'utf8')
@@ -107,6 +117,33 @@ check(packageJson.scripts?.['docs:build'] === 'vitepress build docs',
   'package.json must expose the VitePress production build.')
 check(vitePressConfig.includes("link: '/guide/framework-integration'"),
   'VitePress navigation must expose the framework integration guide.')
+const taskGuides = [
+  'try-demo',
+  'getting-started',
+  'first-annotation',
+  'loading-pdfs',
+  'viewer-and-pages',
+  'search-and-selection',
+  'annotations',
+  'persistence',
+  'output-and-security',
+  'framework-integration',
+  'plugins',
+  'capability-plugin',
+  'custom-annotation-type',
+  'plugin-lifecycle'
+]
+check(JSON.stringify(markdownShape(readme)) === JSON.stringify(markdownShape(chineseReadme)),
+  'README.md and README.zh-CN.md must keep the same heading, code-block, and table structure.')
+for (const guide of taskGuides) {
+  const english = await readFile(resolve(projectRoot, `docs/guide/${guide}.md`), 'utf8')
+  const chinese = await readFile(resolve(projectRoot, `docs/zh/guide/${guide}.md`), 'utf8')
+  check(JSON.stringify(markdownShape(english)) === JSON.stringify(markdownShape(chinese)),
+    `English and Chinese ${guide} guides must keep the same Markdown structure.`)
+  check(vitePressConfig.includes(`link: '/guide/${guide}'`)
+    && vitePressConfig.includes(`link: '/zh/guide/${guide}'`),
+  `VitePress navigation must expose both locales for ${guide}.`)
+}
 check(docsWorkflow.includes('actions/deploy-pages@v4') && docsWorkflow.includes('npm run docs:build'),
   'GitHub Pages workflow must build and deploy the VitePress site.')
 check(exampleViteConfig.includes("base: './'"),

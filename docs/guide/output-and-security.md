@@ -1,4 +1,4 @@
-# Output and security
+# Print, export, and watermarks
 
 ## Vector PDF export
 

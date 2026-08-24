@@ -1,14 +1,14 @@
-# Getting started
+# Build a viewer in 5 minutes
 
-InkLayer Core is an imperative browser library. It owns PDF and annotation
-behavior while your application owns layout, controls, dialogs, sidebars, and
-business workflow.
+At the end of this page, your browser will show a PDF with continuous scrolling, selectable text, annotations, and built-in zoom gestures. You provide two DOM elements and a PDF URL; Core creates and cleans up the document surface.
+
+> InkLayer Core is headless: it does not ship a toolbar or sidebar. You build those controls in your framework and call the same methods shown here.
 
 ## Requirements
 
-- Node.js `20.19+` or `22.12+`
-- A modern browser listed in [browser support](../browser-support.md)
-- A bundler that supports ESM and Worker assets; Vite and Webpack are tested
+- Node.js `^22.13.0` or `>=24.0.0`
+- A Vite or Webpack browser application
+- A PDF URL served by your application
 
 ## Install
 
@@ -16,78 +16,116 @@ business workflow.
 npm install @inklayer-dev/core
 ```
 
-Import the public engine CSS once in your browser application:
+## Add the Viewer hosts
 
-```ts
-import '@inklayer-dev/core/style'
+```html
+<div id="pdf-workspace">
+  <div id="pages"></div>
+</div>
 ```
 
-## Create an instance
+Give the scroll container a real size. The rest of the application layout remains yours:
 
-The Composition Root is the recommended entry for applications because it owns
-the Viewer, Annotation Engine, optional Page Flow, Capabilities, and teardown as
-one lifecycle.
+```css
+html, body, #pdf-workspace {
+  height: 100%;
+  margin: 0;
+}
+
+#pages {
+  height: 100%;
+  overflow: auto;
+  background: #f2f4f7;
+}
+```
+
+## Load and display a PDF
 
 ```ts
 import { createInkLayer } from '@inklayer-dev/core/capabilities'
+import '@inklayer-dev/core/style'
 
 const root = document.querySelector<HTMLElement>('#pdf-workspace')!
+const pages = document.querySelector<HTMLElement>('#pages')!
+
 const core = await createInkLayer({
   root,
-  annotation: {
-    currentUser: { id: 'user-42', name: 'Ada' },
-    authorLabelVisibility: 'auto'
+  pageFlow: {
+    container: pages,
+    scale: 'page-width'
   }
 })
 
 const documentHandle = await core.load({
-  url: '/api/documents/42.pdf',
-  range: 'auto',
-  headers: { Authorization: `Bearer ${token}` },
-  credentials: 'include'
+  url: '/documents/review.pdf',
+  range: 'auto'
 })
 
-console.log(documentHandle.numPages)
+console.log(`Opened ${documentHandle.numPages} pages`)
 ```
 
-Core bundles a version-matched PDF.js Worker. Applications do not need to
-download, copy, or configure a worker for an ordinary Vite or Webpack build. Use
-`workerSrc` only when your Content Security Policy or deployment requires a
-self-hosted URL:
+You should now see a continuous PDF. `pageFlow` mounts and virtualizes page Canvas, TextLayer, and annotation surfaces inside `#pages`. `range: 'auto'` uses HTTP byte chunks for large files when the server supports them.
+
+Core already includes a version-matched PDF.js Worker. Ordinary Vite and Webpack applications do not need to download, copy, or configure `pdf.worker`.
+
+Override the Worker URL only when a self-hosted Content Security Policy or deployment requires it:
 
 ```ts
 const core = await createInkLayer({
   root,
+  pageFlow: { container: pages },
   viewer: { workerSrc: '/assets/pdf.worker.min.mjs' }
 })
 ```
 
-## Subscribe and clean up
+## Show loading and password UI
 
-Subscriptions return disposers. Call them when the consuming component no
-longer needs that stream, and always destroy the instance on unmount.
+Core reports state; your application decides how it looks:
 
 ```ts
 const stopViewer = core.viewer.subscribe(event => {
-  if (event.type === 'passwordRequired') openPasswordDialog(event.request)
-  if (event.type === 'error') showDocumentError(event.error)
+  if (event.type === 'loadProgress') {
+    updateLoadingUI(event.progress)
+  }
+  if (event.type === 'passwordRequired') {
+    openPasswordDialog(event.request)
+  }
+  if (event.type === 'error') {
+    showDocumentError(event.error)
+  }
 })
+```
 
-const stopAnnotations = core.annotations.subscribe(event => {
-  if (event.type === 'selectionChanged') updateInspector(event.selection)
-})
+See [Load PDFs](./loading-pdfs.md) for local files, headers, password submission, progress, cancellation, and retry.
 
+## Clean up on unmount
+
+```ts
 async function unmount() {
   stopViewer()
-  stopAnnotations()
   await core.destroy()
 }
 ```
 
-## Choose the next guide
+Always await `destroy()` before reusing an owned host when practical. It releases the document, Worker lease, page surfaces, listeners, plugins, and pending work.
 
-- [Framework integration](./framework-integration.md) explains component and DOM ownership.
-- [Viewer and page flow](./viewer-and-pages.md) covers loading, rendering, zoom, search, and selection.
-- [Annotations](./annotations.md) covers tools, appearance, persistence, and custom types.
-- [Output and security](./output-and-security.md) covers print, export, watermarks, and protected PDFs.
-- [Public API](../api.md) is the complete contract reference.
+## Where to go next
+
+| I want to… | Continue with |
+|---|---|
+| Draw a rectangle or create a text highlight | [Create your first annotation](./first-annotation.md) |
+| Load files, passwords, authenticated URLs, or large PDFs | [Load PDFs](./loading-pdfs.md) |
+| Add zoom, page navigation, thumbnails, or an outline | [Pages, zoom, and navigation](./viewer-and-pages.md) |
+| Search or select PDF text | [Search and text selection](./search-and-selection.md) |
+| Save annotations to my backend | [Save and restore annotations](./persistence.md) |
+| Integrate this lifecycle into React, Vue, or another framework | [Framework integration](./framework-integration.md) |
+| Add product services or a custom drawing tool | [Plugin overview](./plugins.md) |
+
+## Terms you will see later
+
+- `createInkLayer()` creates the Viewer, annotation engine, optional Page Flow, and installed plugins as one instance.
+- Page Flow is Core's optional single/continuous/facing page layout and virtualization.
+- The Repository is the single data source for saved annotations.
+- A Capability is an instance-level ability plugin, such as logging, persistence, text input, print, or download.
+
+You do not need these architecture terms to complete the tutorials; they become useful when building an adapter or plugin.

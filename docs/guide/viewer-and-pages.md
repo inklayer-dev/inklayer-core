@@ -1,95 +1,75 @@
-# Viewer and page flow
+# Pages, zoom, and navigation
 
-## Load bytes or a URL
+This guide controls a document after it has loaded. Page Flow can render a long document as a virtualized scrolling surface; your toolbar calls simple navigation and scale methods.
 
-```ts
-await core.load({ data: pdfBytes })
-
-await core.load({
-  url: '/documents/large.pdf',
-  range: 'auto',
-  rangeChunkSize: 256 * 1024
-})
-```
-
-`range: 'auto'` probes the server and falls back only when byte ranges are not
-supported. Progress events distinguish probing, downloading, and parsing.
-
-## Passwords and cancellation
-
-Handle `passwordRequired` in application UI. Return credentials only through
-the matching request ID; Core never stores the password in snapshots or errors.
+## Choose a page layout
 
 ```ts
-core.viewer.subscribe(event => {
-  if (event.type !== 'passwordRequired') return
-  showPasswordDialog({
-    reason: event.request.reason,
-    submit: password => core.viewer.submitPassword(event.request.id, password),
-    cancel: () => core.viewer.cancelPassword(event.request.id)
-  })
-})
-
-await core.cancelLoad()
+await core.viewer.setLayoutMode('single')
+await core.viewer.setLayoutMode('continuous')
+await core.viewer.setLayoutMode('facing')
 ```
 
-## Scale and navigation
+The product owns the layout buttons and surrounding scrollbar style. Core owns page order, visible-page state, attached Canvas/TextLayer/annotation surfaces, and offscreen cleanup.
 
-Core accepts numeric scales and adaptive presets: `auto`, `page-actual`,
-`page-fit`, `page-width`, and `page-height`. It also owns bounded zoom steps,
-touch pinch, and Ctrl/Meta+wheel zoom when configured with Viewer containers.
+## Set a useful scale
 
 ```ts
 core.viewer.setScale('page-width')
-core.viewer.zoomIn()
-core.viewer.goToPage(7)
+core.viewer.setScale('page-fit')
+core.viewer.setScale('page-actual')
+core.viewer.setScale(1.25)
 ```
 
-## Single page and continuous flow
+Available adaptive presets are `auto`, `page-actual`, `page-fit`, `page-width`, and `page-height`. All presets and numeric values produce one `PdfZoomState`, so the toolbar does not need separate zoom models.
 
-Use `pageFlow: false` when your application mounts individual pages manually.
-For a Core-owned continuous/facing layout, provide a stable scroll container:
+## Add zoom buttons
 
 ```ts
-const core = await createInkLayer({
-  root,
-  viewer: { container: viewerContainer, viewerElement },
-  pageFlow: { container: flowContainer, scale: 'page-width' }
-})
-
-await core.load(source)
-const flow = core.getPageFlow()
+zoomInButton.onclick = () => core.viewer.zoomIn()
+zoomOutButton.onclick = () => core.viewer.zoomOut()
 ```
 
-Page Flow virtualizes long documents and owns attached Canvas, TextLayer, and
-annotation surfaces. Product code styles the surrounding container and consumes
-visible-page state; it does not recycle Core-owned page elements.
+Core also handles bounded Ctrl/Meta+wheel zoom and two-touch pinch input. Both keep the gesture midpoint anchored. Set `enablePinchZoom: false` only when the host intentionally disables these gestures.
 
-## Outline, thumbnails, and search
+## Go to a page
 
-The Viewer returns data and image resources; your framework chooses how to
-display them.
+```ts
+core.viewer.goToPage(7) // zero-based page index
+```
+
+If you need Page Flow scrolling behavior directly:
+
+```ts
+const flow = core.getPageFlow()
+flow?.scrollToPage(7, 'smooth')
+```
+
+Subscribe to Viewer or Page Flow state to update the visible page number instead of guessing from scroll position in framework code.
+
+## Show an outline and thumbnails
 
 ```ts
 const outline = await core.viewer.getOutline()
-const result = await core.viewer.search(query, {
-  matchCase: false,
-  wholeWord: false,
-  matchDiacritics: false
+const destination = await core.viewer.resolveDestination(outline[0]?.destination)
+
+const thumbnail = await core.viewer.renderThumbnail({
+  pageIndex: 0,
+  maxWidth: 160
 })
 
-core.viewer.setSearchHighlights(result.matches, 0)
-core.viewer.goToPage(result.matches[0].pageIndex)
-
-const thumbnail = await core.viewer.renderThumbnail({ pageIndex: 0, scale: 0.2 })
+const thumbnailUrl = URL.createObjectURL(thumbnail.blob)
+thumbnailImage.src = thumbnailUrl
 ```
 
-Release thumbnail resources according to their documented ownership and clear
-transient highlights when the search UI closes.
+Your framework renders the outline tree and thumbnail grid. Revoke every object URL it creates after the UI no longer needs it:
 
-## Text selection
+```ts
+URL.revokeObjectURL(thumbnailUrl)
+```
 
-Attach Core TextLayers when not using Page Flow. Same-page and cross-page
-selections are normalized to page-local rectangles. The framework renders the
-context menu and calls `createTextMarkup()` for Highlight, Underline, or
-Strikeout. Selection itself is not persisted.
+## Mount pages yourself
+
+Omit `pageFlow` only when your adapter needs complete ownership of page layout. It must then render pages and attach TextLayer and annotation surfaces itself. Start with Core-managed Page Flow unless you have that requirement.
+
+For source loading and passwords, see [Load PDFs](./loading-pdfs.md). For document text, see [Search and text selection](./search-and-selection.md).
