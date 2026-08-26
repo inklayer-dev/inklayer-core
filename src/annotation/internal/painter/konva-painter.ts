@@ -131,6 +131,8 @@ interface PageResources {
   gesture: PainterGestureState | null
   /** Non-persisted shape that follows the active creation gesture. */
   gesturePreview: Konva.Shape | null
+  /** Clickable first-vertex marker used to close multi-point shapes. */
+  gestureStartHandle: Konva.Rect | null
   /** Geometry handles that never enter serialized annotation state. */
   pointControls: PointControl[]
   /** Freehand strokes waiting for the idle merge window to expire. */
@@ -298,6 +300,7 @@ class KonvaPainter implements AnnotationPainter {
       images: new Map(),
       gesture: null,
       gesturePreview: null,
+      gestureStartHandle: null,
       pointControls: [],
       pendingFreehand: null,
       pointerReleaseCleanup: null
@@ -361,7 +364,9 @@ class KonvaPainter implements AnnotationPainter {
     const group = node as Konva.Group
     configureHitRegions(group, resources.stage.scaleX())
     if (annotation.native) addInteractionHitTarget(KonvaRuntime, group, annotation.bounds)
+    group.listening(this.options.getTool() === 'select')
     group.draggable(this.options.getTool() === 'select'
+      && this.selectionIds.includes(annotation.id)
       && this.options.getTypeInteraction(annotation).draggable
       && this.options.canTransform(annotation))
     group.dragBoundFunc((position) => clampDragPosition(group, resources, position))
@@ -436,16 +441,10 @@ class KonvaPainter implements AnnotationPainter {
     this.applySelection()
   }
 
-  /** Enables dragging only in select mode and refreshes transform affordances. */
-  public setTool(tool: AnnotationTool): void {
+  /** Refreshes direct-manipulation state after a tool change. */
+  public setTool(_tool: AnnotationTool): void {
     for (const resources of this.pages.values()) {
       this.flushFreehandBatch(resources)
-      for (const [id, node] of resources.nodes) {
-        const annotation = resources.annotations.get(id)
-        node.draggable(tool === 'select' && annotation !== undefined
-          && this.options.getTypeInteraction(annotation).draggable
-          && this.options.canTransform(annotation))
-      }
       resources.gesture = null
       resources.pointerReleaseCleanup?.()
       resources.pointerReleaseCleanup = null
@@ -515,18 +514,18 @@ class KonvaPainter implements AnnotationPainter {
         if (annotation === undefined || group === undefined
           || !this.options.getTypeInteraction(annotation).draggable
           || !this.options.canTransform(annotation)) continue
-        const current = group.position()
+        const current = group.getAbsolutePosition()
         const next = clampDragPosition(group, resources, {
           x: current.x + deltaX,
           y: current.y + deltaY
         })
         if (next.x === current.x && next.y === current.y) continue
-        group.position(next)
+        group.setAbsolutePosition(next)
         group.opacity(annotation.appearance.opacity)
         this.options.onTransform(annotationId, {
           ...annotation.bounds,
-          x: annotation.bounds.x + next.x - current.x,
-          y: annotation.bounds.y + next.y - current.y
+          x: annotation.bounds.x + (next.x - current.x) / resources.stage.scaleX(),
+          y: annotation.bounds.y + (next.y - current.y) / resources.stage.scaleY()
         }, serializeWithoutHitRegions(group))
         moved = true
       }
@@ -587,6 +586,14 @@ class KonvaPainter implements AnnotationPainter {
       const primaryId = this.selectionIds[0]
       const primary = primaryId === undefined ? undefined : resources.annotations.get(primaryId)
       const tool = this.options.getTool()
+      for (const [id, node] of resources.nodes) {
+        const annotation = resources.annotations.get(id)
+        node.listening(tool === 'select')
+        node.draggable(tool === 'select' && this.selectionIds.includes(id)
+          && annotation !== undefined
+          && this.options.getTypeInteraction(annotation).draggable
+          && this.options.canTransform(annotation))
+      }
       configureTransformer(
         resources,
         primary === undefined ? undefined : this.options.getTypeInteraction(primary),
@@ -622,7 +629,7 @@ class KonvaPainter implements AnnotationPainter {
     label.dataset['annotationId'] = annotation.id
     label.textContent = annotation.referenceNumber === undefined
       ? annotation.author.name
-      : `#${annotation.referenceNumber} ${annotation.author.name}`
+      : `${annotation.author.name} · #${annotation.referenceNumber}`
     resources.labels.append(label)
     this.positionAuthorLabel(resources, label, annotation.bounds.x, annotation.bounds.y)
     this.applyAuthorLabelVisibility(label, annotation.id)
@@ -792,6 +799,7 @@ class KonvaPainter implements AnnotationPainter {
   private attachPointerEditors(resources: PageResources): void {
     const namespace = `.inklayer-${this.options.instanceId}`
     resources.stage.on(`mousedown${namespace} touchstart${namespace}`, (event) => {
+      if (event.target === resources.gestureStartHandle) return
       const tool = this.options.getTool()
       const point = resources.stage.getRelativePointerPosition()
       if (point === null) return
@@ -822,6 +830,11 @@ class KonvaPainter implements AnnotationPainter {
           controller,
           points: [point.x, point.y],
           multiPoint
+        }
+        // Only closed multi-point tools expose a clickable first vertex.
+        // Polyline is intentionally open and finishes with a double-click.
+        if (multiPoint && (tool === 'polygon' || tool === 'cloud')) {
+          this.createGestureStartHandle(resources, point)
         }
       }
       this.updateGesturePreview(resources, resources.gesture, point)
@@ -887,12 +900,65 @@ class KonvaPainter implements AnnotationPainter {
       })
     })
     resources.stage.on(`dblclick${namespace} dbltap${namespace}`, () => {
-      const gesture = resources.gesture
-      if (gesture === null || !gesture.multiPoint) return
-      resources.gesture = null
-      clearGesturePreview(resources)
-      this.completeGesture(resources.pageIndex, gesture)
+      this.finishMultiPointGesture(resources)
     })
+  }
+
+  /** Adds a fixed-size first-vertex target that completes a multi-point gesture. */
+  private createGestureStartHandle(
+    resources: PageResources,
+    point: { x: number; y: number }
+  ): void {
+    const KonvaRuntime = this.KonvaModule
+    if (KonvaRuntime === null) return
+    resources.gestureStartHandle?.destroy()
+    const scale = Math.max(resources.stage.scaleX(), 0.01)
+    const size = 12 / scale
+    const normalStroke = '#64748b'
+    const hoverStroke = this.options.interactionTheme?.accentColor ?? '#1677ff'
+    const handle = new KonvaRuntime.Rect({
+      x: point.x - size / 2,
+      y: point.y - size / 2,
+      width: size,
+      height: size,
+      fill: this.options.interactionTheme?.handleFill ?? '#ffffff',
+      stroke: normalStroke,
+      strokeWidth: 1.5 / scale,
+      cornerRadius: 2 / scale,
+      dash: [4 / scale, 2 / scale],
+      hitStrokeWidth: 10 / scale,
+      name: 'inklayer-gesture-start-handle'
+    })
+    const namespace = `.inklayer-${this.options.instanceId}`
+    handle.on(`mouseenter${namespace}`, () => {
+      handle.stroke(hoverStroke)
+      resources.layer.batchDraw()
+    })
+    handle.on(`mouseleave${namespace}`, () => {
+      handle.stroke(normalStroke)
+      resources.layer.batchDraw()
+    })
+    handle.on(`mouseup${namespace} touchend${namespace}`, (event) => {
+      event.cancelBubble = true
+      this.finishMultiPointGesture(resources)
+    })
+    resources.gestureStartHandle = handle
+    resources.layer.add(handle)
+    handle.moveToTop()
+  }
+
+  /** Completes a valid multi-point gesture without discarding an incomplete one. */
+  private finishMultiPointGesture(resources: PageResources): void {
+    const gesture = resources.gesture
+    if (gesture === null || !gesture.multiPoint) return
+    const points = removeConsecutiveDuplicatePoints(gesture.points)
+    if (points.length < 6) return
+    const completedPoints = gesture.type === 'polygon' || gesture.type === 'cloud'
+      ? closePointLoop(points)
+      : points
+    resources.gesture = null
+    clearGesturePreview(resources)
+    this.completeGesture(resources.pageIndex, { ...gesture, points: completedPoints })
   }
 
   /** Updates one non-persisted shape continuously from the active pointer gesture. */
@@ -918,7 +984,7 @@ class KonvaPainter implements AnnotationPainter {
               ? 'Rect'
               : 'Line'
     if (resources.gesturePreview?.getClassName() !== desiredClass) {
-      clearGesturePreview(resources)
+      clearGesturePreviewShape(resources)
       resources.gesturePreview = createGesturePreview(
         KonvaRuntime,
         desiredClass,
@@ -930,6 +996,7 @@ class KonvaPainter implements AnnotationPainter {
     if (preview === null) return
     preview.setAttrs(gesturePreviewAttributes(gesture, previewPoints))
     preview.moveToTop()
+    resources.gestureStartHandle?.moveToTop()
     resources.layer.batchDraw()
   }
 
@@ -1097,7 +1164,13 @@ function createGesturePreview(
   }
   switch (className) {
     case 'Rect': return new runtime.Rect(common)
-    case 'Ellipse': return new runtime.Ellipse({ ...common, radiusX: 0, radiusY: 0 })
+    case 'Ellipse': return new runtime.Ellipse({
+      ...common,
+      radiusX: 0,
+      radiusY: 0,
+      strokeScaleEnabled: false,
+      perfectDrawEnabled: false
+    })
     case 'Arrow': return new runtime.Arrow({
       ...common, points: [], pointerLength: 10, pointerWidth: 10
     })
@@ -1133,16 +1206,20 @@ function gesturePreviewAttributes(
   points: readonly number[]
 ): Record<string, unknown> {
   const bounds = boundsFromPoints(points)
-    if (gesture.type === 'rectangle' || gesture.geometry === 'box'
-      || gesture.geometry === 'text-box') {
+  if (gesture.type !== 'circle' && (gesture.type === 'rectangle'
+    || gesture.geometry === 'box' || gesture.geometry === 'text-box')) {
     return { ...bounds, dash: [6, 4] }
   }
   if (gesture.type === 'circle') {
+    const startX = gesture.points[0] ?? bounds.x
+    const startY = gesture.points[1] ?? bounds.y
+    const endX = points.at(-2) ?? startX
+    const endY = points.at(-1) ?? startY
     return {
-      x: bounds.x + bounds.width / 2,
-      y: bounds.y + bounds.height / 2,
-      radiusX: bounds.width / 2,
-      radiusY: bounds.height / 2,
+      x: startX + (endX - startX) / 2,
+      y: startY + (endY - startY) / 2,
+      radiusX: Math.abs(endX - startX) / 2,
+      radiusY: Math.abs(endY - startY) / 2,
       dash: [6, 4]
     }
   }
@@ -1212,8 +1289,38 @@ function correctFreeHighlightPoints(points: readonly number[], thresholdDegrees 
 
 /** Removes the current creation preview idempotently. */
 function clearGesturePreview(resources: PageResources): void {
+  clearGesturePreviewShape(resources)
+  resources.gestureStartHandle?.destroy()
+  resources.gestureStartHandle = null
+}
+
+/** Removes only the cursor-following shape while retaining a start handle. */
+function clearGesturePreviewShape(resources: PageResources): void {
   resources.gesturePreview?.destroy()
   resources.gesturePreview = null
+}
+
+/** Removes duplicate click coordinates emitted by the closing double-click. */
+function removeConsecutiveDuplicatePoints(points: readonly number[]): number[] {
+  const output: number[] = []
+  for (let index = 0; index + 1 < points.length; index += 2) {
+    const x = points[index]
+    const y = points[index + 1]
+    if (x === undefined || y === undefined) continue
+    if (output.at(-2) === x && output.at(-1) === y) continue
+    output.push(x, y)
+  }
+  return output
+}
+
+/** Appends the first vertex once so closed canonical paths have explicit topology. */
+function closePointLoop(points: readonly number[]): number[] {
+  const output = [...points]
+  const firstX = output[0]
+  const firstY = output[1]
+  if (firstX === undefined || firstY === undefined) return output
+  if (output.at(-2) !== firstX || output.at(-1) !== firstY) output.push(firstX, firstY)
+  return output
 }
 
 /** Returns unique editable x indexes, excluding a duplicated closing point. */
@@ -1258,13 +1365,13 @@ function clearPointControls(resources: PageResources): void {
   resources.pointControls = []
 }
 
-/** Keeps endpoint and vertex handles inside the unscaled page. */
+/** Keeps endpoint and vertex handles inside the visible Stage bounds. */
 function clampControlPosition(
   resources: PageResources,
   position: { x: number; y: number }
 ): { x: number; y: number } {
-  const pageWidth = resources.stage.width() / resources.stage.scaleX()
-  const pageHeight = resources.stage.height() / resources.stage.scaleY()
+  const pageWidth = resources.stage.width()
+  const pageHeight = resources.stage.height()
   return {
     x: Math.min(Math.max(position.x, 0), pageWidth),
     y: Math.min(Math.max(position.y, 0), pageHeight)
@@ -1309,15 +1416,15 @@ function transformerAnchors(mode: AnnotationTransformMode): string[] {
   }
 }
 
-/** Keeps a transformed bounding box usable and within the unscaled page. */
+/** Keeps an absolute Transformer box usable and within the visible Stage bounds. */
 function clampTransformBox(
   resources: PageResources,
   oldBox: { x: number; y: number; width: number; height: number; rotation: number },
   nextBox: { x: number; y: number; width: number; height: number; rotation: number }
 ): typeof oldBox {
   if (nextBox.width < 8 || nextBox.height < 8) return oldBox
-  const pageWidth = resources.stage.width() / resources.stage.scaleX()
-  const pageHeight = resources.stage.height() / resources.stage.scaleY()
+  const pageWidth = resources.stage.width()
+  const pageHeight = resources.stage.height()
   if (nextBox.x < 0 || nextBox.y < 0
     || nextBox.x + nextBox.width > pageWidth
     || nextBox.y + nextBox.height > pageHeight) return oldBox
@@ -1330,11 +1437,12 @@ function clampDragPosition(
   resources: PageResources,
   position: { x: number; y: number }
 ): { x: number; y: number } {
-  const bounds = group.getClientRect({ relativeTo: resources.stage })
-  const offsetX = bounds.x - group.x()
-  const offsetY = bounds.y - group.y()
-  const pageWidth = resources.stage.width() / resources.stage.scaleX()
-  const pageHeight = resources.stage.height() / resources.stage.scaleY()
+  const bounds = group.getClientRect()
+  const absolutePosition = group.getAbsolutePosition()
+  const offsetX = bounds.x - absolutePosition.x
+  const offsetY = bounds.y - absolutePosition.y
+  const pageWidth = resources.stage.width()
+  const pageHeight = resources.stage.height()
   const x = Math.min(Math.max(position.x, -offsetX), pageWidth - bounds.width - offsetX)
   const y = Math.min(Math.max(position.y, -offsetY), pageHeight - bounds.height - offsetY)
   return { x, y }

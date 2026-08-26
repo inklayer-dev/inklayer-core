@@ -34,6 +34,21 @@ or retrieves when needed. The exporter writes the current annotations into a
 new PDF while preserving the original document's vector content. Pass
 `core.annotationTypes` so custom annotation types can also be exported.
 
+External PDF applications show the annotation `/T` title. Core formats it as
+`Author · #N` when a `referenceNumber` is available, while `/NM` keeps the
+stable annotation ID used for relationships. Override only the visible title
+when your product needs another convention:
+
+```ts
+const pdfBytes = await buildAnnotatedPdf(sourceBytes, annotations, {
+  annotationTitle: annotation => `Review ${annotation.referenceNumber ?? '—'}`
+})
+```
+
+InkLayer exports also retain the original author, reference number, and
+structured references as round-trip metadata. Changing `annotationTitle` does
+not change permissions or reference targets.
+
 `buildAnnotatedPdf()` only returns bytes. Downloading, naming, or uploading the
 result is a separate application decision. The default `strict` strategy rejects
 an invalid or unsupported annotation; `lenient` skips that entry and reports it

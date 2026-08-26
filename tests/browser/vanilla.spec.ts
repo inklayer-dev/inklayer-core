@@ -335,7 +335,9 @@ test('owns direct-document keyboard focus, movement, selection, and deletion', a
   await expect(alice).toHaveAttribute('aria-label', 'Demo PDF annotation workspace')
   const canvas = alice.locator('.konvajs-content')
   await alice.locator('.tool-select').selectOption('rectangle')
-  await alice.getByRole('button', { name: 'Place sample' }).click()
+  const canvasBox = await canvas.boundingBox()
+  if (canvasBox === null) throw new Error('Keyboard test annotation canvas is unavailable.')
+  await drawStroke(page, canvasBox, [[60, 90], [178, 144]])
   const item = alice.locator('.inklayer-annotation-a11y-list button')
   await expect(item).toHaveCount(1)
 
@@ -538,7 +540,7 @@ test('loads the local URL fixture through Range and keeps cancel and reload reco
     request => request.demo === 'url-range'
   )).toBe(true)
   expect(statuses).toContain(206)
-  const intentionalRequestAbort = /^(?:HEAD|GET): (?:net::ERR_ABORTED|NS_BINDING_ABORTED|cancelled)$/
+  const intentionalRequestAbort = /^(?:HEAD|GET): (?:net::ERR_ABORTED|NS_BINDING_ABORTED|(?:Load request )?cancelled)$/
   expect(networkFailures.filter(failure => !intentionalRequestAbort.test(failure))).toEqual([])
   expect(failures).toEqual([])
 })
@@ -824,7 +826,9 @@ test('runs the complete Vanilla engine flow without console errors', async ({ pa
   await expect(alice.locator('.inklayer-author-label')).toHaveCount(1)
   await expect(alice.locator('.inklayer-author-label')).toHaveCount(2, { timeout: 1600 })
 
-  for (const tool of TOOLS) await addToolFixture(alice, tool)
+  for (const [index, tool] of TOOLS.entries()) {
+    await addToolFixture(page, alice, tool, index)
+  }
   await expect(alice.locator('.inklayer-author-label')).toHaveCount(TOOLS.length + 2)
 
   await expect(alice.locator('.inklayer-author-label').first()).toHaveCSS('background-color', 'rgb(23, 92, 211)')
@@ -834,8 +838,14 @@ test('runs the complete Vanilla engine flow without console errors', async ({ pa
   await expect(alice.locator('.plugin-state')).toHaveText('Installed')
   await expect(alice.getByRole('button', { name: 'Measurement', exact: true })).toBeVisible()
   await expect(alice.locator('.tool-select')).toHaveValue('custom:demo/measurement')
-  await alice.getByRole('button', { name: 'Place sample' }).click()
-  await expect(alice.locator('.instance-status')).toContainText('custom:demo/measurement')
+  const annotationCountBeforeMeasurement = await alice
+    .locator('.inklayer-annotation-a11y-list button').count()
+  const measurementCanvas = await alice.locator('.konvajs-content').boundingBox()
+  if (measurementCanvas === null) throw new Error('Measurement annotation canvas is unavailable.')
+  await drawStroke(page, measurementCanvas, [[210, 260], [330, 330]])
+  await expect(alice.locator('.inklayer-annotation-a11y-list button')).toHaveCount(
+    annotationCountBeforeMeasurement + 1
+  )
   await alice.getByRole('button', { name: 'Unload plugin' }).click()
   await expect(alice.locator('.plugin-state')).toHaveText('Unloaded')
   await expect(alice.getByRole('button', { name: 'Measurement', exact: true })).toHaveCount(0)
@@ -866,6 +876,122 @@ test('runs the complete Vanilla engine flow without console errors', async ({ pa
   await expect(page.locator('.instance-card').first()).not.toHaveAttribute(
     'data-inklayer-instance', firstInstance ?? ''
   )
+  expect(failures).toEqual([])
+})
+
+test('keeps annotation drag and resize usable after zooming the PDF', async ({ page }) => {
+  const failures = collectBrowserFailures(page)
+  await page.goto('/')
+  const viewer = page.locator('.instance-card').first()
+  await expect(viewer.locator('.instance-status')).toContainText('3 annotations')
+  await viewer.getByRole('button', { name: 'Select', exact: true }).first().click()
+  await viewer.locator('.scale-select').selectOption('2')
+  await expect(viewer.locator('.scale-value')).toHaveText('200%')
+  await viewer.locator('.page-surface').scrollIntoViewIfNeeded()
+
+  const canvas = await viewer.locator('.konvajs-content').boundingBox()
+  const label = viewer.locator('.inklayer-author-label:not([hidden])')
+  const labelBeforeResize = await label.boundingBox()
+  if (canvas === null || labelBeforeResize === null) {
+    throw new Error('Selected rectangle is not visible at 200% zoom.')
+  }
+
+  await page.mouse.move(canvas.x + 84, canvas.y + 310)
+  await page.mouse.down()
+  await page.mouse.move(canvas.x + 44, canvas.y + 310, { steps: 6 })
+  await page.mouse.up()
+  const labelAfterResize = await label.boundingBox()
+  if (labelAfterResize === null) throw new Error('Rectangle label disappeared after resize.')
+  expect(labelAfterResize.x - labelBeforeResize.x).toBeLessThan(-25)
+
+  await page.mouse.move(canvas.x + 216, canvas.y + 310)
+  await page.mouse.down()
+  await page.mouse.move(canvas.x + 600, canvas.y + 400, { steps: 8 })
+  await page.mouse.up()
+  const labelAfterDrag = await label.boundingBox()
+  if (labelAfterDrag === null) throw new Error('Rectangle label disappeared after drag.')
+  expect(labelAfterDrag.x - labelAfterResize.x).toBeGreaterThan(300)
+  expect(labelAfterDrag.y - labelAfterResize.y).toBeGreaterThan(70)
+  expect(failures).toEqual([])
+})
+
+test('moves only the selected annotation in select mode', async ({ page }) => {
+  const failures = collectBrowserFailures(page)
+  await page.goto('/?clean=1')
+  const viewer = page.locator('.instance-card').first()
+  await expect(viewer.locator('.instance-status')).toContainText('0 annotations')
+  await viewer.locator('.page-surface').scrollIntoViewIfNeeded()
+  const canvas = await viewer.locator('.konvajs-content').boundingBox()
+  if (canvas === null) throw new Error('Demo annotation canvas is not visible.')
+
+  await viewer.locator('.tool-select').selectOption('freehand')
+  await drawStroke(page, canvas, [[250, 250], [330, 330]])
+  await expect(viewer.locator('.inklayer-author-label')).toHaveCount(1, { timeout: 1600 })
+  const inkId = await viewer.locator('.inklayer-annotation-a11y-list button')
+    .getAttribute('data-annotation-id')
+  if (inkId === null) throw new Error('Created Ink annotation has no stable ID.')
+
+  await viewer.locator('.tool-select').selectOption('rectangle')
+  await page.mouse.move(canvas.x + 60, canvas.y + 90)
+  await page.mouse.down()
+  await page.mouse.move(canvas.x + 170, canvas.y + 180, { steps: 5 })
+  await page.mouse.up()
+  await expect(viewer.locator('.tool-select')).toHaveValue('select')
+  await expect(viewer.locator('.inklayer-author-label')).toHaveCount(2)
+
+  const inkLabel = viewer.locator(
+    `.inklayer-author-label[data-annotation-id="${inkId}"]`
+  )
+  const inkXBefore = Number(await inkLabel.getAttribute('data-anchor-x'))
+  const inkYBefore = Number(await inkLabel.getAttribute('data-anchor-y'))
+  await page.mouse.move(canvas.x + 290, canvas.y + 290)
+  await page.mouse.down()
+  await page.mouse.move(canvas.x + 350, canvas.y + 340, { steps: 6 })
+  await page.mouse.up()
+  expect(Number(await inkLabel.getAttribute('data-anchor-x'))).toBe(inkXBefore)
+  expect(Number(await inkLabel.getAttribute('data-anchor-y'))).toBe(inkYBefore)
+
+  await page.mouse.click(canvas.x + 290, canvas.y + 290)
+  await expect(viewer.locator(
+    `.inklayer-annotation-a11y-list button[data-annotation-id="${inkId}"]`
+  )).toHaveAttribute('aria-pressed', 'true')
+  await page.mouse.move(canvas.x + 290, canvas.y + 290)
+  await page.mouse.down()
+  await page.mouse.move(canvas.x + 350, canvas.y + 340, { steps: 6 })
+  await page.mouse.up()
+  expect(Number(await inkLabel.getAttribute('data-anchor-x')) - inkXBefore).toBeGreaterThan(45)
+  expect(Number(await inkLabel.getAttribute('data-anchor-y')) - inkYBefore).toBeGreaterThan(35)
+  expect(failures).toEqual([])
+})
+
+test('lets creation tools place over existing annotations without hover interception', async ({
+  page
+}) => {
+  const failures = collectBrowserFailures(page)
+  await page.goto('/?clean=1')
+  const viewer = page.locator('.instance-card').first()
+  await viewer.locator('.page-surface').scrollIntoViewIfNeeded()
+  const canvas = await viewer.locator('.konvajs-content').boundingBox()
+  if (canvas === null) throw new Error('Demo annotation canvas is not visible.')
+
+  await viewer.locator('.tool-select').selectOption('rectangle')
+  await page.mouse.move(canvas.x + 80, canvas.y + 100)
+  await page.mouse.down()
+  await page.mouse.move(canvas.x + 180, canvas.y + 190, { steps: 5 })
+  await page.mouse.up()
+  const rectangleLabel = viewer.locator('.inklayer-author-label').first()
+  await page.mouse.click(canvas.x + 350, canvas.y + 400)
+  await expect(rectangleLabel).toBeHidden()
+
+  await viewer.locator('.tool-select').selectOption('signature')
+  await page.mouse.move(canvas.x + 130, canvas.y + 145)
+  await expect(rectangleLabel).toBeHidden()
+  await page.mouse.click(canvas.x + 130, canvas.y + 145)
+
+  await expect(viewer.locator('.inklayer-annotation-a11y-list button')).toHaveCount(2)
+  await expect(viewer.locator('.inklayer-annotation-a11y-list button').last())
+    .toHaveAttribute('aria-label', /signature/i)
+  await expect(viewer.locator('.tool-select')).toHaveValue('select')
   expect(failures).toEqual([])
 })
 
@@ -932,11 +1058,42 @@ async function readObjectUrlMetrics(page: Page): Promise<{
 
 /** Adds one real tool fixture and completes the FreeText browser input path. */
 async function addToolFixture(
+  page: Page,
   card: Locator,
-  tool: typeof TOOLS[number]
+  tool: typeof TOOLS[number],
+  index: number
 ): Promise<void> {
+  const annotationCount = await card.locator('.inklayer-annotation-a11y-list button').count()
   await card.locator('.tool-select').selectOption(tool)
-  await card.getByRole('button', { name: 'Place sample' }).click()
+  if (tool === 'highlight' || tool === 'strikeout' || tool === 'underline') {
+    await card.locator('.inklayer-text-layer span').first().evaluate((span) => {
+      const selection = document.getSelection()
+      const range = document.createRange()
+      range.selectNodeContents(span)
+      selection?.removeAllRanges()
+      selection?.addRange(range)
+      span.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+    })
+  } else {
+    const canvas = await card.locator('.konvajs-content').boundingBox()
+    if (canvas === null) throw new Error(`${tool} annotation canvas is unavailable.`)
+    const x = 40 + (index % 5) * 24
+    const y = 240 + (index % 4) * 34
+    if (tool === 'free-text' || tool === 'signature' || tool === 'stamp' || tool === 'note') {
+      await page.mouse.click(canvas.x + x, canvas.y + y)
+    } else if (tool === 'polygon' || tool === 'polyline' || tool === 'cloud') {
+      const overlay = card.locator('.konvajs-content')
+      await overlay.click({ position: { x, y } })
+      // Keep the first vertices outside Konva's double-click window. The final
+      // double-click is the deliberate gesture that completes the shape.
+      await page.waitForTimeout(450)
+      await overlay.click({ position: { x: x + 50, y: y + 8 } })
+      await page.waitForTimeout(450)
+      await overlay.dblclick({ position: { x: x + 30, y: y + 48 } })
+    } else {
+      await drawStroke(page, canvas, [[x, y], [x + 58, y + 42]])
+    }
+  }
   if (tool === 'free-text') {
     const input = card.locator('.inklayer-text-input')
     await expect(input).toBeVisible()
@@ -944,7 +1101,12 @@ async function addToolFixture(
     await input.fill('Browser FreeText')
     await input.press('Control+Enter')
   }
-  await expect(card.locator('.instance-status')).toContainText(`Created ${tool}`)
+  await expect(card.locator('.inklayer-annotation-a11y-list button')).toHaveCount(
+    annotationCount + 1,
+    {
+    timeout: tool === 'freehand' ? 1800 : 5000
+    }
+  )
 }
 
 /** Draws one pointer stroke relative to the annotation canvas. */

@@ -173,7 +173,7 @@ export function instanceMarkup(label: string): string {
               <label class="appearance-field appearance-tag-field"><span>Tags</span><select class="tag-visibility"><option value="auto" selected>Hover / selected</option><option value="always">Always</option><option value="hidden">Hidden</option></select></label>
             </div>
           </section>
-          <section class="selection-actions"><button class="add-sample" type="button">Place sample</button><button class="comment" type="button">Add comment</button><button class="delete danger-action" type="button">Delete</button></section>
+          <section class="selection-actions"><button class="comment" type="button">Add comment</button><button class="delete danger-action" type="button">Delete</button></section>
         </section>
         <section class="right-panel" data-right-panel="annotations" hidden>
           <div class="panel-heading"><strong>Annotations</strong><span>Repository-backed review list</span></div>
@@ -194,7 +194,7 @@ export function instanceMarkup(label: string): string {
         <div class="lab-grid">
           <section><h3>Loading & security</h3><p>Password lifecycle, HTTP Range and cancellation.</p><div class="lab-actions"><button class="password-sample" type="button">Password PDF</button><button class="range-sample" type="button">URL Range PDF</button><button class="cancel-load" type="button">Cancel load</button><button class="reload" type="button">Reload</button></div></section>
           <section><h3>Page flow</h3><p>Mixed geometry and bounded long-document virtualization.</p><div class="lab-actions"><button class="mixed-sample" type="button">Mixed PDF</button><button class="long-sample" type="button">Long PDF</button></div></section>
-          <section><h3>Watermark</h3><p>One policy across viewer, print and export targets.</p><label class="lab-field"><span>Text</span><input class="watermark-text" value="Demo · InkLayer Core"></label><label class="check-field"><input class="watermark-enabled" type="checkbox" checked><span>Show on viewer and print</span></label></section>
+          <section><h3>Watermark</h3><p>One policy across viewer, print and export targets.</p><label class="lab-field"><span>Text</span><input class="watermark-text" value="Demo · InkLayer Core"></label><label class="check-field"><input class="watermark-enabled" type="checkbox" checked><span>Show on viewer, print and export</span></label></section>
           <section><h3>Lifecycle</h3><p>Dispose and rebuild Viewer, Annotation and PageFlow together.</p><div class="lab-actions"><button class="restart-instance" type="button">Restart this workspace</button></div></section>
           <section><h3>Collaboration policy</h3><p>Switch the canonical repository between unrestricted and owner-only editing.</p><label class="check-field"><input class="owner-only" type="checkbox"><span>Owner-only annotation changes</span></label></section>
         </div>

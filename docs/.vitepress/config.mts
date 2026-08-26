@@ -27,7 +27,7 @@ export default defineConfig({
         ],
         sidebar: [
           {
-            text: '简介',
+            text: '入门',
             items: [
               { text: '快速开始', link: '/zh/guide/getting-started' },
               { text: '创建第一个批注', link: '/zh/guide/first-annotation' }

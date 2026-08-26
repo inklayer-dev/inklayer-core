@@ -153,7 +153,7 @@ class DemoInstance {
       layout: 'repeated',
       opacity: 0.1,
       rotation: -28,
-      targets: { viewer: true, print: true, export: false, thumbnails: false }
+      targets: { viewer: true, print: true, export: true, thumbnails: false }
     })
     this.annotations = createAnnotationEngine({
       root: this.host,
@@ -553,9 +553,6 @@ class DemoInstance {
         this.restoreTextSelectionFocus()
         event.preventDefault()
       }
-    })
-    requireElement<HTMLButtonElement>(this.host, '.add-sample').addEventListener('click', () => {
-      void this.addSampleAnnotation()
     })
     requireElement<HTMLButtonElement>(this.host, '.zoom-in').addEventListener('click', () => {
       void this.stepViewerScale('in').catch((cause: unknown) => this.reportError(cause))
@@ -1205,55 +1202,6 @@ class DemoInstance {
     this.setStatus('Password entry cancelled.')
   }
 
-  /** Adds a deterministic fixture for the selected tool, including special inputs. */
-  private async addSampleAnnotation(): Promise<void> {
-    const tool = this.toolSelect.value as AnnotationTool
-    if (tool === 'select' || tool === 'text-select') {
-      this.setStatus('Choose an annotation tool first.')
-      return
-    }
-    const offset = this.annotations.repository.getAll().length * 7
-    const bounds = { x: 56 + offset, y: 96 + offset, width: 118, height: 54 }
-    let annotation: Annotation | null
-    if (tool === 'highlight' || tool === 'underline' || tool === 'strikeout') {
-      annotation = this.annotations.createTextMarkup(tool, {
-        pageIndex: 0, text: 'InkLayer Core Vanilla', rects: [bounds]
-      })
-    } else if (tool === DEMO_MEASUREMENT_TYPE) {
-      annotation = this.annotations.createAnnotation({
-        type: DEMO_MEASUREMENT_TYPE,
-        pageIndex: 0,
-        bounds,
-        content: { text: 'Measurement box' },
-        typeData: {
-          schemaVersion: 1,
-          payload: { width: bounds.width, height: bounds.height, unit: 'pt' }
-        }
-      })
-    } else if (tool === 'free-text') {
-      annotation = await this.annotations.requestFreeText(0, bounds)
-    } else {
-      annotation = this.annotations.createAnnotation({
-        type: tool,
-        pageIndex: 0,
-        bounds,
-        content: tool === 'stamp'
-          ? { text: 'Approved stamp', image: this.requireImageAsset('stamp').image }
-          : tool === 'signature'
-            ? {
-                text: 'Signature',
-                signature: { kind: 'image', image: this.requireImageAsset('signature').image }
-              }
-            : { text: `${tool} annotation` },
-        points: [bounds.x, bounds.y, bounds.x + bounds.width, bounds.y + bounds.height]
-      })
-    }
-    if (annotation !== null) {
-      this.annotations.setSelection({ ids: [annotation.id], primaryId: annotation.id })
-      this.setStatus(`Created ${annotation.type} · ${this.annotations.repository.getAll().length} total`)
-    }
-  }
-
   /** Returns the demo's prepared image asset after constructor setup. */
   private requireImageAsset(type: 'signature' | 'stamp') {
     const asset = this.annotations.getImageAsset(type)
@@ -1286,8 +1234,10 @@ class DemoInstance {
   /** Exports and downloads annotated PDF bytes. */
   private async exportPdf(): Promise<void> {
     const { buildAnnotatedPdf } = await import('@inklayer-dev/core/export/pdf')
+    const watermark = this.viewer.getWatermark()
     const bytes = await buildAnnotatedPdf(this.sourcePdf, this.annotations.repository.getAll(), {
-      annotationTypes: this.annotations.annotationTypes
+      annotationTypes: this.annotations.annotationTypes,
+      ...(watermark === null ? {} : { watermark })
     })
     downloadBlob({ content: bytes, filename: 'inklayer-annotations.pdf', mimeType: 'application/pdf' })
     this.setStatus(`Exported PDF · ${bytes.byteLength} bytes`)

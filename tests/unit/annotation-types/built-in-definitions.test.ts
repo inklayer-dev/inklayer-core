@@ -46,6 +46,12 @@ describe('built-in Annotation Type Definitions', () => {
       expect(definition?.pdf?.exportStrategy).not.toBe('unsupported')
       expect(Object.isFrozen(definition)).toBe(true)
     }
+    expect(registry.get('polygon')?.capabilities.transform).toMatchObject({
+      move: true,
+      resize: true,
+      vertices: false
+    })
+    expect(registry.get('polyline')?.capabilities.transform.vertices).toBe(true)
     registry.destroy()
   })
 

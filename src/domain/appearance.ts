@@ -97,7 +97,9 @@ export function getDefaultAnnotationAppearance(type: AnnotationType): Annotation
     case 'circle':
       return appearance({ ...DEFAULT_STROKE }, null, null)
     case 'note':
-      return appearance(null, { color: '#ffdc5e', opacity: 1 }, {
+      return appearance({ ...DEFAULT_STROKE, color: '#c0a042', width: 0.8 }, {
+        color: '#ffdd1f', opacity: 1
+      }, {
         color: '#222222', opacity: 1, fontSize: 12
       })
     case 'stamp':

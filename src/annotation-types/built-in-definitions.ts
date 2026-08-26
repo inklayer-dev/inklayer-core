@@ -34,7 +34,7 @@ Record<AnnotationType, AnnotationTypeDefinition>
   note: definition('note', 'point', 'point', 'one-shot', transform(true), appearance(true, true, true), 'native'),
   line: definition('line', 'line', 'line', 'one-shot', transform(true, true, false, true), appearance(true, false, false), 'native'),
   arrow: definition('arrow', 'line', 'line', 'one-shot', transform(true, true, false, true), appearance(true, false, false), 'appearance-stream'),
-  polygon: definition('polygon', 'polyline', 'polyline', 'one-shot', transform(true, true, false, false, true), appearance(true, true, false), 'native'),
+  polygon: definition('polygon', 'polyline', 'polyline', 'one-shot', transform(true, true), appearance(true, true, false), 'native'),
   polyline: definition('polyline', 'polyline', 'polyline', 'one-shot', transform(true, true, false, false, true), appearance(true, false, false), 'native'),
   cloud: definition('cloud', 'polyline', 'polyline', 'one-shot', transform(true, true), appearance(true, true, false), 'appearance-stream')
 })

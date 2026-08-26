@@ -52,12 +52,22 @@ describe('buildAnnotatedPdf', () => {
     expect(subtypes).toContain('Line')
     expect(subtypes).toContain('Polygon')
     expect(subtypes).toContain('PolyLine')
+    expect(subtypes).toContain('FreeText')
     expect(subtypes).toContain('Stamp')
-    expect(subtypes.filter((subtype) => subtype === 'Text')).toHaveLength(3)
+    expect(subtypes.filter((subtype) => subtype === 'Text')).toHaveLength(2)
     expect(subtypes.filter((subtype) => subtype === 'Ink')).toHaveLength(5)
 
+    for (const type of TYPES.filter(type => type !== 'note')) {
+      const dictionary = dictionaries.find(entry => textValue(entry, 'NM') === `annotation-${type}`)
+      expect(dictionary?.lookupMaybe(PDFName.of('AP'), PDFDict)?.get(PDFName.of('N')),
+        `${type} should have a normal appearance stream`).toBeDefined()
+    }
+
     const highlight = dictionaries.find((dictionary) => textValue(dictionary, 'NM') === 'annotation-highlight')
-    expect(textValue(highlight, 'T')).toBe('Alice')
+    expect(textValue(highlight, 'T')).toBe('Alice · #1')
+    expect(textValue(highlight, 'InkLayerAuthorId')).toBe('alice')
+    expect(textValue(highlight, 'InkLayerAuthorName')).toBe('Alice')
+    expect(numberValue(highlight, 'InkLayerReferenceNumber')).toBe(1)
     expect(textValue(highlight, 'Contents')).toBe('Body highlight')
     expect(textValue(highlight, 'M')).toBe('D:20250810120000Z')
     expect(numberArray(highlight, 'Rect')).toEqual([10, 230, 110, 280])
@@ -76,6 +86,17 @@ describe('buildAnnotatedPdf', () => {
     expect(nameValue(cloud, 'InkLayerType')).toBe('Cloud')
     const cloudInk = cloud?.lookupMaybe(PDFName.of('InkList'), PDFArray)?.lookup(0, PDFArray)
     expect(cloudInk?.size()).toBeGreaterThan(10)
+    const polygon = dictionaries.find((dictionary) => textValue(dictionary, 'NM') === 'annotation-polygon')
+    expect(numberArray(polygon, 'Vertices')).toHaveLength(6)
+    expect(polygon?.lookupMaybe(PDFName.of('AP'), PDFDict)?.get(PDFName.of('N')))
+      .toBeDefined()
+    const note = dictionaries.find((dictionary) => textValue(dictionary, 'NM') === 'annotation-note')
+    expect(nameValue(note, 'Name')).toBe('Note')
+    expect(note?.lookupMaybe(PDFName.of('AP'), PDFDict)).toBeUndefined()
+    const polyline = dictionaries.find((dictionary) => textValue(dictionary, 'NM') === 'annotation-polyline')
+    expect(numberArray(polyline, 'Vertices')).toHaveLength(4)
+    expect(polyline?.lookupMaybe(PDFName.of('AP'), PDFDict)?.get(PDFName.of('N')))
+      .toBeDefined()
     const freehand = dictionaries.find((dictionary) => textValue(dictionary, 'NM') === 'annotation-freehand')
     expect(freehand?.lookupMaybe(PDFName.of('InkList'), PDFArray)?.size()).toBe(2)
     const freeText = dictionaries.find((dictionary) => textValue(dictionary, 'NM') === 'annotation-free-text')
@@ -98,6 +119,17 @@ describe('buildAnnotatedPdf', () => {
     expect(dictionaries.filter(entry => textValue(entry, 'NM') === replacement.id)).toHaveLength(1)
     expect(dictionaries.some(entry => textValue(entry, 'NM') === 'untouched-line')).toBe(true)
     expect(dictionaries.some(entry => textValue(entry, 'NM') === 'untouched-link')).toBe(true)
+  })
+
+  it('allows applications to configure the external PDF annotation title', async () => {
+    const annotation = exportAnnotation('rectangle', 0)
+    const bytes = await buildAnnotatedPdf(await createSourcePdf(), [annotation], {
+      annotationTitle: item => `Review ${item.referenceNumber ?? 'unassigned'}`
+    })
+    const dictionary = annotationDictionaries(await PDFDocument.load(bytes))
+      .find(entry => textValue(entry, 'NM') === annotation.id)
+    expect(textValue(dictionary, 'T')).toBe('Review 1')
+    expect(textValue(dictionary, 'InkLayerAuthorName')).toBe('Alice')
   })
 
   it('removes managed native IDs even when every managed annotation was deleted', async () => {
@@ -244,7 +276,7 @@ describe('buildAnnotatedPdf', () => {
     )).toBe('SignatureImage')
   })
 
-  it('uses one watermark policy for print while respecting export targeting', async () => {
+  it('uses one watermark policy while respecting print and export targeting', async () => {
     const source = await createSourcePdf()
     const watermark = {
       text: 'Alice confidential',
@@ -255,6 +287,13 @@ describe('buildAnnotatedPdf', () => {
     expect(exported.getPage(0).node.get(PDFName.of('Contents'))).toBeUndefined()
     const printable = await PDFDocument.load(await buildPrintablePdf(source, [], { watermark }))
     expect(printable.getPage(0).node.get(PDFName.of('Contents'))).toBeDefined()
+    const exportWatermarked = await PDFDocument.load(await buildAnnotatedPdf(source, [], {
+      watermark: {
+        ...watermark,
+        targets: { ...watermark.targets, export: true }
+      }
+    }))
+    expect(exportWatermarked.getPage(0).node.get(PDFName.of('Contents'))).toBeDefined()
   })
 })
 
@@ -303,15 +342,23 @@ function exportAnnotation(type: AnnotationType, index: number): Annotation & { t
   return createTestAnnotation({
     id,
     type,
+    referenceNumber: index + 1,
     bounds,
     content: {
       text: `Body ${type}`,
+      ...(type === 'stamp' ? { image: TINY_PNG } : {}),
       ...(type.includes('light') ? { selectedText: 'Selected' } : {})
     },
     appearance,
     rendererState: buildToolRendererState({
       id, type, bounds, content: { text: `Body ${type}` }, appearance,
-      points: [bounds.x, bounds.y, bounds.x + bounds.width, bounds.y + bounds.height],
+      points: type === 'polygon'
+        ? [
+            bounds.x, bounds.y,
+            bounds.x + bounds.width, bounds.y,
+            bounds.x + bounds.width / 2, bounds.y + bounds.height
+          ]
+        : [bounds.x, bounds.y, bounds.x + bounds.width, bounds.y + bounds.height],
       ...(type === 'freehand' ? {
         strokes: [
           [bounds.x, bounds.y, bounds.x + bounds.width, bounds.y + bounds.height],

@@ -6,8 +6,10 @@
 
 import type { PdfJsAnnotationPageInput, PdfJsImportWarning } from './types'
 import type { Annotation, AnnotationAppearance, AnnotationType } from '../../domain/annotation'
+import type { User } from '../../domain/user'
 import { resolveAnnotationAppearance } from '../../domain/appearance'
 import { importPdfJsAnnotations } from './normalize'
+import { isValidAnnotationReference, type AnnotationReference } from '../../domain/references'
 
 /** Custom metadata recovered from one native PDF annotation dictionary. */
 export interface InkLayerPdfAnnotationMetadata {
@@ -21,6 +23,12 @@ export interface InkLayerPdfAnnotationMetadata {
   canonicalType?: AnnotationType
   /** Exact validated appearance when written by Core. */
   appearance?: AnnotationAppearance
+  /** Original canonical author retained when `/T` uses a formatted title. */
+  author?: User
+  /** Stable document-scoped display number. */
+  referenceNumber?: number
+  /** Stable structured annotation references. */
+  references?: AnnotationReference[]
   /** Optional custom FreeText font size. */
   fontSize?: number
   /** Optional custom FreeText layout width. */
@@ -72,7 +80,6 @@ export async function inspectInkLayerPdfMetadata(
         PDFName.of('InkLayerAppearance'), PDFString, PDFHexString
       )
       const appearance = parseStoredAppearance(appearanceObject?.decodeText(), canonicalType)
-      if (type === undefined && canonicalType === undefined && appearance === undefined) continue
       const nameObject = dictionary.get(PDFName.of('NM'))
       const name = nameObject === undefined ? undefined : document.context.lookup(nameObject)
       const pdfjsId = reference instanceof PDFRef ? `${reference.objectNumber}R` : undefined
@@ -85,12 +92,37 @@ export async function inspectInkLayerPdfMetadata(
       const opacity = dictionary.lookupMaybe(PDFName.of('CA'), PDFNumber)?.asNumber()
       const imageObject = dictionary.lookupMaybe(PDFName.of('InkLayerImage'), PDFString, PDFHexString)
       const image = imageObject?.decodeText()
+      const authorId = dictionary.lookupMaybe(
+        PDFName.of('InkLayerAuthorId'), PDFString, PDFHexString
+      )?.decodeText()
+      const authorName = dictionary.lookupMaybe(
+        PDFName.of('InkLayerAuthorName'), PDFString, PDFHexString
+      )?.decodeText()
+      const author = authorId === undefined || authorName === undefined
+        ? undefined
+        : { id: authorId, name: authorName }
+      const storedReferenceNumber = dictionary.lookupMaybe(
+        PDFName.of('InkLayerReferenceNumber'), PDFNumber
+      )?.asNumber()
+      const referenceNumber = Number.isSafeInteger(storedReferenceNumber)
+        && (storedReferenceNumber ?? 0) > 0
+        ? storedReferenceNumber
+        : undefined
+      const referencesObject = dictionary.lookupMaybe(
+        PDFName.of('InkLayerReferences'), PDFString, PDFHexString
+      )
+      const references = parseStoredReferences(referencesObject?.decodeText())
+      if (type === undefined && canonicalType === undefined && appearance === undefined
+        && author === undefined && referenceNumber === undefined && references === undefined) continue
       records.push({
         id,
         ...(pdfjsId === undefined || pdfjsId === id ? {} : { pdfjsId }),
         ...(type === undefined ? {} : { type }),
         ...(canonicalType === undefined ? {} : { canonicalType }),
         ...(appearance === undefined ? {} : { appearance }),
+        ...(author === undefined ? {} : { author }),
+        ...(referenceNumber === undefined ? {} : { referenceNumber }),
+        ...(references === undefined ? {} : { references }),
         ...(fontSize === undefined ? {} : { fontSize }),
         ...(textWidth === undefined ? {} : { textWidth }),
         ...(opacity === undefined ? {} : { opacity }),
@@ -99,6 +131,19 @@ export async function inspectInkLayerPdfMetadata(
     }
   }
   return records
+}
+
+/** Parses exporter-owned structured references without trusting PDF metadata. */
+function parseStoredReferences(value: string | undefined): AnnotationReference[] | undefined {
+  if (value === undefined) return undefined
+  try {
+    const parsed = JSON.parse(value) as unknown
+    return Array.isArray(parsed) && parsed.every(isValidAnnotationReference)
+      ? parsed.map(reference => ({ ...reference }))
+      : undefined
+  } catch {
+    return undefined
+  }
 }
 
 const CANONICAL_TYPES = new Set<AnnotationType>([
@@ -189,6 +234,9 @@ function enrichPages(
         inkLayerType: record.type,
         ...(record.canonicalType === undefined ? {} : { canonicalType: record.canonicalType }),
         ...(record.appearance === undefined ? {} : { appearance: record.appearance }),
+        ...(record.author === undefined ? {} : { inkLayerAuthor: record.author }),
+        ...(record.referenceNumber === undefined ? {} : { referenceNumber: record.referenceNumber }),
+        ...(record.references === undefined ? {} : { references: record.references }),
         ...(record.fontSize === undefined ? {} : { fontSize: record.fontSize }),
         ...(record.opacity === undefined ? {} : { opacity: record.opacity }),
         ...(record.image === undefined ? {} : { image: record.image }),

@@ -90,4 +90,40 @@ describe('Konva snapshot validation', () => {
       }
     }
   })
+
+  it('renders Note as a folded document icon and preserves its structure when restyled', () => {
+    const initial = resolveAnnotationAppearance('note')
+    const state = buildToolRendererState({
+      id: 'note', type: 'note', bounds: { x: 10, y: 20, width: 24, height: 24 },
+      content: { text: 'Review this section' }, appearance: initial
+    })
+    const updated = resolveAnnotationAppearance('note', {
+      fill: { color: '#84adff' }, text: { color: '#102a56' }
+    })
+    const restyled = restyleToolRendererState(state, 'note', updated)
+
+    for (const rendererState of [state, restyled]) {
+      const children = parseAndValidateKonvaSnapshot(rendererState.serialized).root.children ?? []
+      expect(children).toHaveLength(7)
+      expect(children.map(child => child.attrs['name'])).toEqual([
+        'inklayer-note-paper',
+        'inklayer-note-fold',
+        'inklayer-note-fold-shadow',
+        'inklayer-note-text-line',
+        'inklayer-note-text-line',
+        'inklayer-note-text-line',
+        'inklayer-note-content'
+      ])
+      const lines = children.filter(child => child.attrs['name'] === 'inklayer-note-text-line')
+      expect(lines).toHaveLength(3)
+      for (const line of lines) expect(line.attrs['points']).toHaveLength(4)
+      expect(children.find(child => child.className === 'Text')?.attrs).toMatchObject({
+        text: 'Review this section', visible: false, listening: false
+      })
+    }
+    const paper = parseAndValidateKonvaSnapshot(restyled.serialized).root.children?.[0]
+    expect(paper?.attrs['fillLinearGradientColorStops']).toEqual([
+      0, 'rgba(132, 173, 255, 1)', 1, 'rgba(255, 255, 255, 1)'
+    ])
+  })
 })

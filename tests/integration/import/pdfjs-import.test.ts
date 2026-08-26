@@ -163,7 +163,7 @@ describe('PDF.js native import', () => {
     expect(result).toEqual({ annotations: [], warnings: [], supportedIds: [], metadata: [] })
   })
 
-  it('round-trips custom type, appearance, strokes, and image payload through PDF metadata', async () => {
+  it('round-trips type, appearance, author, numbering, and references through PDF metadata', async () => {
     const source = await PDFDocument.create()
     source.addPage([200, 300])
     const bounds = { x: 10, y: 20, width: 40, height: 30 }
@@ -173,10 +173,15 @@ describe('PDF.js native import', () => {
     })
     const annotation = createTestAnnotation({
       id: 'free-highlight-roundtrip', type: 'free-highlight', bounds, appearance,
-      content: { text: '' },
+      author: { id: 'demo-user', name: 'Demo' },
+      referenceNumber: 3,
+      content: {
+        text: 'See #3',
+        references: [{ type: 'annotation', annotationId: 'target', label: '#3' }]
+      },
       rendererState: buildToolRendererState({
         id: 'free-highlight-roundtrip', type: 'free-highlight', bounds, appearance,
-        content: { text: '' }, points: [10, 20, 50, 50]
+        content: { text: 'See #3' }, points: [10, 20, 50, 50]
       })
     })
     const bytes = await buildAnnotatedPdf(await source.save(), [annotation])
@@ -186,7 +191,10 @@ describe('PDF.js native import', () => {
       pdfjsId: expect.stringMatching(/^\d+R$/),
       type: 'FreeHighlight',
       canonicalType: 'free-highlight',
-      appearance
+      appearance,
+      author: { id: 'demo-user', name: 'Demo' },
+      referenceNumber: 3,
+      references: [{ type: 'annotation', annotationId: 'target', label: '#3' }]
     })])
     const decoded = await importPdfJsAnnotationsWithMetadata([{
       pageIndex: 0,
@@ -197,7 +205,12 @@ describe('PDF.js native import', () => {
       }]
     }], bytes)
     expect(decoded.annotations[0]).toMatchObject({
-      type: 'free-highlight', appearance
+      type: 'free-highlight', appearance,
+      author: { id: 'demo-user', name: 'Demo' },
+      referenceNumber: 3,
+      content: {
+        references: [{ type: 'annotation', annotationId: 'target', label: '#3' }]
+      }
     })
   })
 

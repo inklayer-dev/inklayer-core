@@ -96,6 +96,7 @@ function decodeAnnotation(
   const textRects = extractTextRects(input, page)
   const content = {
     text: input.contentsObj?.str ?? '',
+    ...(input.references === undefined ? {} : { references: input.references }),
     ...(type === 'highlight' || type === 'underline' || type === 'strikeout'
       ? { selectedText: input.contentsObj?.str ?? '' }
       : {}),
@@ -145,10 +146,12 @@ function decodeAnnotation(
     content,
     appearance,
     comments: replies.map(parseReply),
-    author: { id: `pdf:${input.titleObj?.str ?? 'unknown'}`, name: input.titleObj?.str ?? '' },
+    author: input.inkLayerAuthor
+      ?? { id: `pdf:${input.titleObj?.str ?? 'unknown'}`, name: input.titleObj?.str ?? '' },
     createdAt: input.creationDate ?? input.modificationDate ?? null,
     ...(input.modificationDate === undefined ? {} : { updatedAt: input.modificationDate }),
     native: true,
+    ...(input.referenceNumber === undefined ? {} : { referenceNumber: input.referenceNumber }),
     rendererState,
     source: { kind: 'pdf-native', subtype: input.subtype, pdfjsType: input.annotationType }
   })
@@ -235,7 +238,9 @@ function parseReply(input: PdfJsAnnotationInput): AnnotationComment {
     title: input.titleObj?.str ?? '',
     content: input.contentsObj?.str ?? '',
     date: input.modificationDate ?? input.creationDate ?? null,
-    author: { id: `pdf:${input.titleObj?.str ?? 'unknown'}`, name: input.titleObj?.str ?? '' }
+    author: input.inkLayerAuthor
+      ?? { id: `pdf:${input.titleObj?.str ?? 'unknown'}`, name: input.titleObj?.str ?? '' },
+    ...(input.references === undefined ? {} : { references: input.references })
   }
 }
 

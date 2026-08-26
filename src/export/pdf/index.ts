@@ -5,7 +5,9 @@
  */
 
 import {
+  beginText,
   degrees,
+  endText,
   PDFArray,
   PDFDict,
   PDFDocument,
@@ -26,9 +28,12 @@ import {
   rectangle,
   setDashPattern,
   setFillingRgbColor,
+  setFontAndSize,
   setGraphicsState,
   setLineWidth,
   setStrokingRgbColor,
+  setTextMatrix,
+  showText,
   stroke,
   type PDFOperator,
   type PDFRef,
@@ -95,6 +100,8 @@ export interface PdfExportOptions {
   watermarkTarget?: 'print' | 'export'
   /** Instance Registry required to render and export custom annotation types. */
   annotationTypes?: AnnotationTypeRegistry
+  /** Formats the title shown by external PDF annotation applications. */
+  annotationTitle?: (annotation: Readonly<Annotation>) => string
   /**
    * Native PDF annotation identifiers owned by the caller, including entries
    * deleted since import. Matching replaceable dictionaries are removed before
@@ -132,6 +139,8 @@ type PreparedAnnotation = PreparedBuiltInAnnotation | PreparedCustomAnnotation
 interface CustomPdfResources {
   /** Per-primitive opacity graphics states. */
   ExtGState: Record<string, PDFDict>
+  /** Optional fonts referenced by appearance text nodes. */
+  Font?: Record<string, PDFRef>
 }
 
 const REPLACEABLE_SUBTYPES = new Set([
@@ -182,7 +191,7 @@ export async function buildAnnotatedPdf(
     if (existing === undefined && items.length === 0) continue
     const annots = retainedAnnotationArray(document, page, managedNativeAnnotationIds)
     page.node.set(PDFName.of('Annots'), annots)
-    for (const item of items) await writeAnnotation(document, page, item, annots)
+    for (const item of items) await writeAnnotation(document, page, item, annots, options)
   }
 
   await writeDocumentWatermark(document, options)
@@ -429,18 +438,20 @@ async function writeAnnotation(
   document: PDFDocument,
   page: PDFPage,
   prepared: PreparedAnnotation,
-  annots: PDFArray
+  annots: PDFArray,
+  options: PdfExportOptions
 ): Promise<void> {
   if (prepared.kind === 'custom') {
-    await writeCustomAnnotation(document, page, prepared, annots)
+    await writeCustomAnnotation(document, page, prepared, annots, options)
     return
   }
   const { annotation, snapshot } = prepared
   const pageBox = pdfPageBox(page)
-  const dictionary = baseDictionary(document, page, annotation, pageBox)
+  const dictionary = baseDictionary(document, page, annotation, pageBox, options)
   writeTypeGeometry(document, dictionary, annotation, snapshot, pageBox)
   writeAppearanceGeometry(document, dictionary, annotation)
   await writeImageAppearance(document, dictionary, annotation, pageBox)
+  await writeBuiltInAppearance(document, dictionary, annotation, snapshot, pageBox)
   const reference = document.context.register(dictionary)
   annots.push(reference)
   writeReplyComments(document, page, annotation, reference, annots)
@@ -467,7 +478,14 @@ function writeReplyComments(
       IRT: reference,
       RT: 'R',
       P: page.ref,
-      F: 4
+      F: 4,
+      ...(comment.author === undefined ? {} : {
+        InkLayerAuthorId: PDFHexString.fromText(comment.author.id),
+        InkLayerAuthorName: PDFHexString.fromText(comment.author.name)
+      }),
+      ...(comment.references === undefined ? {} : {
+        InkLayerReferences: PDFHexString.fromText(JSON.stringify(comment.references))
+      })
     })
     annots.push(document.context.register(reply))
   }
@@ -517,7 +535,8 @@ async function writeCustomAnnotation(
   document: PDFDocument,
   page: PDFPage,
   prepared: PreparedCustomAnnotation,
-  annots: PDFArray
+  annots: PDFArray,
+  options: PdfExportOptions
 ): Promise<void> {
   const { annotation, snapshot } = prepared
   const pageBox = pdfPageBox(page)
@@ -558,12 +577,20 @@ async function writeCustomAnnotation(
     Subtype: 'Stamp',
     Rect: pdfNumberArray(document, pdfRect),
     NM: PDFHexString.fromText(annotation.id),
-    T: PDFHexString.fromText(annotation.author.name),
+    T: PDFHexString.fromText(pdfAnnotationTitle(annotation, options)),
     Contents: PDFHexString.fromText(annotation.content?.text ?? ''),
     M: PDFHexString.fromText(toPdfDate(annotation.updatedAt ?? annotation.createdAt)),
     InkLayerCanonicalType: PDFHexString.fromText(annotation.type),
     InkLayerTypeData: PDFHexString.fromText(JSON.stringify(annotation.typeData ?? null)),
     InkLayerAppearance: PDFHexString.fromText(JSON.stringify(annotation.appearance)),
+    InkLayerAuthorId: PDFHexString.fromText(annotation.author.id),
+    InkLayerAuthorName: PDFHexString.fromText(annotation.author.name),
+    ...(annotation.referenceNumber === undefined ? {} : {
+      InkLayerReferenceNumber: annotation.referenceNumber
+    }),
+    ...(annotation.content?.references === undefined ? {} : {
+      InkLayerReferences: PDFHexString.fromText(JSON.stringify(annotation.content.references))
+    }),
     AP: document.context.obj({ N: appearanceRef }),
     F: 4,
     P: page.ref
@@ -584,43 +611,64 @@ function customNodeOperators(
   resources: CustomPdfResources,
   graphicsStateIndex: number
 ): PDFOperator[] {
-  if (node.className !== 'Rect' && node.className !== 'Ellipse' && node.className !== 'Line') {
+  if (node.className !== 'Rect' && node.className !== 'Ellipse' && node.className !== 'Line'
+    && node.className !== 'Arrow' && node.className !== 'Path') {
     throw new Error(`Controlled PDF appearance does not support ${node.className} primitives yet.`)
   }
   const opacity = numericNodeAttr(node, 'opacity', 1) * annotation.appearance.opacity
+  const strokePaint = nodePaint(node, 'stroke')
+  const fillPaint = nodePaint(node, 'fill')
   const strokeOpacity = numericNodeAttr(node, 'strokeOpacity', 1) * opacity
+    * (strokePaint?.opacity ?? 1)
   const fillOpacity = numericNodeAttr(node, 'fillOpacity', 1) * opacity
+    * (fillPaint?.opacity ?? 1)
   const graphicsStateName = `GS${graphicsStateIndex}`
   resources.ExtGState[graphicsStateName] = document.context.obj({
     Type: 'ExtGState', CA: strokeOpacity, ca: fillOpacity
   })
   const operators: PDFOperator[] = [pushGraphicsState(), setGraphicsState(graphicsStateName)]
-  const strokeColor = stringNodeAttr(node, 'stroke')
-  const fillColor = stringNodeAttr(node, 'fill')
-  if (strokeColor !== undefined) {
-    const [red, green, blue] = parseAnnotationColor(strokeColor)
+  if (strokePaint !== undefined) {
+    const [red, green, blue] = strokePaint.color
     operators.push(
       setStrokingRgbColor(red, green, blue),
       setLineWidth(numericNodeAttr(node, 'strokeWidth', 1)),
       setDashPattern(numberArrayNodeAttr(node, 'dash'), numericNodeAttr(node, 'dashOffset', 0))
     )
   }
-  if (fillColor !== undefined) {
-    const [red, green, blue] = parseAnnotationColor(fillColor)
+  if (fillPaint !== undefined) {
+    const [red, green, blue] = fillPaint.color
     operators.push(setFillingRgbColor(red, green, blue))
   }
-  if (node.className === 'Line') {
+  if (node.className === 'Line' || node.className === 'Arrow') {
     const points = numberArrayNodeAttr(node, 'points')
     if (points.length < 4 || points.length % 2 !== 0) throw new Error('Controlled line points are invalid.')
+    const localPoints: CoordinatePoint[] = []
     points.forEach((_, index) => {
       if (index % 2 !== 0) return
       const point = localPdfPoint(
         { x: points[index] ?? 0, y: points[index + 1] ?? 0 },
         node.attrs, rootAttrs, annotation, pageBox, annotationRect
       )
+      localPoints.push(point)
       operators.push(index === 0 ? moveTo(point.x, point.y) : lineTo(point.x, point.y))
     })
     if (node.attrs['closed'] === true) operators.push(closePath())
+    if (node.className === 'Arrow') operators.push(...arrowHeadOperators(
+      localPoints,
+      numericNodeAttr(node, 'pointerLength', 10),
+      numericNodeAttr(node, 'pointerWidth', 10)
+    ))
+  } else if (node.className === 'Path') {
+    const data = stringNodeAttr(node, 'data')
+    const points = data === undefined ? [] : sampleSvgPath(data)
+    if (points.length < 2) throw new Error('Controlled path data is invalid.')
+    points.forEach((point, index) => {
+      const local = localPdfPoint(
+        point, node.attrs, rootAttrs, annotation, pageBox, annotationRect
+      )
+      operators.push(index === 0 ? moveTo(local.x, local.y) : lineTo(local.x, local.y))
+    })
+    if (/\bZ\b/i.test(data ?? '')) operators.push(closePath())
   } else {
     const localBounds = localPdfBounds(node, rootAttrs, annotation, pageBox, annotationRect)
     if (node.className === 'Rect') {
@@ -629,12 +677,35 @@ function customNodeOperators(
       operators.push(...ellipseOperators(localBounds))
     }
   }
-  if (strokeColor !== undefined && fillColor !== undefined) operators.push(fillAndStroke())
-  else if (fillColor !== undefined) operators.push(fill())
-  else if (strokeColor !== undefined) operators.push(stroke())
+  if (strokePaint !== undefined && fillPaint !== undefined) operators.push(fillAndStroke())
+  else if (fillPaint !== undefined) operators.push(fill())
+  else if (strokePaint !== undefined) operators.push(stroke())
   else throw new Error('Controlled PDF primitive has no visible paint.')
   operators.push(popGraphicsState())
   return operators
+}
+
+/** Builds an outlined arrow head at the final segment endpoint. */
+function arrowHeadOperators(
+  points: readonly CoordinatePoint[],
+  pointerLength: number,
+  pointerWidth: number
+): PDFOperator[] {
+  const end = points.at(-1)
+  const previous = points.at(-2)
+  if (end === undefined || previous === undefined) return []
+  const angle = Math.atan2(end.y - previous.y, end.x - previous.x)
+  const baseX = end.x - Math.cos(angle) * pointerLength
+  const baseY = end.y - Math.sin(angle) * pointerLength
+  const halfWidth = pointerWidth / 2
+  const normalX = -Math.sin(angle) * halfWidth
+  const normalY = Math.cos(angle) * halfWidth
+  return [
+    moveTo(baseX + normalX, baseY + normalY),
+    lineTo(end.x, end.y),
+    lineTo(baseX - normalX, baseY - normalY),
+    closePath()
+  ]
 }
 
 /** Builds an ellipse path using four cubic Bézier segments. */
@@ -702,6 +773,28 @@ function stringNodeAttr(node: ValidatedKonvaNode, key: string): string | undefin
   return typeof value === 'string' ? value : undefined
 }
 
+/** Parses a validated renderer paint while retaining an rgba() alpha channel. */
+function nodePaint(
+  node: ValidatedKonvaNode,
+  key: 'stroke' | 'fill'
+): { color: ReturnType<typeof parseAnnotationColor>; opacity: number } | undefined {
+  const value = stringNodeAttr(node, key)
+  if (value === undefined || value.trim() === '') return undefined
+  const rgba = /^rgba\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(0(?:\.\d+)?|1(?:\.0+)?)\s*\)$/i.exec(value.trim())
+  if (rgba === null) return { color: parseAnnotationColor(value), opacity: 1 }
+  const red = Number(rgba[1])
+  const green = Number(rgba[2])
+  const blue = Number(rgba[3])
+  const opacity = Number(rgba[4])
+  if ([red, green, blue].some(channel => !Number.isInteger(channel) || channel < 0 || channel > 255)) {
+    throw new RangeError('Annotation rgba() channel is invalid.')
+  }
+  return {
+    color: parseAnnotationColor(`rgb(${red}, ${green}, ${blue})`),
+    opacity
+  }
+}
+
 /** Reads one validated finite numeric array node attribute. */
 function numberArrayNodeAttr(node: ValidatedKonvaNode, key: string): number[] {
   const value = node.attrs[key]
@@ -737,7 +830,8 @@ function baseDictionary(
   document: PDFDocument,
   page: PDFPage,
   annotation: Annotation & { type: AnnotationType },
-  pageBox: PdfPageBox
+  pageBox: PdfPageBox,
+  options: PdfExportOptions
 ): PDFDict {
   const color = parseAnnotationColor(primaryAppearanceColor(annotation))
   return document.context.obj({
@@ -745,18 +839,41 @@ function baseDictionary(
     Subtype: subtypeFor(annotation.type),
     Rect: pdfNumberArray(document, boundsToPdfRect(annotation.bounds, annotation.coordinateSpace, pageBox)),
     NM: PDFHexString.fromText(annotation.id),
-    T: PDFHexString.fromText(annotation.author.name),
+    T: PDFHexString.fromText(pdfAnnotationTitle(annotation, options)),
     Contents: PDFHexString.fromText(annotation.content?.text ?? ''),
     M: PDFHexString.fromText(toPdfDate(annotation.updatedAt ?? annotation.createdAt)),
     C: pdfNumberArray(document, color),
     CA: annotation.appearance.opacity * primaryComponentOpacity(annotation),
     InkLayerCanonicalType: PDFName.of(annotation.type),
     InkLayerAppearance: PDFHexString.fromText(JSON.stringify(annotation.appearance)),
+    InkLayerAuthorId: PDFHexString.fromText(annotation.author.id),
+    InkLayerAuthorName: PDFHexString.fromText(annotation.author.name),
+    ...(annotation.referenceNumber === undefined ? {} : {
+      InkLayerReferenceNumber: annotation.referenceNumber
+    }),
+    ...(annotation.content?.references === undefined ? {} : {
+      InkLayerReferences: PDFHexString.fromText(JSON.stringify(annotation.content.references))
+    }),
+    ...(annotation.type === 'note' ? { Name: 'Note' } : {}),
     // Match InkLayer React: image-backed Stamp annotations are printable but
     // locked against movement/resizing in conforming PDF viewers.
     F: isLockedImageStamp(annotation) ? 4 | 128 : 4,
     P: page.ref
   })
+}
+
+/** Resolves a readable PDF popup title without changing the stable `/NM` identity. */
+function pdfAnnotationTitle(annotation: Annotation, options: PdfExportOptions): string {
+  const configured = options.annotationTitle?.(structuredClone(annotation))
+  if (configured !== undefined) {
+    if (typeof configured !== 'string' || configured.trim() === '') {
+      throw new TypeError('annotationTitle must return a non-empty string.')
+    }
+    return configured
+  }
+  return annotation.referenceNumber === undefined
+    ? annotation.author.name
+    : `${annotation.author.name} · #${annotation.referenceNumber}`
 }
 
 /** Narrows annotations exported as immutable image-backed PDF Stamps. */
@@ -788,7 +905,11 @@ function writeTypeGeometry(
   } else if (annotation.type === 'line') {
     dictionary.set(PDFName.of('L'), pdfNumberArray(document, firstSnapshotPoints(snapshot, annotation, pageBox).slice(0, 4)))
   } else if (annotation.type === 'polygon' || annotation.type === 'polyline') {
-    dictionary.set(PDFName.of('Vertices'), pdfNumberArray(document, firstSnapshotPoints(snapshot, annotation, pageBox)))
+    const vertices = firstSnapshotPoints(snapshot, annotation, pageBox)
+    dictionary.set(PDFName.of('Vertices'), pdfNumberArray(
+      document,
+      annotation.type === 'polygon' ? removeClosingPoint(vertices) : vertices
+    ))
   } else if (annotation.type === 'free-text') {
     const color = parseAnnotationColor(annotation.appearance.text?.color ?? '#000000')
     const size = annotation.appearance.text?.fontSize ?? 12
@@ -847,6 +968,99 @@ async function writeImageAppearance(
   dictionary.set(PDFName.of('InkLayerImage'), PDFHexString.fromText(source))
 }
 
+/** Attaches a normal appearance stream so every built-in type renders consistently. */
+async function writeBuiltInAppearance(
+  document: PDFDocument,
+  dictionary: PDFDict,
+  annotation: Annotation,
+  snapshot: ValidatedKonvaSnapshot,
+  pageBox: PdfPageBox
+): Promise<void> {
+  if (annotation.type === 'note') return
+  if (dictionary.lookupMaybe(PDFName.of('AP'), PDFDict) !== undefined) return
+  const rect = boundsToPdfRect(annotation.bounds, annotation.coordinateSpace, pageBox)
+  const width = Math.max(Math.abs(rect[2] - rect[0]), 0.01)
+  const height = Math.max(Math.abs(rect[3] - rect[1]), 0.01)
+  const resources: CustomPdfResources = { ExtGState: {} }
+  const operators: PDFOperator[] = []
+  let graphicsStateIndex = 0
+  let font: PDFFont | undefined
+
+  for (const node of snapshot.root.children ?? []) {
+    if (node.attrs['visible'] === false || node.className === 'Image') continue
+    if (node.className === 'Text') {
+      if (annotation.type !== 'free-text') continue
+      font ??= await document.embedFont(StandardFonts.Helvetica)
+      resources.Font = { F0: font.ref }
+      operators.push(...builtInTextOperators(
+        node, snapshot.root.attrs, annotation, pageBox, rect,
+        document, resources, graphicsStateIndex, font
+      ))
+      graphicsStateIndex += 1
+      continue
+    }
+    if (node.className !== 'Rect' && node.className !== 'Ellipse'
+      && node.className !== 'Line' && node.className !== 'Arrow'
+      && node.className !== 'Path') continue
+    if (node.attrs['stroke'] === undefined && node.attrs['fill'] === undefined) continue
+    operators.push(...customNodeOperators(
+      node, snapshot.root.attrs, annotation, pageBox, rect,
+      document, resources, graphicsStateIndex
+    ))
+    graphicsStateIndex += 1
+  }
+  if (operators.length === 0) return
+
+  const appearance = document.context.formXObject(operators, {
+    BBox: document.context.obj([0, 0, width, height]),
+    Matrix: document.context.obj([1, 0, 0, 1, 0, 0]),
+    Resources: document.context.obj({
+      ExtGState: resources.ExtGState,
+      ...(resources.Font === undefined ? {} : { Font: resources.Font })
+    })
+  })
+  const reference = document.context.register(appearance)
+  dictionary.set(PDFName.of('AP'), document.context.obj({ N: reference }))
+}
+
+/** Converts a visible FreeText renderer node to PDF text operators. */
+function builtInTextOperators(
+  node: ValidatedKonvaNode,
+  rootAttrs: Readonly<Record<string, unknown>>,
+  annotation: Annotation,
+  pageBox: PdfPageBox,
+  annotationRect: readonly [number, number, number, number],
+  document: PDFDocument,
+  resources: CustomPdfResources,
+  graphicsStateIndex: number,
+  font: PDFFont
+): PDFOperator[] {
+  const paint = nodePaint(node, 'fill')
+  const text = stringNodeAttr(node, 'text') ?? annotation.content?.text ?? ''
+  if (paint === undefined || text.length === 0) return []
+  const graphicsStateName = `GS${graphicsStateIndex}`
+  resources.ExtGState[graphicsStateName] = document.context.obj({
+    Type: 'ExtGState',
+    CA: 1,
+    ca: annotation.appearance.opacity * numericNodeAttr(node, 'opacity', 1) * paint.opacity
+  })
+  const [red, green, blue] = paint.color
+  const size = numericNodeAttr(node, 'fontSize', annotation.appearance.text?.fontSize ?? 12)
+  const bounds = localPdfBounds(node, rootAttrs, annotation, pageBox, annotationRect)
+  const encoded = font.encodeText(text.replace(/\r?\n/g, ' '))
+  return [
+    pushGraphicsState(),
+    setGraphicsState(graphicsStateName),
+    setFillingRgbColor(red, green, blue),
+    beginText(),
+    setFontAndSize('F0', size),
+    setTextMatrix(1, 0, 0, 1, bounds.x, bounds.y + Math.max(0, bounds.height - size)),
+    showText(encoded),
+    endText(),
+    popGraphicsState()
+  ]
+}
+
 /** Returns the image payload owned by an image-backed canonical type. */
 function imageSource(annotation: Annotation): string | undefined {
   if (annotation.type === 'stamp') return annotation.content?.image
@@ -902,7 +1116,7 @@ function subtypeFor(type: AnnotationType): string {
     case 'highlight': return 'Highlight'
     case 'underline': return 'Underline'
     case 'strikeout': return 'StrikeOut'
-    case 'free-text': return 'Text'
+    case 'free-text': return 'FreeText'
     case 'rectangle': return 'Square'
     case 'circle': return 'Circle'
     case 'note': return 'Text'
@@ -1030,6 +1244,14 @@ function firstSnapshotPoints(
   return node === undefined
     ? boundsPerimeter(annotation, pageBox)
     : snapshotNodePoints(node, snapshot, annotation, pageBox)
+}
+
+/** Removes the renderer's explicit closing vertex from native PDF Polygon data. */
+function removeClosingPoint(points: readonly number[]): number[] {
+  if (points.length < 8) return [...points]
+  return points[0] === points.at(-2) && points[1] === points.at(-1)
+    ? points.slice(0, -2)
+    : [...points]
 }
 
 /** Converts one point-based renderer child to PDF coordinates. */

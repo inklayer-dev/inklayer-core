@@ -6,6 +6,8 @@
 
 import type { PdfPageBox } from '../../geometry/coordinates'
 import type { AnnotationAppearance, AnnotationType } from '../../domain/annotation'
+import type { User } from '../../domain/user'
+import type { AnnotationReference } from '../../domain/references'
 
 /** PDF.js string wrapper commonly used for title and contents. */
 export interface PdfJsStringValue {
@@ -59,6 +61,12 @@ export interface PdfJsAnnotationInput {
   canonicalType?: AnnotationType
   /** Exact canonical appearance emitted by InkLayer's own exporter. */
   appearance?: AnnotationAppearance
+  /** Original canonical author retained when `/T` uses a formatted title. */
+  inkLayerAuthor?: User
+  /** Stable document-scoped display number retained by InkLayer exports. */
+  referenceNumber?: number
+  /** Stable structured references retained beside readable `#N` text. */
+  references?: AnnotationReference[]
   /** Image payload recovered from an InkLayer image annotation dictionary. */
   image?: string
   /** Whether PDF border metadata identifies a cloudy polygon. */

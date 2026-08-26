@@ -29,6 +29,16 @@ downloadBlob({
 
 `sourceBytes` 是原始 PDF 的字节数据，需要由应用自行保留，或在导出时重新获取。导出器会把当前批注写入新的 PDF，同时保留原始文档的矢量内容。传入 `core.annotationTypes` 后，自定义批注类型也可以参与导出。
 
+其他 PDF 软件会显示批注的 `/T` 标题。有 `referenceNumber` 时，Core 默认将它写成“`作者 · #编号`”；用于关联的稳定批注 ID 仍保存在 `/NM` 中。如果产品需要另一种显示方式，可以只修改标题：
+
+```ts
+const pdfBytes = await buildAnnotatedPdf(sourceBytes, annotations, {
+  annotationTitle: annotation => `审阅 ${annotation.referenceNumber ?? '—'}`
+})
+```
+
+InkLayer 还会在导出的 PDF 中保留原始作者、引用编号和结构化引用，供再次导入时恢复。修改 `annotationTitle` 不会改变权限归属或引用目标。
+
 `buildAnnotatedPdf()` 只返回 PDF 字节，不负责命名、下载或上传。默认的 `strict` 策略遇到无效或不支持的批注会直接报错；`lenient` 会跳过该批注，并通过可选的 `onWarning` 回调报告问题。受密码保护的原始 PDF 字节不能通过这条客户端矢量路径导出。
 
 ## 打印普通 PDF

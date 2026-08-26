@@ -501,6 +501,9 @@ class AnnotationEngineImpl implements AnnotationEngine {
     }
     if (this.tool === tool) return
     this.tool = tool
+    if (tool !== 'select' && this.hoverBySource.has('canvas')) {
+      this.setHoveredAnnotation(null, 'canvas')
+    }
     this.root.dataset['inklayerTool'] = tool
     this.syncCreationControllerState()
     this.syncImageAssetState()

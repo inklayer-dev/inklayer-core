@@ -113,7 +113,8 @@ function restyleChild(
   appearance: AnnotationAppearance
 ): void {
   for (const key of PAINT_ATTRS) delete node.attrs[key]
-  if (node.className === 'Image' && (type === 'signature' || type === 'stamp')) {
+  if (type === 'note') restyleNoteChild(node, appearance)
+  else if (node.className === 'Image' && (type === 'signature' || type === 'stamp')) {
     // Raster assets own their pixels; annotation paint must not create a
     // browser-only frame that is absent from the exported PDF appearance.
   } else if (type === 'highlight') Object.assign(node.attrs, fillAttrs(appearance))
@@ -125,7 +126,7 @@ function restyleChild(
       )
     })
   } else if (node.className === 'Text') Object.assign(node.attrs, textAttrs(appearance))
-  else if (node.className === 'Rect' && (type === 'note' || type === 'free-text')) {
+  else if (node.className === 'Rect' && type === 'free-text') {
     Object.assign(node.attrs, strokeAttrs(appearance), fillAttrs(appearance))
   } else {
     Object.assign(node.attrs, strokeAttrs(appearance))
@@ -138,7 +139,9 @@ function restyleChild(
 
 const PAINT_ATTRS = [
   'stroke', 'strokeWidth', 'strokeOpacity', 'fill', 'fillOpacity', 'opacity',
-  'dash', 'dashOffset', 'lineCap', 'lineJoin', 'fontSize'
+  'dash', 'dashOffset', 'lineCap', 'lineJoin', 'fontSize', 'fillPriority',
+  'fillLinearGradientStartPoint', 'fillLinearGradientEndPoint',
+  'fillLinearGradientColorStops'
 ] as const
 
 /** Builds verified Konva child nodes for one canonical tool. */
@@ -210,10 +213,7 @@ function buildChildren(input: ToolSnapshotInput): readonly Record<string, unknow
         attrs: { x, y, width, height, src: input.content?.image ?? '' }
       }]
     case 'note':
-      return [
-        { className: 'Rect', attrs: { x, y, width, height, ...stroke, ...fill } },
-        { className: 'Text', attrs: { x, y, width, height, text: input.content?.text ?? '', ...text } }
-      ]
+      return buildNoteIcon(input.bounds, input.appearance, input.content?.text ?? '')
     case 'line':
       return [{ className: 'Line', attrs: { points: input.points ?? [x, y, x + width, y + height], ...stroke } }]
     case 'arrow':
@@ -240,6 +240,139 @@ function buildChildren(input: ToolSnapshotInput): readonly Record<string, unknow
           ...fill
         }
       }]
+  }
+}
+
+/** Builds a folded document icon while keeping its color controlled by appearance. */
+function buildNoteIcon(
+  bounds: AnnotationBounds,
+  appearance: AnnotationAppearance,
+  content: string
+): readonly Record<string, unknown>[] {
+  const { x, y, width, height } = bounds
+  const size = Math.min(width, height)
+  const foldSize = Math.min(5, size * 0.25)
+  const lineWidth = Math.max(0.6, size / 30)
+  const paper = {
+    className: 'Rect',
+    attrs: {
+      name: 'inklayer-note-paper', x, y, width, height,
+      cornerRadius: Math.min(4, size * 0.18),
+      ...notePaperPaint(appearance, height)
+    }
+  }
+  const fold = {
+    className: 'Line',
+    attrs: {
+      name: 'inklayer-note-fold',
+      points: [
+        x + width - foldSize, y,
+        x + width, y + foldSize,
+        x + width - foldSize, y + foldSize
+      ],
+      closed: true,
+      fill: 'rgba(255, 255, 255, 0.86)',
+      stroke: 'rgba(0, 0, 0, 0.14)',
+      strokeWidth: lineWidth
+    }
+  }
+  const foldShadow = {
+    className: 'Line',
+    attrs: {
+      name: 'inklayer-note-fold-shadow',
+      points: [
+        x + width - foldSize, y + foldSize,
+        x + width, y + foldSize,
+        x + width - foldSize, y
+      ],
+      stroke: 'rgba(0, 0, 0, 0.12)',
+      strokeWidth: Math.max(0.4, lineWidth * 0.65)
+    }
+  }
+  const padding = Math.max(3, size * 0.17)
+  const spacing = (height - padding * 2) / 4
+  const lines = Array.from({ length: 3 }, (_, index) => {
+    const lineY = y + padding + (index + 1) * spacing
+    return {
+      className: 'Line',
+      attrs: {
+        name: 'inklayer-note-text-line',
+        points: [
+          x + padding,
+          lineY,
+          x + width - (index === 0 ? foldSize + 2 : padding),
+          lineY
+        ],
+        ...noteTextLinePaint(appearance, Math.max(1, size / 18))
+      }
+    }
+  })
+  const contentNode = {
+    className: 'Text',
+    attrs: {
+      name: 'inklayer-note-content', x, y, width, height,
+      text: content, visible: false, listening: false, ...textAttrs(appearance)
+    }
+  }
+  return [paper, fold, foldShadow, ...lines, contentNode]
+}
+
+/** Reapplies appearance without recoloring the fixed folded-corner details. */
+function restyleNoteChild(node: MutableKonvaNode, appearance: AnnotationAppearance): void {
+  switch (node.attrs['name']) {
+    case 'inklayer-note-paper':
+      Object.assign(node.attrs, notePaperPaint(appearance, Number(node.attrs['height'] ?? 0)))
+      break
+    case 'inklayer-note-fold':
+      Object.assign(node.attrs, {
+        fill: 'rgba(255, 255, 255, 0.86)',
+        stroke: 'rgba(0, 0, 0, 0.14)',
+        strokeWidth: 0.7
+      })
+      break
+    case 'inklayer-note-fold-shadow':
+      Object.assign(node.attrs, { stroke: 'rgba(0, 0, 0, 0.12)', strokeWidth: 0.4 })
+      break
+    case 'inklayer-note-text-line':
+      Object.assign(node.attrs, noteTextLinePaint(appearance, 1.2))
+      break
+    case 'inklayer-note-content':
+      Object.assign(node.attrs, textAttrs(appearance), { visible: false, listening: false })
+      break
+  }
+}
+
+/** Returns the paper fill, gradient, and border derived from Note appearance. */
+function notePaperPaint(
+  appearance: AnnotationAppearance,
+  height: number
+): Record<string, unknown> {
+  const fill = appearance.fill
+  const fillColor = fill?.color ?? '#ffdd1f'
+  const fillOpacity = fill?.opacity ?? 1
+  return {
+    ...strokeAttrs(appearance),
+    fill: colorWithOpacity(fillColor, fillOpacity),
+    fillPriority: 'linear-gradient',
+    fillLinearGradientStartPoint: { x: 0, y: 0 },
+    fillLinearGradientEndPoint: { x: 0, y: height },
+    fillLinearGradientColorStops: [
+      0, colorWithOpacity(fillColor, fillOpacity),
+      1, `rgba(255, 255, 255, ${fillOpacity})`
+    ]
+  }
+}
+
+/** Returns the document-line color derived from Note text appearance. */
+function noteTextLinePaint(
+  appearance: AnnotationAppearance,
+  width: number
+): Record<string, unknown> {
+  const text = appearance.text
+  return {
+    stroke: colorWithOpacity(text?.color ?? '#222222', (text?.opacity ?? 1) * 0.78),
+    strokeWidth: width,
+    lineCap: 'round'
   }
 }
 
@@ -325,7 +458,10 @@ export function buildCloudPathFromPoints(
     if (x !== undefined && y !== undefined) vertices.push({ x: x - bounds.x, y: y - bounds.y })
   }
   const first = vertices[0]
-  if (close && first !== undefined) vertices.push({ x: first.x, y: first.y })
+  const last = vertices.at(-1)
+  if (close && first !== undefined && (last?.x !== first.x || last.y !== first.y)) {
+    vertices.push({ x: first.x, y: first.y })
+  }
   return generateCloudPath(vertices)
 }
 

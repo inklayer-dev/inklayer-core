@@ -19,6 +19,8 @@ const runtime = vi.hoisted(() => ({
     triggerHover: (hovered: boolean) => void
     destroyed: boolean
     draggable: boolean
+    listening: boolean
+    clampDrag: (position: { x: number; y: number }) => { x: number; y: number }
   }>(),
   transformers: [] as Array<{
     selected: unknown[]
@@ -26,11 +28,16 @@ const runtime = vi.hoisted(() => ({
     rotate: boolean
     anchors: string[]
     ratioLocked: boolean
+    clampBox: (
+      oldBox: { x: number; y: number; width: number; height: number; rotation: number },
+      nextBox: { x: number; y: number; width: number; height: number; rotation: number }
+    ) => { x: number; y: number; width: number; height: number; rotation: number }
   }>,
   previews: [] as Array<{
     className: string
     attrs: Record<string, unknown>
     destroyed: boolean
+    trigger: (event: string) => void
   }>
 }))
 
@@ -41,11 +48,15 @@ vi.mock('konva', () => {
     private readonly listeners = new Map<string, (event: { target: MockStage }) => void>()
     private readonly horizontalScale: number
     private readonly verticalScale: number
+    private readonly stageWidth: number
+    private readonly stageHeight: number
 
     /** Creates and records one Stage. */
-    public constructor(options: { scaleX?: number; scaleY?: number }) {
+    public constructor(options: { width: number; height: number; scaleX?: number; scaleY?: number }) {
       this.horizontalScale = options.scaleX ?? 1
       this.verticalScale = options.scaleY ?? 1
+      this.stageWidth = options.width
+      this.stageHeight = options.height
       runtime.stages.push(this)
     }
 
@@ -73,10 +84,10 @@ vi.mock('konva', () => {
     }
 
     /** Returns the deterministic physical Stage width. */
-    public width(): number { return 400 }
+    public width(): number { return this.stageWidth }
 
     /** Returns the deterministic physical Stage height. */
-    public height(): number { return 600 }
+    public height(): number { return this.stageHeight }
 
     /** Returns the deterministic horizontal Stage scale. */
     public scaleX(): number { return this.horizontalScale }
@@ -115,6 +126,10 @@ vi.mock('konva', () => {
     public rotate = false
     public anchors: string[] = []
     public ratioLocked = false
+    public clampBox = (
+      _oldBox: { x: number; y: number; width: number; height: number; rotation: number },
+      nextBox: { x: number; y: number; width: number; height: number; rotation: number }
+    ): { x: number; y: number; width: number; height: number; rotation: number } => nextBox
 
     /** Creates and records one Transformer. */
     public constructor(_options: unknown) {
@@ -144,7 +159,7 @@ vi.mock('konva', () => {
     public enabledAnchors(value: string[]): void { this.anchors = [...value] }
 
     /** Accepts the box constraint callback. */
-    public boundBoxFunc(_value: unknown): void {}
+    public boundBoxFunc(value: typeof this.clampBox): void { this.clampBox = value }
 
     /** Releases the Transformer. */
     public destroy(): void {}
@@ -166,7 +181,9 @@ vi.mock('konva', () => {
         triggerTransform: () => this.transformListener?.(),
         triggerHover: (hovered: boolean) => hovered ? this.enterListener?.() : this.leaveListener?.(),
         destroyed: false,
-        draggable: false
+        draggable: false,
+        listening: true,
+        clampDrag: (position: { x: number; y: number }) => position
       }
       this.record = record
       runtime.groups.set(id, record)
@@ -178,6 +195,8 @@ vi.mock('konva', () => {
       triggerHover: (hovered: boolean) => void
       destroyed: boolean
       draggable: boolean
+      listening: boolean
+      clampDrag: (position: { x: number; y: number }) => { x: number; y: number }
     }
 
     /** Returns the verified root class name. */
@@ -193,14 +212,20 @@ vi.mock('konva', () => {
     /** Accepts drag capability. */
     public draggable(value: boolean): void { this.record.draggable = value }
 
+    /** Accepts pointer hit-testing capability. */
+    public listening(value: boolean): void { this.record.listening = value }
+
     /** Accepts a drag constraint callback. */
-    public dragBoundFunc(_value: unknown): void {}
+    public dragBoundFunc(value: typeof this.record.clampDrag): void { this.record.clampDrag = value }
 
     /** Returns the deterministic group x position. */
     public x(): number { return 5 }
 
     /** Returns the deterministic group y position. */
     public y(): number { return 6 }
+
+    /** Returns the deterministic absolute group position. */
+    public getAbsolutePosition(): { x: number; y: number } { return { x: 5, y: 6 } }
 
     /** Registers selection or transform listeners. */
     public on(events: string, listener: () => void): void {
@@ -259,11 +284,22 @@ vi.mock('konva', () => {
 
   class MockShape {
     public layer: MockLayer | undefined
-    private readonly record: { className: string; attrs: Record<string, unknown>; destroyed: boolean }
+    private readonly listeners = new Map<string, (event: { cancelBubble: boolean }) => void>()
+    private readonly record: {
+      className: string
+      attrs: Record<string, unknown>
+      destroyed: boolean
+      trigger: (event: string) => void
+    }
 
     /** Creates one lightweight gesture preview of a fixed class. */
-    public constructor(private readonly className: string, _options: unknown) {
-      this.record = { className, attrs: {}, destroyed: false }
+    public constructor(private readonly className: string, options: unknown) {
+      this.record = {
+        className,
+        attrs: structuredClone(options as Record<string, unknown>),
+        destroyed: false,
+        trigger: (event) => this.listeners.get(event)?.({ cancelBubble: false })
+      }
       runtime.previews.push(this.record)
     }
 
@@ -271,7 +307,21 @@ vi.mock('konva', () => {
     public getClassName(): string { return this.className }
 
     /** Accepts live preview geometry. */
-    public setAttrs(attrs: Record<string, unknown>): void { this.record.attrs = structuredClone(attrs) }
+    public setAttrs(attrs: Record<string, unknown>): void {
+      Object.assign(this.record.attrs, structuredClone(attrs))
+    }
+
+    /** Registers namespaced preview-handle events. */
+    public on(events: string, listener: (event: { cancelBubble: boolean }) => void): void {
+      events.split(' ').forEach((event) => this.listeners.set(event.split('.')[0] ?? event, listener))
+    }
+
+    /** Gets or replaces the preview stroke. */
+    public stroke(value?: string): string | MockShape | undefined {
+      if (value === undefined) return this.record.attrs['stroke'] as string | undefined
+      this.record.attrs['stroke'] = value
+      return this
+    }
 
     /** Accepts preview stacking changes. */
     public moveToTop(): void {}
@@ -512,6 +562,76 @@ describe('Konva painter ownership', () => {
     engine.destroy()
   })
 
+  it.each([
+    { scale: 2, stageWidth: 400, stageHeight: 600 },
+    { scale: 0.5, stageWidth: 100, stageHeight: 150 }
+  ])('keeps drag and resize bounds in Stage coordinates at $scale×', async ({
+    scale, stageWidth, stageHeight
+  }) => {
+    runtime.groups.clear()
+    runtime.transformers.splice(0)
+    const engine = createAnnotationEngine({
+      root: createRoot(), currentUser: { id: 'a', name: 'A' }
+    })
+    await engine.attachPage({
+      pageIndex: 0, container: createContainer(), width: 200, height: 300, scale
+    })
+    const annotation = engine.createAnnotation({
+      type: 'rectangle', pageIndex: 0, bounds: { x: 10, y: 20, width: 30, height: 40 }
+    })
+    engine.setSelection({ ids: [annotation.id], primaryId: annotation.id })
+
+    const group = runtime.groups.get(annotation.id)
+    const transformer = runtime.transformers[0]
+    expect(group?.clampDrag({ x: stageWidth - 30, y: stageHeight - 40 }))
+      .toEqual({ x: stageWidth - 30, y: stageHeight - 40 })
+    expect(group?.clampDrag({ x: stageWidth + 50, y: stageHeight + 50 }))
+      .toEqual({ x: stageWidth - 20, y: stageHeight - 30 })
+
+    const oldBox = { x: 10, y: 20, width: 30, height: 40, rotation: 0 }
+    const insideBox = {
+      x: stageWidth - 40, y: stageHeight - 50, width: 30, height: 40, rotation: 0
+    }
+    const outsideBox = { ...insideBox, x: stageWidth - 20 }
+    expect(transformer?.clampBox(oldBox, insideBox)).toEqual(insideBox)
+    expect(transformer?.clampBox(oldBox, outsideBox)).toEqual(oldBox)
+    engine.destroy()
+  })
+
+  it('enables dragging only for the selected annotation', async () => {
+    runtime.groups.clear()
+    const engine = createAnnotationEngine({
+      root: createRoot(), currentUser: { id: 'a', name: 'A' }
+    })
+    await engine.attachPage({
+      pageIndex: 0, container: createContainer(), width: 200, height: 300
+    })
+    const rectangle = engine.createAnnotation({
+      type: 'rectangle', pageIndex: 0, bounds: { x: 10, y: 20, width: 30, height: 40 }
+    })
+    const ink = engine.createAnnotation({
+      type: 'freehand', pageIndex: 0, bounds: { x: 60, y: 70, width: 40, height: 30 },
+      points: [60, 70, 80, 85, 100, 100]
+    })
+
+    engine.setSelection({ ids: [rectangle.id], primaryId: rectangle.id })
+    expect(runtime.groups.get(rectangle.id)?.draggable).toBe(true)
+    expect(runtime.groups.get(ink.id)?.draggable).toBe(false)
+    expect(runtime.groups.get(rectangle.id)?.listening).toBe(true)
+    expect(runtime.groups.get(ink.id)?.listening).toBe(true)
+
+    engine.setSelection({ ids: [ink.id], primaryId: ink.id })
+    expect(runtime.groups.get(rectangle.id)?.draggable).toBe(false)
+    expect(runtime.groups.get(ink.id)?.draggable).toBe(true)
+
+    engine.setTool('rectangle')
+    expect(runtime.groups.get(rectangle.id)?.draggable).toBe(false)
+    expect(runtime.groups.get(ink.id)?.draggable).toBe(false)
+    expect(runtime.groups.get(rectangle.id)?.listening).toBe(false)
+    expect(runtime.groups.get(ink.id)?.listening).toBe(false)
+    engine.destroy()
+  })
+
   it('isolates two instances and routes transform state through the facade', async () => {
     runtime.stages.splice(0)
     runtime.groups.clear()
@@ -609,7 +729,7 @@ describe('Konva painter ownership', () => {
     vi.useRealTimers()
   })
 
-  it('snaps near-axis Free-highlight input and keeps Polygon/Cloud previews open', async () => {
+  it('snaps Free-highlight, positions Ellipse, and distinguishes open and closed multi-point tools', async () => {
     runtime.stages.splice(0)
     runtime.previews.splice(0)
     const engine = createAnnotationEngine({ root: createRoot(), currentUser: { id: 'a', name: 'A' } })
@@ -627,10 +747,57 @@ describe('Konva painter ownership', () => {
     }
     expect(highlightSnapshot.children?.[0]?.attrs?.points).toEqual([10, 10, 100, 10])
 
+    engine.setTool('circle')
+    stage?.setPointer(140, 120)
+    stage?.trigger('mousedown')
+    stage?.setPointer(60, 40)
+    stage?.trigger('mousemove')
+    const ellipsePreview = runtime.previews.at(-1)
+    expect(ellipsePreview?.className).toBe('Ellipse')
+    expect(ellipsePreview?.attrs).toMatchObject({
+      x: 100,
+      y: 80,
+      radiusX: 40,
+      radiusY: 40,
+      strokeScaleEnabled: false,
+      perfectDrawEnabled: false
+    })
+    stage?.trigger('mouseup')
+
+    engine.setTool('polyline')
+    stage?.setPointer(20, 120)
+    stage?.trigger('mousedown')
+    expect(runtime.previews.some(
+      (preview) => preview.attrs['name'] === 'inklayer-gesture-start-handle'
+        && !preview.destroyed
+    )).toBe(false)
+    stage?.setPointer(80, 120)
+    stage?.trigger('mousedown')
+    stage?.setPointer(60, 180)
+    stage?.trigger('mousedown')
+    stage?.trigger('dblclick')
+    const polyline = [...engine.repository.getAll()].reverse().find((item) => item.type === 'polyline')
+    const polylineSnapshot = JSON.parse(polyline?.rendererState.serialized ?? '{}') as {
+      children?: Array<{ attrs?: { closed?: boolean; points?: number[] } }>
+    }
+    expect(polyline).toBeDefined()
+    expect(polylineSnapshot.children?.[0]?.attrs?.closed).not.toBe(true)
+    expect(polylineSnapshot.children?.[0]?.attrs?.points?.slice(0, 2))
+      .not.toEqual(polylineSnapshot.children?.[0]?.attrs?.points?.slice(-2))
+
     for (const tool of ['polygon', 'cloud'] as const) {
       engine.setTool(tool)
       stage?.setPointer(20, 20)
       stage?.trigger('mousedown')
+      const startHandle = [...runtime.previews].reverse().find(
+        (preview) => preview.attrs['name'] === 'inklayer-gesture-start-handle'
+          && !preview.destroyed
+      )
+      expect(startHandle).toBeDefined()
+      startHandle?.trigger('mouseenter')
+      expect(startHandle?.attrs['stroke']).toBe('#1677ff')
+      startHandle?.trigger('mouseleave')
+      expect(startHandle?.attrs['stroke']).toBe('#64748b')
       stage?.setPointer(80, 20)
       stage?.trigger('mousemove')
       if (tool === 'cloud') {
@@ -639,7 +806,26 @@ describe('Konva painter ownership', () => {
       } else {
         expect(runtime.previews.at(-1)?.attrs['closed']).toBe(false)
       }
-      stage?.trigger('dblclick')
+      stage?.trigger('mousedown')
+      if (tool === 'polygon') {
+        stage?.trigger('dblclick')
+        expect(engine.repository.getAll().some((item) => item.type === 'polygon')).toBe(false)
+      }
+      stage?.setPointer(60, 80)
+      stage?.trigger('mousedown')
+      if (tool === 'polygon') stage?.trigger('dblclick')
+      else startHandle?.trigger('mouseup')
+      const annotation = [...engine.repository.getAll()].reverse().find((item) => item.type === tool)
+      expect(annotation).toBeDefined()
+      expect(startHandle?.destroyed).toBe(true)
+      if (tool === 'polygon') {
+        const snapshot = JSON.parse(annotation?.rendererState.serialized ?? '{}') as {
+          children?: Array<{ attrs?: { closed?: boolean; points?: number[] } }>
+        }
+        expect(snapshot.children?.[0]?.attrs?.closed).toBe(true)
+        expect(snapshot.children?.[0]?.attrs?.points?.slice(0, 2))
+          .toEqual(snapshot.children?.[0]?.attrs?.points?.slice(-2))
+      }
     }
     engine.destroy()
   })
