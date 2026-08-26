@@ -1,10 +1,35 @@
-# Keyboard and Accessibility Contract
+# Accessibility
 
 InkLayer divides accessibility ownership at the document boundary. Core owns
 keyboard and assistive semantics for PDF text, annotation Canvas content, and
 temporary direct-document editors. React, Vue, and other product adapters own
 their labelled toolbars, sidebars, dialogs, contextual menus, shortcuts, and
 application-level focus order.
+
+## Configure labels and keyboard movement
+
+Defaults are usable without configuration. Provide localized labels and movement steps through the annotation options when needed:
+
+```ts
+const core = await createInkLayer({
+  root,
+  pageFlow: { container: pages },
+  annotation: {
+    keyboard: {
+      nudgeStep: 1,
+      acceleratedNudgeStep: 10
+    },
+    accessibility: {
+      rootLabel: 'PDF annotations',
+      pageLabel: pageIndex => `Annotations on page ${pageIndex + 1}`,
+      annotationLabel: annotation =>
+        `${annotation.type} on page ${annotation.pageIndex + 1}`
+    }
+  }
+})
+```
+
+Core does not overwrite an accessible name, role, or tab index already supplied by the application.
 
 ## Annotation keyboard contract
 
@@ -33,6 +58,13 @@ Canvas annotation clicks select the annotation and focus the Core root without
 scrolling. A product sidebar should call `setSelection(..., 'sidebar')` and keep
 its own focus; it must not move focus into the Canvas merely because selection
 state changed.
+
+```ts
+core.annotations.setSelection(
+  { ids: [annotation.id], primaryId: annotation.id },
+  'sidebar'
+)
+```
 
 ## Screen-reader representation
 

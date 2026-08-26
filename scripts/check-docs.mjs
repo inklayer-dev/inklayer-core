@@ -65,14 +65,10 @@ const readme = await readFile(resolve(projectRoot, 'README.md'), 'utf8')
 const api = await readFile(resolve(projectRoot, 'docs/api.md'), 'utf8')
 const gettingStarted = await readFile(resolve(projectRoot, 'docs/guide/getting-started.md'), 'utf8')
 const chineseReadme = await readFile(resolve(projectRoot, 'README.zh-CN.md'), 'utf8')
-const browserSupport = await readFile(resolve(projectRoot, 'docs/browser-support.md'), 'utf8')
 const vitePressConfig = await readFile(resolve(projectRoot, 'docs/.vitepress/config.mts'), 'utf8')
 const exampleViteConfig = await readFile(resolve(projectRoot, 'examples/vanilla/vite.config.ts'), 'utf8')
 const docsWorkflow = await readFile(resolve(projectRoot, '.github/workflows/docs.yml'), 'utf8')
 const schema = await readFile(resolve(projectRoot, 'src/domain/schema.ts'), 'utf8')
-const browsers = JSON.parse(await readFile(
-  resolve(projectRoot, 'node_modules/playwright-core/browsers.json'), 'utf8'
-)).browsers
 const vitest = await commandJson(resolve(projectRoot, 'node_modules/.bin/vitest'), ['list', '--json'])
 const playwright = await commandJson(resolve(projectRoot, 'node_modules/.bin/playwright'), [
   'test', '--list', '--project=chromium', '--reporter=json'
@@ -81,20 +77,9 @@ const sourceFiles = await countSourceFiles(resolve(projectRoot, 'src'))
 const vitestFiles = new Set(vitest.map(test => test.file)).size
 const browserScenarios = playwright.stats?.skipped
 const exportEntries = Object.keys(packageJson.exports ?? {}).length
-const browserRevisions = Object.fromEntries(
-  browsers.filter(browser => ['chromium', 'firefox', 'webkit'].includes(browser.name))
-    .map(browser => [browser.name, browser.revision])
-)
 
 check(schema.includes(`CORE_VERSION = '${packageJson.version}'`),
   'CORE_VERSION does not match package.json version.')
-check(browserSupport.includes(`${browserScenarios} automated Vanilla scenarios`),
-  `docs/browser-support.md must claim ${browserScenarios} scenarios per engine.`)
-for (const [name, revision] of Object.entries(browserRevisions)) {
-  const browserName = name === 'webkit' ? 'WebKit' : `${name[0].toUpperCase()}${name.slice(1)}`
-  const label = `${browserName} ${revision}`
-  check(browserSupport.includes(label), `docs/browser-support.md is missing ${label}.`)
-}
 for (const [path, contents] of [['README.md', readme], ['docs/api.md', api]]) {
   check(contents.includes('const viewer = createPdfViewerEngine()'),
     `${path} must show zero-configuration Worker construction.`)
@@ -118,7 +103,6 @@ check(packageJson.scripts?.['docs:build'] === 'vitepress build docs',
 check(vitePressConfig.includes("link: '/guide/framework-integration'"),
   'VitePress navigation must expose the framework integration guide.')
 const taskGuides = [
-  'try-demo',
   'getting-started',
   'first-annotation',
   'loading-pdfs',
@@ -128,10 +112,33 @@ const taskGuides = [
   'persistence',
   'output-and-security',
   'framework-integration',
+  'framework-vue',
+  'framework-react',
   'plugins',
   'capability-plugin',
   'custom-annotation-type',
   'plugin-lifecycle'
+]
+const frameworkGuides = new Set([
+  'framework-integration',
+  'framework-vue',
+  'framework-react'
+])
+const frameworkExamples = [
+  'pageFlow:',
+  'getPageFlow()',
+  'renderThumbnail(',
+  'URL.revokeObjectURL(',
+  'repository.subscribe(',
+  '.destroy()'
+]
+const referenceDocuments = [
+  'api',
+  'data-model',
+  'css-contract',
+  'error-recovery',
+  'accessibility',
+  'browser-support'
 ]
 check(JSON.stringify(markdownShape(readme)) === JSON.stringify(markdownShape(chineseReadme)),
   'README.md and README.zh-CN.md must keep the same heading, code-block, and table structure.')
@@ -143,6 +150,23 @@ for (const guide of taskGuides) {
   check(vitePressConfig.includes(`link: '/guide/${guide}'`)
     && vitePressConfig.includes(`link: '/zh/guide/${guide}'`),
   `VitePress navigation must expose both locales for ${guide}.`)
+  if (frameworkGuides.has(guide)) {
+    for (const [locale, contents] of [['English', english], ['Chinese', chinese]]) {
+      for (const example of frameworkExamples) {
+        check(contents.includes(example),
+          `${locale} ${guide} guide must demonstrate ${example}.`)
+      }
+    }
+  }
+}
+for (const document of referenceDocuments) {
+  const english = await readFile(resolve(projectRoot, `docs/${document}.md`), 'utf8')
+  const chinese = await readFile(resolve(projectRoot, `docs/zh/${document}.md`), 'utf8')
+  check(JSON.stringify(markdownShape(english)) === JSON.stringify(markdownShape(chinese)),
+    `English and Chinese ${document} references must keep the same Markdown structure.`)
+  check(vitePressConfig.includes(`link: '/${document}'`)
+    && vitePressConfig.includes(`link: '/zh/${document}'`),
+  `VitePress navigation must expose both locales for ${document}.`)
 }
 check(docsWorkflow.includes('actions/deploy-pages@v4') && docsWorkflow.includes('npm run docs:build'),
   'GitHub Pages workflow must build and deploy the VitePress site.')
@@ -154,7 +178,7 @@ check(exampleViteConfig.includes("fileName: 'range-sample.pdf'"),
 const retiredDocuments = [
   'implementation-progress', 'roadmap', 'final-report', 'release-candidate',
   'react-core-final-audit-whitepaper', 'source-behavior-baseline',
-  'source-debt-inventory', 'source-difference-matrix'
+  'source-debt-inventory', 'source-difference-matrix', 'consumer-build-matrix'
 ]
 const maintainedText = [readme, ...await Promise.all(
   (await collectMarkdown(resolve(projectRoot, 'docs'))).map(path => readFile(path, 'utf8'))

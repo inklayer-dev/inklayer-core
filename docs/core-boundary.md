@@ -1,76 +1,62 @@
-# Core Product Boundary
+# Core boundary
 
-InkLayer Core owns behavior that must remain identical across React, Vue,
-Vanilla, and future consumers. Framework adapters own product composition and
-presentation. The dividing line is behavioral consistency—not whether a feature
-has visible UI.
+InkLayer Core provides document and annotation behavior, not a finished PDF application. This page answers a practical question: when building a Viewer, which work belongs in Core, and which work belongs in the application or framework component?
 
-## Responsibility test
+## A simple decision rule
 
-A capability belongs in Core when changing it independently in two framework
-adapters could alter PDF interpretation, page coordinates, annotation data,
-direct document manipulation, resource ownership, or persisted/exported output.
+A behavior belongs in Core when implementing it differently across React, Vue, and Vanilla JavaScript could change any of the following:
 
-A capability belongs in a framework adapter when it controls product layout,
-branding, workflow composition, routing, copy, or a business-specific policy.
+- PDF interpretation or page coordinates;
+- annotation data, interaction, or exported output;
+- document permissions or direct manipulation;
+- resource ownership and cleanup.
 
-Many visible features split across both layers: Core exposes a headless model and
-browser engine behavior, while the framework renders the surrounding controls.
+A behavior belongs in the application when it mainly controls layout, branding, routing, copy, business workflow, authenticated identity, or server policy.
 
-## Required split
+Many features cross the boundary. In that case, Core owns the consistent behavior and data, while the application owns the controls and presentation.
 
-| Capability | Core | Framework adapter |
-|---|---|---|
-| Viewer | loading, pages, unified numeric/adaptive scale, pinch anchoring, render lifecycle, navigation | application layout and route state |
-| Thumbnails | render queue, cache, cancellation, page identity | sidebar/grid presentation |
-| Outline | extraction, destination resolution, navigation target | tree presentation and disclosure state |
-| Search | extraction, matching, result order, active-result navigation | search field and result list |
-| Text selection | PDF.js TextLayer, DOM Range normalization, retained selection state, page-space rectangles | contextual action menu |
-| Password/security | password request lifecycle, retry/cancel, permission normalization | credential dialog and policy copy |
-| Page layout | single/continuous/facing modes; virtual page shells, render-ahead, scale, navigation, visible-page lifecycle | mode controls, scrollbar styling and surrounding layout |
-| Watermark | validated policy, Canvas/PDF rendering | identity data and policy controls |
-| Print | permission enforcement, vector/raster composition, watermark/annotation merge, browser resource lifecycle | print options and command UI |
-| Annotation interaction | hit testing, selection, drag, resize, rotate, endpoint/vertex editing | toolbar and appearance controls |
-| Keyboard/accessibility | direct-document focus, annotation semantic mirror, movement/deletion, FreeText focus, reduced-motion execution | labelled product controls, menu/dialog focus order, localized workflow copy |
-| Collaboration | canonical comments, permissions, references, numbering | panels, dialogs and user-facing messages |
-| Export | deterministic PDF/XLSX bytes | naming, download, upload and persistence policy |
+## Responsibility by feature
 
-## Interaction invariants
+| Feature | Core provides | Application or framework provides |
+| --- | --- | --- |
+| PDF loading | URL/byte loading, Range requests, passwords, cancellation, errors, and document permissions | PDF source, password dialog, loading/error UI, and access policy |
+| Pages and zoom | Single, continuous, and facing layouts; virtualization, rendering, scale, gestures, and navigation | Layout container, mode buttons, page-number field, and surrounding styles |
+| Thumbnails and outline | Thumbnail rendering, outline extraction, destination resolution, and navigation APIs | Sidebar, tree/grid presentation, selection, and collapse state |
+| Search and text selection | Text extraction, matching, result highlighting, normalized selections, and page-space rectangles | Search field, results panel, and contextual action menu |
+| Annotation interaction | Tools, hit testing, selection, creation, drag, resize, rotate, and geometry-specific editing | Toolbar, color/appearance controls, contextual menus, and side panels |
+| Annotation data | Canonical serializable annotations, comments, references, Repository operations, and change events | Server storage, synchronization, conflict handling, and product-specific metadata |
+| Authors and permissions | Uses `currentUser` and annotation permission fields for client-side interaction checks | Trusted identity, permission configuration, user-facing messages, and authoritative backend enforcement |
+| Watermarks | Validates watermark settings and renders them in supported Viewer, print, and export paths | Watermark identity text and the business policy deciding where it appears |
+| Print and export | Validates document restrictions and generates PDF/Excel content; provides browser print/download helpers | Buttons and options, original PDF bytes, filenames, upload/download decisions, and invocation timing |
+| Keyboard and accessibility | Direct-document focus, annotation keyboard interaction, semantic alternatives, and reduced-motion behavior inside document pages | Accessible toolbar/menu/dialog controls, focus order around Core, and localized labels |
+| Application services | Capability hooks for logging, requests, text input, Repository, IDs, clock, print, and download | The concrete Provider implementations and any UI they require |
 
-- Direct manipulation responds continuously and tracks the pointer one-to-one.
-- Touch pinch and Ctrl/Meta+wheel zoom preserve the gesture midpoint, update the
-  PDF viewport scale continuously, and remain bounded by Core policy.
-- Existing annotations are draggable only in selection mode.
-- Transform affordances depend on annotation geometry; a generic bounding-box
-  transformer is not a sufficient interaction model for every type.
-- Multi-stroke Freehand grouping, Free-highlight axis correction, and the
-  open-preview/double-click completion semantics of Polygon/Cloud live in Core,
-  not in framework toolbar components.
-- Text markup originates from a real page TextLayer selection and is normalized
-  by Core before canonical creation.
-- `text-select` routes input to the TextLayer; `select` retains annotation hit
-  testing and direct manipulation without making framework adapters arbitrate DOM
-  and Canvas events.
-- Cross-page DOM selection is emitted as ordered page-local fragments so canonical
-  annotations remain page-scoped.
-- Passwords never enter snapshots, errors, logs, storage, or ordinary events.
-- Framework adapters never receive Konva nodes or persist framework-specific
-  annotation models.
-- Core never applies `role="application"`; Canvas annotations have stable native
-  button alternatives with visible focus, while adapters own surrounding control
-  semantics and use text-selection source for contextual-menu focus handoff.
-- Viewer sub-features are generation-scoped and release page tasks, canvases,
-  text layers, search work, and cached thumbnails on replacement or destroy.
-- Virtual multi-page flow mounts only pages inside the render-ahead window,
-  reports asynchronous failures as structured Core errors, and retains stable
-  page identity while offscreen resources are released.
-- Raster print output is a transient unencrypted image-only artifact; adapters
-  must not expose it as a protected source-document replacement.
+::: warning Client-side permissions are not a security boundary
+Core can prevent an interaction such as editing another author's annotation, but browser state can be modified by an end user. The backend must still authenticate requests and enforce read/write permissions when annotations are loaded or saved.
+:::
 
-## Verified correction result
+## What Core deliberately does not provide
 
-Core now exposes tested thumbnail, outline, search, destination-resolution,
-cross-page TextLayer selection, virtual continuous-page lifecycle, secure raster
-print, password, permission, and watermark operations. Annotation drag/transform
-behavior is tool-specific, and the Vanilla application exercises these paths in
-Chromium. This document remains the responsibility test for future React/Vue work.
+Core does not include:
+
+- a finished toolbar, thumbnail sidebar, search panel, comment panel, or application shell;
+- user authentication, document authorization, or a trusted permission backend;
+- a database, server persistence protocol, or real-time collaboration transport;
+- application routing, branding, localization policy, or business workflow;
+- automatic printing or downloading when a Capability is installed.
+
+These are application responsibilities because their UI, infrastructure, and policies differ between products. The framework guides show how to assemble a minimal Viewer without turning those choices into Core defaults.
+
+## Rules extensions must preserve
+
+Custom framework adapters, Capabilities, and annotation types should preserve these Core guarantees:
+
+- `core.annotations.repository` remains the canonical annotation data source; renderer nodes and DOM rectangles are not persisted.
+- Every annotation keeps a zero-based `pageIndex` and an explicit `coordinateSpace`; adapters must not mix Stage and PDF user-space values. Cross-page text selections are split into page-local fragments.
+- Document interaction remains tool-driven: text selection, annotation selection, and drawing must not compete for the same pointer input.
+- Passwords must not enter logs, ordinary events, stored state, or error payloads.
+- Public APIs and events must not expose mutable Konva nodes or PDF.js private state.
+- Document-specific tasks, canvases, text layers, subscriptions, and cached thumbnails must be released when a document is replaced or the instance is destroyed.
+- A rasterized secure-print PDF is a temporary, unencrypted, image-only print artifact—not a replacement download for the protected source document.
+
+These rules keep behavior and stored data compatible across frameworks. See [Architecture overview](./architecture) for the modules and data flow behind the boundary.

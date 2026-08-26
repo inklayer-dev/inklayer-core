@@ -1,4 +1,4 @@
-# InkLayer Core CSS Contract
+# Styles and CSS variables
 
 Import the engine stylesheet once in a browser application:
 
@@ -11,6 +11,21 @@ Every Annotation Engine instance adds `.inklayer-engine`,
 Attached page containers receive reversible `data-inklayer-page` and instance
 metadata. Destroy removes all metadata owned by that engine. Core never changes
 `body`, `html`, or a fixed global element ID.
+
+## Override one Viewer
+
+Set variables on the root passed to `createInkLayer()`. This keeps the theme local to that instance:
+
+```css
+.review-viewer.inklayer-engine {
+  --inklayer-author-label-background: #7c3aed;
+  --inklayer-search-active-background: rgb(124 58 237 / 55%);
+  --inklayer-text-input-border: #7c3aed;
+  --inklayer-accessibility-focus-ring: #a78bfa;
+}
+```
+
+Core adds `.inklayer-engine` after initialization, so the application only needs to place `review-viewer` on its root element.
 
 ## Public variables
 
@@ -49,12 +64,16 @@ Override them on one engine root to avoid affecting another instance.
 | `--inklayer-cursor-stamp` | `copy` | Prepared Stamp image placement cursor |
 | `--inklayer-cursor-image-missing` | `not-allowed` | Signature/Stamp cursor before an image is prepared |
 
+## Runtime cursor variables
+
 After `setImageAsset`, Core creates the instance-local
 `--inklayer-cursor-signature-asset` or `--inklayer-cursor-stamp-asset` runtime
 value. It is a bounded thumbnail of the actual image with an outline, shadow and
 center hotspot; it is removed when the asset is cleared or the engine is
 destroyed. These two generated variables are runtime state rather than consumer
 configuration.
+
+## What the stylesheet owns
 
 Core CSS styles only renderer wrappers, Konva placement, author labels,
 temporary FreeText input, cursor state, pointer routing, and stacking. Toolbars,
@@ -65,6 +84,8 @@ The `text-select` tool disables page Canvas hit routing so the PDF.js TextLayer
 can create a native browser selection; `select` restores annotation manipulation.
 Core chooses cursor semantics for each interaction mode; consumers may theme
 the published variables without reimplementing the tool-to-cursor mapping.
+
+## Private PDF.js variables
 
 PDF.js TextLayer implementation variables such as `--font-height`, `--scale-x`,
 and `--text-scale-factor` may appear below `.inklayer-text-layer`. They are

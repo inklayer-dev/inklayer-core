@@ -1,47 +1,68 @@
 # 自定义批注类型
 
-本教程会增加一个紫色的 **评审区域** 工具。用户可以在 PDF 上拖出矩形，选择、移动和缩放它，保存语义数据，并把它打印或导出到 PDF。
+这一页会实现一个紫色的“评审区域”工具：用户点击工具栏按钮，在 PDF 上拖出矩形，即可创建支持选中、调整大小、保存、打印和 PDF 导出的批注。
 
-## 定义工具
+## 定义批注类型
 
-自定义 ID 使用 `custom:<namespace>/<name>`。下面的 Definition 使用 Core 的 drag-box 手势和受控矩形 renderer：
+自定义批注需要声明稳定的类型 ID、交互能力、默认外观、创建方式和渲染方式。下面的示例还会通过 `typeData` 保存应用自己的业务数据：
 
-```ts
+::: code-group
+
+```ts [review-area.ts]
 import type { AnnotationTypeDefinition } from '@inklayer-dev/core/annotation-types'
 
-export const reviewArea = {
+export const reviewArea: AnnotationTypeDefinition = {
   type: 'custom:acme/review-area',
   apiVersion: 1,
   geometry: 'box',
+
+  data: {
+    supportedSchemaVersions: [1],
+    validate(payload) {
+      if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+        throw new Error('Review area data must be an object')
+      }
+    }
+  },
+
   capabilities: {
     creation: 'drag-box',
     creationMode: 'one-shot',
     transform: {
-      move: true, resize: true, rotate: false,
-      endpoints: false, vertices: false
+      move: true,
+      resize: true,
+      rotate: false,
+      endpoints: false,
+      vertices: false
     },
     appearance: { opacity: true, stroke: true, fill: true, text: false },
     comments: true,
     printable: true,
     exportable: true
   },
+
   appearance: {
     defaults: {
       opacity: 1,
       stroke: {
-        color: '#7c3aed', width: 2, opacity: 1,
-        dash: [6, 4], dashOffset: 0, lineCap: 'butt', lineJoin: 'round'
+        color: '#7c3aed',
+        width: 2,
+        opacity: 1,
+        dash: [],
+        dashOffset: 0,
+        lineCap: 'butt',
+        lineJoin: 'round'
       },
       fill: { color: '#c4b5fd', opacity: 0.2 },
       text: null
     }
   },
+
   creation: {
     controller: 'drag-box',
-    initialize(input) {
+    initialize({ bounds }) {
       return {
-        bounds: { ...input.bounds },
-        content: { text: 'Review area' },
+        bounds,
         typeData: {
           schemaVersion: 1,
           payload: { category: 'review' }
@@ -49,6 +70,7 @@ export const reviewArea = {
       }
     }
   },
+
   renderer: {
     render(annotation) {
       return {
@@ -61,39 +83,92 @@ export const reviewArea = {
       }
     }
   },
+
   pdf: { exportStrategy: 'appearance-stream' }
-} satisfies AnnotationTypeDefinition
+}
 ```
 
-## 安装并使用
+:::
 
-```ts
+`data.supportedSchemaVersions` 必须包含 `typeData` 使用的 `schemaVersion`。如果写入了自定义数据，却没有声明对应的数据版本，Core 无法识别该批注，会将其视为不可用。
+
+## 安装工具并创建批注
+
+在现有查看器旁边增加按钮，创建 Core 时注册批注类型，并在点击按钮时激活工具：
+
+::: code-group
+
+```html [index.html]
+<main id="pdf-workspace">
+  <button id="review-area">评审区域</button>
+  <div id="pages"></div>
+</main>
+```
+
+```ts [main.ts]
+import { createInkLayer } from '@inklayer-dev/core/capabilities'
+import { reviewArea } from './review-area'
+import '@inklayer-dev/core/style'
+
+const root = document.querySelector<HTMLElement>('#pdf-workspace')!
+const pages = document.querySelector<HTMLDivElement>('#pages')!
+
 const core = await createInkLayer({
   root,
-  pageFlow: { container },
+  pageFlow: { container: pages },
   annotationTypes: [reviewArea]
 })
 
-reviewAreaButton.onclick = () => {
+await core.load({ url: '/documents/review.pdf' })
+
+document.querySelector<HTMLButtonElement>('#review-area')!.onclick = () => {
   core.annotations.setTool('custom:acme/review-area')
 }
 ```
 
-用户拖出页面矩形后，新批注会进入普通 Repository，不需要插件专属保存路径。`type`、`typeData`、bounds、appearance 和 renderer state 都随规范批注一起传输。
+:::
 
-## 卸载与重新加载
+点击“评审区域”，再在 PDF 页面上按住并拖动。Core 会创建紫色矩形、选中该批注，并将其保存在 `core.annotations.repository` 中。
+
+## 读取并保存自定义数据
+
+新批注与内置批注使用相同的数据模型：
 
 ```ts
-const remove = core.annotationTypes.register(reviewArea)
-remove()
+const annotation = core.annotations.repository.getAll()[0]
+
+console.log(annotation.type)
+// 'custom:acme/review-area'
+
+console.log(annotation.typeData)
+// { schemaVersion: 1, payload: { category: 'review' } }
 ```
 
-移除操作是幂等的，不会删除批注。Core 会保留数据并显示安全 bounds 占位符；重新注册兼容 Definition 后恢复完整渲染。
+直接通过批注数据仓库保存和恢复完整批注即可，不需要为插件另外设计一套存储格式。详见[保存和恢复批注](./persistence)。
 
-## 理解安全边界
+## 动态注册和移除批注类型
 
-renderer 只能返回 group、rectangle、ellipse、line、path、text 和 PNG/JPEG image 等公共场景原语。Core 验证后才创建私有 Konva 对象，并继续负责命中测试、变换控件、Tag、快照、销毁、打印和导出。
+如果需要在查看器运行期间安装或移除工具，就不要同时在 `annotationTypes` 配置中注册，而是直接调用注册接口：
 
-V1 的 `appearance-stream` PDF 输出支持 rectangle、ellipse 和 line。遇到不支持的输出时会在预检阶段失败，不会静默丢弃批注。
+```ts
+const core = await createInkLayer({
+  root,
+  pageFlow: { container: pages }
+})
 
-完整合约见[公开 API：Annotation Type Definitions](../api.md#annotation-type-definitions)。
+const removeReviewArea = core.annotationTypes.register(reviewArea)
+
+removeReviewArea()
+
+core.annotationTypes.register(reviewArea)
+```
+
+移除类型定义不会删除已有批注。批注数据会继续保留，Core 会显示占位图形；重新注册兼容的类型定义后，原来的显示和交互能力会恢复。
+
+## 了解渲染与导出限制
+
+渲染函数只能返回 Core 定义的绘图元素：`group`、`rectangle`、`ellipse`、`line`、`path`、`text` 和 PNG/JPEG `image`，不能直接创建 Konva 对象。
+
+当前版本使用 `appearance-stream` 导出 PDF 时，支持 `rectangle`、`ellipse` 和 `line`。遇到暂不支持的绘图元素，导出会在校验阶段报错，不会悄悄丢失批注。
+
+完整字段说明见[公开 API：Annotation Type Definitions](../api#annotation-type-definitions)。

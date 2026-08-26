@@ -1,21 +1,74 @@
-# 规范数据模型
+# 批注数据模型
 
-`Annotation` schema version 1 是唯一用于持久化和协作的数据模型。
+`Annotation` 是可序列化的批注数据，也是数据仓库、持久化、导入、打印和导出的唯一数据来源。应保存 Core 返回的完整对象，不要用 DOM 元素、Konva 节点或临时工具栏状态代替它。
 
-## 必备语义
+## 顶层结构
 
-- `id` 在文档内稳定且唯一。
-- `pageIndex` 从 0 开始。
-- `type` 是 16 种受保护内置类型之一，或受长度限制的 `custom:<namespace>/<name>`；`select` 不会持久化。
-- `bounds` 有限、轴对齐且非负。
-- `coordinateSpace` 明确为 `konva-stage` 或 `pdf-user-space`。
-- `comments`、`author`、`createdAt`、`native` 和 `rendererState` 是一等字段。
-- `referenceNumber` 是可选的文档级正整数显示编号。
-- `source` 记录 `core`、`legacy` 或 `pdf-native` 来源。
-- `typeData` 可保存由 Definition 拥有、独立版本化的无损 JSON 语义。
-- `extensions` 保存经过验证的应用通用 JSON 元数据。
+```ts
+interface Annotation {
+  id: string
+  schemaVersion: 1
+  type: AnnotationTypeId
+  pageIndex: number
+  bounds: AnnotationBounds
+  coordinateSpace: AnnotationCoordinateSpace
+  appearance: AnnotationAppearance
+  comments: AnnotationComment[]
+  author: User
+  createdAt: string | null
+  native: boolean
+  rendererState: KonvaRendererState
 
-## 渲染器状态
+  content?: AnnotationContent
+  updatedAt?: string | null
+  referenceNumber?: number
+  source?: AnnotationSource
+  typeData?: AnnotationTypeData
+  extensions?: JsonObject
+}
+```
+
+这是 V1 批注完整的顶层结构。嵌套对象分别保存文字或图片内容、外观、评论、自定义类型数据和绘制数据。
+
+## 字段含义
+
+| 字段 | 含义 |
+| --- | --- |
+| `id` | 稳定的批注 ID，在一份文档中必须唯一。 |
+| `schemaVersion` | 完整批注结构的版本，目前为 `1`。 |
+| `type` | 16 种内置类型之一，或带命名空间的 `custom:<namespace>/<name>`。`select` 是工具，不是批注类型。 |
+| `pageIndex` | 从 0 开始的 PDF 页码。 |
+| `bounds` | `coordinateSpace` 坐标系中有限、非负、轴对齐的位置和尺寸。 |
+| `appearance` | 完整的透明度、边框、填充和文字外观。 |
+| `content` | 可选的文字、所选原文、图片、签名或引用内容。 |
+| `comments` | 按稳定顺序保存的评论和回复。 |
+| `author` | 创建者身份，供应用界面和权限判断使用。 |
+| `createdAt` / `updatedAt` | 时间戳字符串；无法确定时为 `null`。 |
+| `native` | 批注是否来自源 PDF。 |
+| `referenceNumber` | 可选的文档级正整数显示编号。 |
+| `source` | 可选的数据来源，例如 `core`、`legacy` 或 `pdf-native`。 |
+| `rendererState` | 重绘批注所需的版本化绘制数据。 |
+| `typeData` | 由自定义批注类型管理的版本化 JSON。 |
+| `extensions` | Core 不解释、但会校验并保留的应用 JSON。 |
+
+## 作者与权限
+
+每条批注都会持久化 `author`。权限策略不会写进批注数据，而是属于当前 Core 实例，并结合当前用户进行判断。
+
+```ts
+const core = await createInkLayer({
+  root,
+  pageFlow: { container: pages },
+  annotation: {
+    currentUser: { id: 'alice', name: 'Alice' },
+    permissions: { mode: 'owner-only' }
+  }
+})
+```
+
+使用 `owner-only` 时，Alice 可以编辑 `author.id` 为 `alice` 的批注；其他用户读取的仍是同一份批注数据，但 Core 会拒绝受保护的操作。通过 `core.annotations.setCurrentUser(user)` 可以切换当前身份。完整示例见[保存和恢复批注](./guide/persistence)。
+
+## 绘制数据
 
 ```ts
 interface KonvaRendererState {
@@ -25,13 +78,13 @@ interface KonvaRendererState {
 }
 ```
 
-对于内置类型，它不是可丢弃缓存，而是精确的重绘表示。加载、创建、变换、导入和导出都使用同一个快照解析器。受保护的 Definition 标识 Core 私有渲染策略；构建、样式更新、内容同步、命中测试和变换都会先解析 Definition 元数据，再进入优化的快照辅助路径。
+`rendererState` 是需要持久化的数据，不是可以丢弃的缓存。应用应原样保存，由 Core 负责校验和更新；不要自行解析或修改其中序列化的 Konva 数据。
 
-解析器限制字符串长度、深度、节点数、点数和 data URL；只接受已验证的类与有限属性，拒绝原型链危险键，并校验根 Group ID 与批注 ID 一致。
+自定义批注类型暂时不可用时，Core 会保留原有数据，并显示基于 `bounds` 的安全占位图形。重新注册兼容的类型定义后，会恢复正常渲染和交互。
 
-当自定义 Definition 缺失或不支持保存的 `typeData.schemaVersion` 时，`rendererState` 只作为不透明数据保留，不会交给 Konva。Core 显示基于公共 bounds 的安全占位符；兼容实现恢复后，再从规范数据构建受控场景。
+## 自定义类型数据与应用数据
 
-## 类型自有 JSON
+自定义批注类型通过 `typeData` 保存自己的版本化数据：
 
 ```ts
 interface AnnotationTypeData {
@@ -40,16 +93,18 @@ interface AnnotationTypeData {
 }
 ```
 
-`JsonValue` 只接受 null、布尔值、有限数字、字符串、数组和普通字符串键对象。Core 限制深度、值总数、字符串和键，并拒绝函数、undefined、symbol、类实例、Date、Map、Set、循环引用、访问器、不可枚举字段、危险原型键和非有限数字。信封解析不依赖插件是否存在。
+对应的类型定义必须声明支持该版本，并校验 `payload`。`extensions` 的用途不同：它保存通用的应用元数据，Core 只负责保留，不会解释其业务含义。
 
-通过指针创建自定义批注时，Definition 可以从规范化的页面空间手势几何生成初始 `typeData`。Core 只有在信封和 codec 验证通过后才持久化。纯变换 reducer 可以同时替换 bounds 与 `typeData`，让语义尺寸等领域值保持同步，而不把渲染器快照当成源数据。
+`JsonValue` 支持 `null`、布尔值、有限数字、字符串、数组和普通字符串键对象。函数、类实例、日期、Map、Set、循环引用、访问器和非有限数字都会被拒绝。
 
 ## 坐标
 
-旧数据和实时 Painter bounds 使用未缩放、左上角为原点的 Stage 坐标；原生 PDF 字典使用左下角为原点的 PDF user space。统一几何函数负责点、矩形、page box、与缩放无关的 bounds，以及 0/90/180/270 度旋转转换。任何格式都不能通过字段名猜测坐标系。
+`konva-stage` 使用左上角为原点的未缩放坐标；`pdf-user-space` 使用 PDF 左下角原点坐标。渲染、导入、打印和导出时由 Core 负责转换，应用不要根据字段名猜测坐标系，也不要混用两个坐标系中的值。
 
-## 协作
+`bounds` 使用页面单位保存，不会随查看器缩放而变化。
 
-评论和引用使用稳定 ID 与可读标签。同步引用标签时可以重新编号可见的 `#N`，但不能丢失目标 ID。权限使用统一的动作词汇和模式/回调合约。评论和状态变更必须保留精确渲染器状态。
+## 数据仓库与同步
 
-所有运行时入口都会分离已验证值；Repository getter 和事件不会暴露可变的内部集合。
+数据仓库的读取结果和事件数据都是独立副本，修改返回的对象不会直接改变 Core 状态。需要更新批注时，应调用批注引擎或数据仓库提供的方法。
+
+数据仓库事件只描述当前实例中的数据变化，并不是网络同步协议。应用若要支持多人协作，仍需自行定义传输、身份认证、冲突处理、顺序和重试机制。

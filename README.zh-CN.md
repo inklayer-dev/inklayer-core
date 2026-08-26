@@ -1,113 +1,113 @@
 # InkLayer Core
 
-> 面向所有 Web 框架的 PDF 内核。
+> 面向所有 Web 框架的 PDF 引擎。
 
-[![npm](https://img.shields.io/npm/v/%40inklayer-dev%2Fcore)](https://www.npmjs.com/package/@inklayer-dev/core)
-[![downloads](https://img.shields.io/npm/dm/%40inklayer-dev%2Fcore)](https://www.npmjs.com/package/@inklayer-dev/core)
-[![Core CI](https://github.com/inklayer-dev/inklayer-core/actions/workflows/ci.yml/badge.svg)](https://github.com/inklayer-dev/inklayer-core/actions/workflows/ci.yml)
-[![license](https://img.shields.io/npm/l/%40inklayer-dev%2Fcore)](https://github.com/inklayer-dev/inklayer-core/blob/main/LICENSE)
+[English](./README.md) | [简体中文](./README.zh-CN.md)
 
-在 React、Vue、Svelte、Angular、Web Components 或原生 TypeScript 中构建 PDF
-查看和批注产品，无需为每个框架重写文档行为。
+[![npm](https://img.shields.io/npm/v/%40inklayer-dev%2Fcore)](https://www.npmjs.com/package/@inklayer-dev/core) [![Core CI](https://github.com/inklayer-dev/inklayer-core/actions/workflows/ci.yml/badge.svg)](https://github.com/inklayer-dev/inklayer-core/actions/workflows/ci.yml) [![license](https://img.shields.io/npm/l/%40inklayer-dev%2Fcore)](https://github.com/inklayer-dev/inklayer-core/blob/main/LICENSE)
 
-[快速开始](https://inklayer-dev.github.io/inklayer-core/zh/guide/getting-started) ·
-[在线示例](https://inklayer-dev.github.io/inklayer-core/demo/) ·
-[文档](https://inklayer-dev.github.io/inklayer-core/zh/) ·
-[English](./README.md)
+InkLayer Core 提供与框架无关的 PDF 查看和批注能力。无论使用 React、Vue、其他 Web 框架，还是不依赖框架的 JavaScript/TypeScript，都可以调用同一套 Core API；工具栏、面板和产品流程仍由应用控制。
 
-## 显示 PDF
+[快速开始](https://inklayer-dev.github.io/inklayer-core/zh/guide/getting-started) · [在线示例](https://inklayer-dev.github.io/inklayer-core/demo/) · [文档](https://inklayer-dev.github.io/inklayer-core/zh/)
+
+## 最简单的查看器
+
+安装：
 
 ```bash
 npm install @inklayer-dev/core
 ```
 
+提供根元素和滚动容器：
+
+```html
+<div id="pdf-workspace">
+  <div id="pages"></div>
+</div>
+```
+
+为滚动容器设置明确尺寸：
+
+```css
+html, body, #pdf-workspace {
+  height: 100%;
+  margin: 0;
+}
+
+#pages {
+  height: 100%;
+  overflow: auto;
+  background: #f2f4f7;
+}
+```
+
+创建 Core 并加载 PDF：
+
 ```ts
 import { createInkLayer } from '@inklayer-dev/core/capabilities'
 import '@inklayer-dev/core/style'
 
+const root = document.querySelector<HTMLElement>('#pdf-workspace')!
+const pages = document.querySelector<HTMLDivElement>('#pages')!
+
 const core = await createInkLayer({
-  root: document.querySelector<HTMLElement>('#pdf-workspace')!,
-  pageFlow: {
-    container: document.querySelector<HTMLElement>('#pages')!,
-    scale: 'page-width'
-  }
+  root,
+  pageFlow: { container: pages, scale: 'page-width' }
 })
 
 await core.load({ url: '/documents/review.pdf', range: 'auto' })
-
-// 框架组件卸载
-await core.destroy()
 ```
 
-`pageFlow` 会显示虚拟化连续滚动 PDF。Core 内置版本匹配的 PDF.js Worker，普通
-Vite 和 Webpack 应用不需要下载、复制或配置 `pdf.worker`。
+这段代码会创建一个支持虚拟渲染、连续滚动和内置缩放手势的查看器。页面或框架组件卸载时，调用 `await core.destroy()` 释放资源。文字选择、批注工具、搜索控件等产品功能可以由应用按需启用。
 
-完整 DOM/CSS、加载界面、密码处理和清理见[5 分钟 Viewer 教程](https://inklayer-dev.github.io/inklayer-core/zh/guide/getting-started)。
+Core 已包含版本匹配的 PDF.js Worker。普通 Vite 和 Webpack 应用不需要下载、复制或配置 `pdf.worker`。
 
-## 可以构建什么
+[继续阅读完整教程 →](https://inklayer-dev.github.io/inklayer-core/zh/guide/getting-started)
 
-- URL、本地文件、密码和 HTTP Range 分块加载，以及进度、取消、重试、请求头和权限；
-- 单页、连续和对页布局，以及虚拟页面流；
-- 缩放预设、页码导航、缩略图、目录、搜索和真实 PDF 文字选择；
-- 16 种内置批注，以及绘制、命中测试、变换、键盘行为、评论和 Tag；
-- 图片签名和图章、FreeText、多笔 Freehand、自动修正 Free Highlight、Polygon、Polyline 和 Cloud；
-- 水印、浏览器打印、安全栅格打印、带批注 PDF 和 Excel 输出；
-- 实例级能力插件和带命名空间的自定义批注类型；
-- 结构化错误、确定性清理、多 Viewer 隔离和 SSR 安全导入。
+## Core 提供哪些能力
 
-[浏览任务教程 →](https://inklayer-dev.github.io/inklayer-core/zh/guide/first-annotation)
+- 从 URL 或本地字节加载 PDF，支持 HTTP Range 分段请求、密码、进度、取消和重试。
+- 使用单页、连续或对页布局显示文档，并提供虚拟渲染、缩放、导航、缩略图和目录能力。
+- 搜索 PDF 文字、高亮结果，并把真实的文字选择转换成文字批注。
+- 创建和编辑 16 种内置批注，包括文字标记、图形、手写、便签、图章和签名。
+- 管理可序列化的批注数据，包括作者、评论、引用、外观和客户端权限规则。
+- 添加水印，并生成打印 PDF、带批注 PDF、用于安全打印的栅格 PDF 或批注工作簿。
+- 运行多个相互隔离的实例，报告结构化错误，可靠释放资源，并在 SSR 环境中安全导入。
 
-## Core 管文档，应用管界面
+[创建第一个批注 →](https://inklayer-dev.github.io/inklayer-core/zh/guide/first-annotation)
 
-InkLayer Core 是无头引擎，不提供固定工具栏、侧边栏、密码框、搜索面板或产品流程。
+## Core 负责文档能力，应用负责界面
 
-| InkLayer Core | 应用或框架适配器 |
-|---|---|
-| PDF 加载、Worker、页面、缩放、导航 | 布局、工具栏、路由状态 |
-| 搜索、TextLayer 选择、页面坐标 | 搜索框、结果列表、选择菜单 |
-| 批注手势、变换、命中测试 | 工具面板、外观控件、业务面板 |
-| 批注数据和类型化事件 | 服务端持久化、鉴权、同步策略 |
-| 水印、打印和导出合成 | 按钮、文件名、上传和下载策略 |
+InkLayer Core 是无头引擎：它提供文档引擎和交互接口，但不提供完整的工具栏或应用外壳。
 
-这条边界让 React、Vue 和未来适配器共享相同行为，而不强迫它们共享界面。
+| InkLayer Core | 应用或框架组件 |
+| --- | --- |
+| PDF 加载、页面、布局、缩放和导航 | 查看器布局、控件、路由和加载状态 |
+| 搜索、目录、缩略图和文字选择数据 | 搜索框、结果列表、侧边栏和文字选择菜单 |
+| 批注工具、手势、变换和规范数据 | 工具栏、外观控件、评论面板和对话框 |
+| 客户端作者与权限判断 | 可信用户身份和服务端最终权限校验 |
+| 数据仓库操作和变更事件 | 服务端持久化、同步和冲突处理 |
+| 水印、打印、PDF 和 Excel 生成接口 | 按钮、文件名、上传、下载和调用时机 |
 
-## 扩展一个实例
+完整的职责划分见 [Core 边界](https://inklayer-dev.github.io/inklayer-core/zh/core-boundary)。
 
-使用能力插件安装产品服务：
+## 选择接入方式
 
-```ts
-const core = await createInkLayer({
-  root,
-  pageFlow: { container },
-  capabilities: [
-    createLoggerCapability(appLogger),
-    createAnnotationRepositoryCapability(repository)
-  ]
-})
-```
+- [原生 JavaScript](https://inklayer-dev.github.io/inklayer-core/zh/guide/framework-integration)：构建包含导航、缩略图、工具栏和批注列表的查看器。
+- [Vue](https://inklayer-dev.github.io/inklayer-core/zh/guide/framework-vue)：在组件中保留一个 Core 实例，并接入 Vue 状态与生命周期。
+- [React](https://inklayer-dev.github.io/inklayer-core/zh/guide/framework-react)：用 ref 保存一个 Core 实例，并接入 React 状态与副作用。
 
-使用 Annotation Type Definition 增加命名空间绘制工具：
+Svelte、Angular、Web Components 或其他客户端框架同样可以使用这些 Core API。
 
-```ts
-const core = await createInkLayer({
-  root,
-  pageFlow: { container },
-  annotationTypes: [reviewArea]
-})
+## 需要时再扩展 Core
 
-core.annotations.setTool('custom:acme/review-area')
-```
+[能力插件](https://inklayer-dev.github.io/inklayer-core/zh/guide/capability-plugin)用于为单个实例接入日志、带鉴权的 PDF 请求、文字输入、批注数据仓库、打印和下载等应用服务。其中一部分服务由 Core 自动调用；打印和下载服务则由应用主动调用。
 
-手势、验证、受控渲染、持久化、打印、PDF 导出和清理仍由 Core 负责。插件不会得到
-Konva 或 PDF.js 私有对象。
+[自定义批注类型](https://inklayer-dev.github.io/inklayer-core/zh/guide/custom-annotation-type)可以添加带命名空间的工具，并定义自己的数据校验、创建行为、渲染器和输出支持。扩展功能只使用公开接口，不会得到可变的 Konva 节点或 PDF.js 私有状态。
 
-[插件概览](https://inklayer-dev.github.io/inklayer-core/zh/guide/plugins) ·
-[第一个能力插件](https://inklayer-dev.github.io/inklayer-core/zh/guide/capability-plugin) ·
-[自定义批注类型](https://inklayer-dev.github.io/inklayer-core/zh/guide/custom-annotation-type)
+## 底层查看器
 
-## 底层 Viewer
-
-需要自行挂载页面的应用可以直接创建 Viewer，Worker 仍然自动配置：
+如果应用要自行挂载页面，可以直接创建查看器。Worker 仍然会自动配置：
 
 ```ts
 import { createPdfViewerEngine } from '@inklayer-dev/core/viewer'
@@ -115,7 +115,7 @@ import { createPdfViewerEngine } from '@inklayer-dev/core/viewer'
 const viewer = createPdfViewerEngine()
 ```
 
-只有自托管 CSP 或部署策略要求时才覆盖 `workerSrc`：
+只有自托管 CSP 或部署策略有要求时，才需要覆盖 `workerSrc`：
 
 ```ts
 const viewer = createPdfViewerEngine({
@@ -126,32 +126,30 @@ const viewer = createPdfViewerEngine({
 ## 包入口
 
 | 入口 | 用途 |
-|---|---|
-| `@inklayer-dev/core` | 领域模型、验证、Repository 和共享类型 |
+| --- | --- |
+| `@inklayer-dev/core` | 批注数据、校验、数据仓库、浏览器辅助函数和共享类型 |
 | `@inklayer-dev/core/capabilities` | `createInkLayer()` 和能力插件 |
-| `@inklayer-dev/core/viewer` | PDF Viewer 和页面流 |
+| `@inklayer-dev/core/viewer` | PDF 查看器和 Page Flow |
 | `@inklayer-dev/core/annotation` | 批注引擎和交互 |
-| `@inklayer-dev/core/annotation-types` | 内置和自定义类型 Definition |
-| `@inklayer-dev/core/import/pdfjs` | 原生 PDF.js 批注导入 |
-| `@inklayer-dev/core/export/pdf` | 带批注 PDF 和打印输出 |
-| `@inklayer-dev/core/export/excel` | 批注 Excel 输出 |
-| `@inklayer-dev/core/style` | 作用域引擎 CSS |
+| `@inklayer-dev/core/annotation-types` | 内置和自定义批注类型定义 |
+| `@inklayer-dev/core/import/pdfjs` | 通过 PDF.js 导入 PDF 原生批注 |
+| `@inklayer-dev/core/export/pdf` | 生成带批注 PDF 和打印 PDF |
+| `@inklayer-dev/core/export/excel` | 生成批注工作簿 |
+| `@inklayer-dev/core/style` | 仅作用于 Core 的 CSS |
 
 ## 兼容性
 
-- 浏览器运行时：当前 Chromium、Firefox 和 WebKit 基线
-- 使用方构建：Vite、Webpack 浏览器构建和 Node SSR import
+- 浏览器引擎：通过 Playwright 当前版本的 Chromium、Firefox 和 WebKit 验证
+- 构建环境：Vite、Webpack 浏览器构建和 Node SSR 导入
 - Node 工具链：`^22.13.0 || >=24.0.0`
 
-参阅[浏览器支持](https://inklayer-dev.github.io/inklayer-core/zh/browser-support)、
-[构建工具支持](https://inklayer-dev.github.io/inklayer-core/zh/consumer-build-matrix)和
-[公开 API](https://inklayer-dev.github.io/inklayer-core/zh/api)。
+内嵌 WebView 需要单独验证。具体见[浏览器支持](https://inklayer-dev.github.io/inklayer-core/zh/browser-support)和[公开 API](https://inklayer-dev.github.io/inklayer-core/zh/api)。
 
 ## 本地开发
 
 ```bash
 npm install
-npm run dev       # 基于源码的 Vanilla 示例
+npm run dev       # 基于源码的原生 JavaScript 示例
 npm run docs:dev  # VitePress 文档
 npm run check     # 完整发布质量检查
 ```

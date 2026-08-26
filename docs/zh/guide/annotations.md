@@ -1,8 +1,12 @@
 # 批注工具与外观
 
+本页是批注工具和外观设置的参考，汇总全部内置类型、工具切换方式、创建模式和外观能力。想先完成一次实际操作，请阅读[创建第一个批注](./first-annotation.md)；需要增加新的批注类型，请阅读[自定义批注类型](./custom-annotation-type.md)。
+
 ## 内置批注类型
 
-所有内置类型都支持打印和导出。PDF 策略属于受保护的 Core Definition：`native` 写入标准 PDF 批注字典；没有对应标准 PDF 类型的行为使用 `appearance-stream`，写入可选择的 Stamp 外观。
+所有内置类型都支持打印和 PDF 导出。`native` 会写入标准 PDF 批注字典；没有对应标准 PDF 类型的效果，则由 `appearance-stream` 通过 Stamp 外观流保留下来。
+
+“几何”“创建方式”和“PDF 策略”来自批注类型定义，主要供扩展批注类型时参考。普通使用只需关注“类型 ID”和“用途”。
 
 | 类型 ID | 用途 | 几何 | 创建方式 | PDF 策略 |
 |---|---|---|---|---|
@@ -27,26 +31,28 @@
 
 ```ts
 core.annotations.setTool('rectangle')
-core.annotations.setTool('highlight')
+core.annotations.setTool('text-select')
 core.annotations.setTool('select')
 ```
 
-形状、墨迹、图片、文字和路径工具默认创建一次后回到 Select；Highlight、Underline、
-Strikeout 默认连续创建。可通过 `creationModes` 覆盖；工具栏只反映最终发出的 `toolChanged` 事件。
+`rectangle` 用来绘制矩形，`text-select` 用来选择 PDF 文字，`select` 用来编辑已有批注。
 
-文字类批注遵循“先选文字，再创建批注”：
+大多数创建工具在完成一个批注后会切回 `select`。`highlight`、`underline` 和 `strikeout` 默认保持激活，方便连续添加文字批注。创建 Core 实例时可以修改这一行为：
 
 ```ts
-const selection = core.viewer.getTextSelection()
-if (selection?.kind === 'page') {
-  core.annotations.createTextMarkup('highlight', selection.selection)
-  core.viewer.clearTextSelection()
-}
+const core = await createInkLayer({
+  root,
+  annotation: {
+    creationModes: { rectangle: 'continuous' }
+  }
+})
 ```
+
+工具栏应根据 `toolChanged` 事件更新状态，因为单次创建完成后，工具可能自动切回 `select`。文字类批注遵循“先选文字，再创建批注”的规则，完整的按钮交互见[创建第一个批注](./first-annotation.md)。
 
 ## 外观
 
-`AnnotationAppearanceInput` 是深层 partial；`undefined` 表示继承，`null` 表示禁用描边或填充。
+`AnnotationAppearanceInput` 只需提供想修改的字段。省略的字段会保留当前值；将 `stroke`、`fill` 或 `text` 设为 `null`，会关闭对应的外观。
 
 ```ts
 core.annotations.setToolAppearance('highlight', {
@@ -65,9 +71,9 @@ core.annotations.setToolAppearance('rectangle', {
 
 ## FreeText、签名和图章
 
-FreeText 使用配置的 `TextInputProvider`。浏览器默认实现会创建并管理页面内 textarea；产品也可以通过 Capability 提供另一种实现，而不改变批注语义。
+FreeText 使用配置的 `TextInputProvider`。浏览器默认实现会创建并管理页面内的 textarea；应用也可以通过 Capability 提供另一种实现，而不改变批注语义。
 
-Signature 和 Stamp 是图片批注。产品 UI 创建或选择 PNG/JPEG data URL，再把放置资源交给 Core：
+Signature 和 Stamp 是图片批注。应用创建或选择 PNG/JPEG 数据 URL（data URL），再把待放置的图片交给 Core：
 
 ```ts
 core.annotations.setImageAsset('signature', {
@@ -79,31 +85,30 @@ core.annotations.setImageAsset('signature', {
 core.annotations.setTool('signature')
 ```
 
-Core 负责光标预览、放置、选择、变换、渲染和 PDF 输出。没有准备资源时，点击 Canvas 会发出 `imageAssetRequired`，应用可以据此打开选择器。
+Core 负责光标预览、放置、选择、变换、渲染和 PDF 输出。如果还没有设置图片，点击页面会发出 `imageAssetRequired`，应用可以据此打开选择器。
 
-## Repository 与协作
+## 批注数据与协作
 
-`AnnotationRepository` 是批注、选择、评论、引用和权限的唯一事实来源。只持久化经过
-校验的规范 `Annotation`。需要让状态比引擎实例存活更久时，传入自己的 Repository，或通过 `createAnnotationRepositoryCapability()` 安装。
+`core.annotations.repository` 是当前实例的批注数据仓库，也是批注、选择、评论、引用和权限的唯一数据来源。需要让这些状态在 Core 实例销毁后继续保留时，可以传入自己的 Repository，或通过 `createAnnotationRepositoryCapability()` 安装。
 
-只持久化规范 `Annotation` 值，插入前验证不可信输入。框架 UI 可以单独保存面板状态和乐观网络状态，但不能创建第二套批注模型。完整流程见[保存和恢复批注](./persistence.md)。
+只持久化经过校验的 `Annotation` 数据，并在写入前验证不可信输入。应用界面可以单独保存面板状态和网络请求的临时状态，但不要再维护第二套批注数据。完整流程见[保存和恢复批注](./persistence.md)。
 
 ## 自定义批注类型
 
-通过 `@inklayer-dev/core/annotation-types` 注册带命名空间的 Definition。Definition 接收已验证数据并返回受控、与渲染器无关的场景值；不会接触 Konva 节点或 PDF.js 内部对象。完整 Definition 和生命周期示例见[自定义批注类型教程](./custom-annotation-type.md)，注册、Definition 缺失、transform reducer 与 PDF appearance stream 见[公开 API](../api.md#annotation-type-definitions)。
+通过 `@inklayer-dev/core/annotation-types` 注册带命名空间的批注类型定义（Definition）。定义接收已验证的数据，返回受控且与渲染器无关的场景数据，不会接触 Konva 节点或 PDF.js 内部对象。完整定义和生命周期示例见[自定义批注类型](./custom-annotation-type.md)；注册方式、定义缺失、变换处理和 PDF 外观流见[公开 API](../api.md#annotation-type-definitions)。
 
 ## 手动挂载页面
 
-Page Flow 会自动完成挂载。如果适配器自行管理页面布局，应在页面尺寸确定后挂载批注层：
+Page Flow 会自动完成挂载。如果适配器自行管理页面布局，需要在每页画布上方放置一个空白批注层，并在页面尺寸确定后将它挂载到 Core：
 
 ```ts
 await core.annotations.attachPage({
   pageIndex: 0,
-  container: pageElement,
+  container: annotationLayer,
   width: unscaledPageWidth,
   height: unscaledPageHeight,
   scale: currentScale
 })
 ```
 
-缩放变化时更新或重新挂载，页面卸载时 detach。规范坐标始终保持未缩放页面单位。
+缩放变化时更新或重新挂载批注层。页面卸载时调用 `core.annotations.detachPage(pageIndex)`。批注坐标始终使用未缩放的页面单位。

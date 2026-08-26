@@ -3,71 +3,91 @@ layout: home
 
 hero:
   name: InkLayer Core
-  text: 面向所有 Web 框架的 PDF 内核
-  tagline: 你负责产品界面，Core 负责 PDF 查看、批注、页面流、打印和导出。
+  text: 面向所有 Web 框架的 PDF 引擎
+  tagline: 你负责产品界面，Core 负责 PDF 查看、批注、页面渲染、打印和导出。
   image:
-    src: /hero-engine.svg
+    light: /hero-engine.svg
+    dark: /hero-engine-dark.svg
     alt: 带文字高亮和选中手写批注的 PDF 文档。
   actions:
     - theme: brand
       text: 快速开始
       link: /zh/guide/getting-started
     - theme: alt
-      text: 阅读 API
+      text: API 参考
       link: /zh/api
     - theme: alt
-      text: 示例
+      text: 在线示例
       link: 'https://inklayer-dev.github.io/inklayer-core/demo/'
 
 features:
-  - title: 与框架无关
-    details: React、Vue、Svelte、Angular、Web Components 和原生 TypeScript 共用同一套命令式内核。
+  - title: 使用你熟悉的 Web 框架
+    details: 无论使用 React、Vue、Svelte、Angular、Web Components 还是原生 TypeScript，都调用同一套 Core API。
     link: /zh/guide/framework-integration
-  - title: 完整能力
-    details: 加载、Range、密码、搜索、选择、页面流、缩放、水印、打印和导出都由 Core 负责。
+  - title: PDF 能力，由 Core 提供
+    details: 查看、批注、缩放、搜索、水印、打印和导出都由 Core 处理，界面和操作流程仍由你的应用掌控。
     link: /zh/guide/viewer-and-pages
-  - title: 可扩展批注
-    details: 使用十六种内置工具，或注册支持保存、打印和 PDF 导出的自定义绘制类型。
+  - title: 批注内置，也能扩展
+    details: 直接使用高亮、文字、图形、签名等十六种批注类型，需要时还可以定义自己的工具。
     link: /zh/guide/plugins
-  - title: 生产级生命周期
-    details: 安全取消与清理、结构化错误、Viewer 隔离、SSR 安全导入和内置 PDF.js Worker。
+  - title: 从创建到销毁，行为可控
+    details: 可以取消正在进行的加载、完整销毁实例，并让多个 Viewer 相互隔离；在 SSR 环境中导入 Core 也同样安全。
     link: /zh/error-recovery
 ---
 
-## 先让 Viewer 跑起来
+## 从 Core 开始
 
-安装包、给 Core 一个滚动容器，然后加载 PDF：
+安装 Core，提供两个宿主元素，为滚动容器设置明确尺寸，然后加载 PDF。
+
+```bash
+npm install @inklayer-dev/core
+```
+
+```html
+<div id="pdf-workspace">
+  <div id="pages"></div>
+</div>
+```
+
+```css
+html, body, #pdf-workspace {
+  height: 100%;
+  margin: 0;
+}
+
+#pages {
+  height: 100%;
+  overflow: auto;
+  background: #f2f4f7;
+}
+```
 
 ```ts
 import { createInkLayer } from '@inklayer-dev/core/capabilities'
 import '@inklayer-dev/core/style'
 
+const root = document.querySelector<HTMLElement>('#pdf-workspace')!
+const pages = document.querySelector<HTMLElement>('#pages')!
+
 const core = await createInkLayer({
-  root: workspaceElement,
-  pageFlow: { container: pagesElement }
+  root,
+  pageFlow: { container: pages, scale: 'page-width' }
 })
 await core.load({ url: '/documents/review.pdf', range: 'auto' })
 ```
 
-[5 分钟教程](/zh/guide/getting-started)会补上完整 DOM/CSS、加载状态、密码处理和清理。InkLayer Core 是无头引擎：它负责 PDF 与批注行为，框架负责工具栏、面板和产品流程。
+[快速开始 →](/zh/guide/getting-started)
+> [!IMPORTANT] 注意
+> InkLayer Core 是无头引擎：它负责 PDF 与批注行为，框架负责工具栏、面板和产品流程。
 
-## 你想做什么？
+## 接下来想做什么？
 
-| 我想要…… | 去这里 |
-|---|---|
-| 写代码前体验全部能力 | [体验在线示例](/zh/guide/try-demo) |
-| 显示可滚动、可缩放的 PDF | [5 分钟构建 Viewer](/zh/guide/getting-started) |
-| 绘制矩形或从文字创建高亮 | [创建第一个批注](/zh/guide/first-annotation) |
-| 加载文件、密码、鉴权 URL 或大型 PDF | [加载 PDF](/zh/guide/loading-pdfs) |
-| 增加页码导航、缩放、缩略图或目录 | [页面、缩放与导航](/zh/guide/viewer-and-pages) |
-| 搜索和选择真实 PDF 文字 | [搜索与文字选择](/zh/guide/search-and-selection) |
-| 把批注保存到后端并恢复 | [保存和恢复批注](/zh/guide/persistence) |
-| 打印、导出或添加水印 | [打印、导出与水印](/zh/guide/output-and-security) |
-| 把 Core 接入 React、Vue 或其他框架 | [框架接入](/zh/guide/framework-integration) |
-| 增加产品服务或自定义绘制工具 | [插件概览](/zh/guide/plugins) |
+[加载 PDF →](/zh/guide/loading-pdfs) ·
+[创建第一个批注 →](/zh/guide/first-annotation) ·
+[打印和导出 →](/zh/guide/output-and-security)
 
 ## 需要时再扩展
 
-能力插件用于接入日志、持久化、文字输入、打印、下载等产品服务；Annotation Type Definition 用于增加命名空间绘制工具。它们都只作用于一个实例，验证、交互、持久化、打印、导出和清理仍由 Core 负责。
+能力插件可以为单个实例接入日志、批注存储、文字输入、打印和下载等应用服务。批注类型定义（Annotation Type Definition）则用于添加带命名空间的绘制工具。无论如何扩展，坐标、数据校验、交互、渲染、输出和清理始终由 Core 管理。
 
 [开发第一个插件 →](/zh/guide/capability-plugin)

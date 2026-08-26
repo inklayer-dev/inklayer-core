@@ -1,11 +1,19 @@
 # Annotation tools and appearance
 
+This page is a reference for the built-in annotation types, tool switching,
+creation modes, and appearance settings. To create an annotation through a
+complete UI interaction first, follow [Create your first annotation](./first-annotation.md).
+To add a new type, see [Custom annotation types](./custom-annotation-type.md).
+
 ## Built-in annotation types
 
-Every built-in is printable and exportable. The PDF strategy is part of its
-protected Core Definition: `native` writes a standard PDF annotation dictionary,
-while `appearance-stream` writes a selectable Stamp appearance for behavior that
-does not have an equivalent standard PDF type.
+Every built-in type supports printing and PDF export. `native` writes a standard
+PDF annotation dictionary. `appearance-stream` preserves behavior without an
+equivalent standard PDF type through a Stamp appearance stream.
+
+The Geometry, Creation, and PDF strategy columns contain values from Annotation
+Type Definitions and are mainly useful when extending the type system. For
+ordinary use, focus on the Type ID and Purpose columns.
 
 | Type ID | Purpose | Geometry | Creation | PDF strategy |
 |---|---|---|---|---|
@@ -30,29 +38,36 @@ does not have an equivalent standard PDF type.
 
 ```ts
 core.annotations.setTool('rectangle')
-core.annotations.setTool('highlight')
+core.annotations.setTool('text-select')
 core.annotations.setTool('select')
 ```
 
-Shape, ink, image, text, and path tools default to one-shot creation and return
-to Select. Highlight, Underline, and Strikeout default to continuous creation.
-Override this through `creationModes`; the toolbar only reflects the resulting
-`toolChanged` event.
+`rectangle` starts drawing a rectangle, `text-select` lets the user select PDF
+text, and `select` edits existing annotations.
 
-Text markup follows native selection:
+Most creation tools return to `select` after one annotation. `highlight`,
+`underline`, and `strikeout` remain active by default so users can create more
+than one text markup. You can change this when creating the Core instance:
 
 ```ts
-const selection = core.viewer.getTextSelection()
-if (selection?.kind === 'page') {
-  core.annotations.createTextMarkup('highlight', selection.selection)
-  core.viewer.clearTextSelection()
-}
+const core = await createInkLayer({
+  root,
+  annotation: {
+    creationModes: { rectangle: 'continuous' }
+  }
+})
 ```
+
+Update toolbar state from the emitted `toolChanged` event, because a one-shot
+tool can switch back to `select` after creation. Text markup follows the rule
+“select text, then create the annotation”; the complete button interaction is
+shown in [Create your first annotation](./first-annotation.md).
 
 ## Appearance
 
-`AnnotationAppearanceInput` is a deep partial. `undefined` inherits the current
-value and `null` disables a component such as stroke or fill.
+`AnnotationAppearanceInput` accepts only the fields you want to change. Omitted
+fields keep their current values; setting `stroke`, `fill`, or `text` to `null`
+disables that appearance component.
 
 ```ts
 core.annotations.setToolAppearance('highlight', {
@@ -73,11 +88,11 @@ and are intentionally not persisted appearance fields.
 ## FreeText, Signature, and Stamp
 
 FreeText uses the configured `TextInputProvider`. The browser default creates
-and owns the in-place textarea; a product can provide another implementation
-through a Capability without changing annotation semantics.
+and manages an in-place textarea. An application can provide another
+implementation through a Capability without changing annotation semantics.
 
-Signature and Stamp are image annotations. Product UI creates or selects a PNG
-or JPEG data URL, then gives Core the placement asset:
+Signature and Stamp are image annotations. The application creates or selects a
+PNG or JPEG data URL, then gives Core the asset to place:
 
 ```ts
 core.annotations.setImageAsset('signature', {
@@ -89,15 +104,16 @@ core.annotations.setImageAsset('signature', {
 core.annotations.setTool('signature')
 ```
 
-Core owns the cursor preview, placement, selection, transforms, rendering, and
-PDF output. Without an asset, a canvas click emits `imageAssetRequired` so the
-application can open its picker.
+Core handles the cursor preview, placement, selection, transforms, rendering,
+and PDF output. If no asset has been set, clicking the page emits
+`imageAssetRequired`, allowing the application to open its picker.
 
-## Repository and collaboration
+## Annotation data and collaboration
 
-The repository is the single source of truth for annotations, selection,
-comments, references, and permissions. Pass your own repository when state must
-outlive an engine instance, or install it with
+`core.annotations.repository` is the current instance's annotation data store
+and the single source of truth for annotations, selection, comments, references,
+and permissions. Pass your own repository when state must outlive an engine
+instance, or install it with
 `createAnnotationRepositoryCapability()`.
 
 Persist canonical `Annotation` values only. Validate untrusted input before
@@ -116,18 +132,20 @@ missing definition behavior, transform reducers, and PDF appearance streams.
 
 ## Attach pages manually
 
-Page Flow handles this automatically. If your adapter owns page layout, attach
-the annotation overlay after the page dimensions are known:
+Page Flow handles this automatically. If your adapter owns page layout, add an
+empty annotation layer above each page canvas and attach it after the page
+dimensions are known:
 
 ```ts
 await core.annotations.attachPage({
   pageIndex: 0,
-  container: pageElement,
+  container: annotationLayer,
   width: unscaledPageWidth,
   height: unscaledPageHeight,
   scale: currentScale
 })
 ```
 
-Update or reattach it when scale changes and detach it when the page unmounts.
-Canonical coordinates remain unscaled page units.
+Update or reattach the layer when scale changes. When the page unmounts, call
+`core.annotations.detachPage(pageIndex)`. Annotation coordinates remain in
+unscaled page units.

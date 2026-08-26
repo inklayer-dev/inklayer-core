@@ -1,117 +1,214 @@
-# 框架接入
+# 原生 JavaScript 接入
 
-React、Vue、Svelte、Angular、Web Components 和原生 TypeScript 使用同一种适配器模式：宿主 DOM 存在后创建一个 Core 实例，把类型化 Core 事件转成框架状态，由 UI 操作调用命令式方法，并在移除宿主 DOM 前销毁实例。
+不依赖 UI 框架搭建 PDF 查看器：先完成最简单的文档查看，再加入页面导航、缩略图、批注工具栏和侧边栏。Vue 和 React 的实现请分别参考 [Vue 接入](./framework-vue)与 [React 接入](./framework-react)。
 
-## 所有权边界
+> [!NOTE] 提示
+> Core 负责渲染 PDF 页面和批注图层；工具栏、侧边栏和整体布局由应用自行实现。
 
-| Core 负责 | 框架负责 |
-|---|---|
-| PDF 加载、Worker、Range、密码生命周期 | 文件选择器、密码框、加载状态展示 |
-| 页面渲染、缩放、导航、页面流 | 工具栏、页码输入、滚动条样式 |
-| TextLayer 提取、选择、搜索高亮 | 搜索框、结果列表、文字批注上下文菜单 |
-| 批注明中、绘制、变换、键盘行为 | 工具面板、外观检查器、评论面板 |
-| 规范 Repository 与类型化事件 | 服务端持久化、用户/会话状态、路由 |
-| 打印/导出字节合成与水印策略 | 打印/导出按钮、文件名、上传 |
+## 搭建最简单的查看器
 
-不要在 PDF.js、TextLayer、Page Flow 或 Annotation Engine 当前拥有的元素内挂载框架子节点。应向 Core 提供稳定的空宿主元素，并把产品 UI 渲染在其周围。
+先创建根元素和一个空的页面容器：
 
-## 适配器生命周期
+::: code-group
 
-```ts
-import type { InkLayerInstance, PdfViewerEvent } from '@inklayer-dev/core'
+```html [index.html]
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <title>PDF 查看器</title>
+  </head>
+  <body>
+    <main id="pdf-workspace">
+      <div id="pages"></div>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
+```
+
+:::
+
+为页面容器设置高度，并开启滚动：
+
+::: code-group
+
+```css [src/style.css]
+html, body, #pdf-workspace { height: 100%; margin: 0; }
+#pages { height: 100%; overflow: auto; }
+```
+
+:::
+
+创建 Core 实例并加载 PDF：
+
+::: code-group
+
+```ts [src/main.ts]
 import { createInkLayer } from '@inklayer-dev/core/capabilities'
+import '@inklayer-dev/core/style'
+import './style.css'
 
-export async function mountPdfAdapter(
-  root: HTMLElement,
-  emit: (event: PdfViewerEvent) => void
-) {
-  const core = await createInkLayer({ root })
-  const unsubscribe = core.viewer.subscribe(emit)
+const core = await createInkLayer({
+  root: document.querySelector<HTMLElement>('#pdf-workspace')!,
+  pageFlow: {
+    container: document.querySelector<HTMLDivElement>('#pages')!,
+    scale: 'page-width'
+  }
+})
 
-  return {
-    core,
-    async destroy() {
-      unsubscribe()
-      await core.destroy()
+await core.load({ url: '/documents/review.pdf' })
+```
+
+:::
+
+Core 会在 `#pages` 中渲染 PDF 页面，并提供连续滚动。
+
+## 添加页面导航和缩略图
+
+在基础布局中加入工具栏和左右侧边栏，并保持 `#pages` 为空，交给 Core 渲染页面：
+
+::: code-group
+
+```html [index.html]
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <title>PDF 批注工作区</title>
+  </head>
+  <body>
+    <main id="pdf-workspace" class="workspace">
+      <header class="toolbar">
+        <button id="previous">上一页</button>
+        <span id="page-number">1</span>
+        <button id="next">下一页</button>
+        <button id="zoom-out">−</button>
+        <span id="zoom">100%</span>
+        <button id="zoom-in">+</button>
+        <button id="select">选择</button>
+        <button id="rectangle">矩形</button>
+      </header>
+
+      <aside id="thumbnails" class="sidebar"></aside>
+      <div id="pages" class="pages"></div>
+      <aside id="annotations" class="sidebar"></aside>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
+```
+
+```css [src/style.css]
+html, body, #pdf-workspace { height: 100%; margin: 0; }
+
+.workspace {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr) 220px;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.toolbar { grid-column: 1 / -1; }
+.pages, .sidebar { overflow: auto; }
+.sidebar img { max-width: 100%; }
+```
+
+:::
+
+## 搭建批注工作区
+
+接下来绑定工具栏按钮、生成缩略图，并订阅批注变化。点击批注列表中的条目时，会选中对应批注并跳转到所在页面：
+
+::: code-group
+
+```ts [src/main.ts]
+import { createInkLayer } from '@inklayer-dev/core/capabilities'
+import '@inklayer-dev/core/style'
+import './style.css'
+
+const root = document.querySelector<HTMLElement>('#pdf-workspace')!
+const pages = document.querySelector<HTMLDivElement>('#pages')!
+const thumbnailList = document.querySelector<HTMLElement>('#thumbnails')!
+const annotationList = document.querySelector<HTMLElement>('#annotations')!
+const pageNumber = document.querySelector<HTMLElement>('#page-number')!
+const zoom = document.querySelector<HTMLElement>('#zoom')!
+const thumbnailUrls: string[] = []
+let currentPage = 0
+
+const core = await createInkLayer({
+  root,
+  pageFlow: {
+    container: pages,
+    scale: 'page-width',
+    onCurrentPageChanged(pageIndex) {
+      currentPage = pageIndex
+      pageNumber.textContent = String(pageIndex + 1)
+    },
+    onScaleChanged(state) {
+      zoom.textContent = `${state.percentage}%`
     }
   }
+})
+
+const pdf = await core.load({ url: '/documents/review.pdf' })
+const pageFlow = core.getPageFlow()!
+
+document.querySelector<HTMLButtonElement>('#previous')!.onclick = () => {
+  pageFlow.scrollToPage(Math.max(0, currentPage - 1))
 }
-```
+document.querySelector<HTMLButtonElement>('#next')!.onclick = () => {
+  pageFlow.scrollToPage(Math.min(pdf.numPages - 1, currentPage + 1))
+}
+document.querySelector<HTMLButtonElement>('#zoom-out')!.onclick = () => {
+  void pageFlow.zoomOut()
+}
+document.querySelector<HTMLButtonElement>('#zoom-in')!.onclick = () => {
+  void pageFlow.zoomIn()
+}
+document.querySelector<HTMLButtonElement>('#select')!.onclick = () => {
+  core.annotations.setTool('select')
+}
+document.querySelector<HTMLButtonElement>('#rectangle')!.onclick = () => {
+  core.annotations.setTool('rectangle')
+}
 
-框架规则：
+for (let pageIndex = 0; pageIndex < pdf.numPages; pageIndex++) {
+  const thumbnail = await core.viewer.renderThumbnail({ pageIndex, maxWidth: 140 })
+  const url = URL.createObjectURL(thumbnail.blob)
+  thumbnailUrls.push(url)
 
-1. 只在 root 挂载后创建实例，不能在 SSR 或渲染阶段创建。
-2. 把实例放在 ref/非响应式字段中，不要代理引擎对象。
-3. 从分离快照和类型化事件派生框架状态。
-4. 普通 prop 变化不要重建实例，调用 Core 命令。
-5. 销毁实例前先清理订阅。
-6. 条件允许时，在复用或移除宿主前等待 `destroy()` 完成。
+  const button = document.createElement('button')
+  const image = document.createElement('img')
+  image.src = url
+  image.alt = `第 ${pageIndex + 1} 页`
+  button.append(image)
+  button.onclick = () => pageFlow.scrollToPage(pageIndex)
+  thumbnailList.append(button)
+}
 
-## React 结构
+function updateAnnotations(): void {
+  annotationList.replaceChildren()
 
-```tsx
-function PdfWorkspace({ source }: { source: PdfSource }) {
-  const rootRef = useRef<HTMLDivElement>(null)
-  const coreRef = useRef<InkLayerInstance | null>(null)
-
-  useEffect(() => {
-    const controller = new AbortController()
-
-    void (async () => {
-      const root = rootRef.current
-      if (!root) return
-      const core = await createInkLayer({ root })
-      if (controller.signal.aborted) return void core.destroy()
-      coreRef.current = core
-      await core.load(source)
-    })()
-
-    return () => {
-      controller.abort()
-      const core = coreRef.current
-      coreRef.current = null
-      if (core) void core.destroy()
+  for (const annotation of core.annotations.repository.getAll()) {
+    const button = document.createElement('button')
+    button.textContent = `${annotation.type} · 第 ${annotation.pageIndex + 1} 页`
+    button.onclick = () => {
+      core.annotations.setSelection({ ids: [annotation.id] })
+      pageFlow.scrollToPage(annotation.pageIndex)
     }
-  }, [source])
+    annotationList.append(button)
+  }
+}
 
-  return <div ref={rootRef} className="pdf-workspace" />
+const stop = core.annotations.repository.subscribe(updateAnnotations)
+
+export async function destroyPdfWorkspace(): Promise<void> {
+  stop()
+  for (const url of thumbnailUrls) URL.revokeObjectURL(url)
+  await core.destroy()
 }
 ```
 
-生产适配器应让实例创建只与 mount 绑定，并在单独的 source effect 中调用 `core.load(source)`，这样切换文档不会重建引擎。
+:::
 
-## Vue 结构
-
-```ts
-const root = ref<HTMLElement>()
-let core: InkLayerInstance | undefined
-
-onMounted(async () => {
-  core = await createInkLayer({ root: root.value! })
-  await core.load(props.source)
-})
-
-watch(() => props.source, source => core?.load(source))
-
-onBeforeUnmount(() => {
-  const instance = core
-  core = undefined
-  if (instance) void instance.destroy()
-})
-```
-
-同一生命周期可以直接映射到 Svelte `onMount`、Angular `AfterViewInit`/`OnDestroy`、Web Component 的 `connectedCallback`/`disconnectedCallback`，或任何具有 mount/unmount hook 的宿主。
-
-## 转换状态，但不复制行为
-
-框架状态应描述表现，不能重写 Core 算法。例如搜索组件保存查询、结果列表、当前结果和面板开关；它调用 `viewer.search()`、把匹配传给 `viewer.setSearchHighlights()`，并用 `viewer.goToPage()` 导航，不能自行提取或归一化 PDF 文本。
-
-同理，批注工具栏保存选中的按钮并调用 `annotations.setTool()`；通过 `getAppearanceCapabilities()` 决定显示哪些控件，再调用 `setToolAppearance()` 或 `updateAppearance()`，不能构建 Konva 节点。
-
-## 持久化
-
-`AnnotationRepository` 是应用数据边界。订阅 Repository 事件，并用自己的 HTTP、数据库或同步策略保存规范批注。远端数据验证后通过 Repository 命令加载。不要持久化引擎快照、DOM 几何、Konva 节点、框架状态、搜索高亮、hover 或 selection。
-
-## 多 Viewer
-
-多个实例相互隔离且受支持，但多数产品每个可见文档工作区只需要一个实例。不要让一个实例跨两个 DOM root；如需共享服务端数据，应通过 Repository 或应用状态共享。
+移除工作区时调用 `destroyPdfWorkspace()`。文字高亮、作者权限和批注保存请分别参考[创建第一个批注](./first-annotation)与[保存和恢复批注](./persistence)。

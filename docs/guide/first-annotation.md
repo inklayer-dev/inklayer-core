@@ -1,76 +1,100 @@
 # Create your first annotation
 
-This guide starts from the Viewer created in [Build a viewer in 5 minutes](./getting-started.md). You will add a Rectangle button, control its appearance, observe saved annotation data, and create a Highlight from selected PDF text.
+Continue with the same `core` instance from [Getting started](./getting-started.md). In this tutorial, you will add application buttons that draw a rectangle and turn selected PDF text into a highlight.
 
-## Add a Rectangle button
+> [!IMPORTANT] NOTE
+InkLayer Core is headless: it does not ship a toolbar or sidebar. You build those controls in your framework and call the same methods shown here.
 
-Add a product button anywhere outside Core-owned page elements:
+## Draw a rectangle
+
+Add a button outside the Viewer hosts. InkLayer Core is headless, so your application owns this button and decides where it appears:
 
 ```html
 <button id="rectangle" type="button">Rectangle</button>
 ```
 
-Connect it to the annotation tool:
+Activate the Rectangle tool when the user clicks the button:
 
 ```ts
-document.querySelector('#rectangle')?.addEventListener('click', () => {
+const rectangleButton = document.querySelector<HTMLButtonElement>('#rectangle')!
+
+rectangleButton.onclick = () => {
   core.annotations.setTool('rectangle')
-})
+}
 ```
 
-Click the button and drag on a PDF page. Rectangle is a one-shot tool by default: after creation, Core selects the new annotation and returns to Select.
+Click **Rectangle**, then drag on a PDF page. Core creates and selects the rectangle, then returns to the Select tool so the user can move or resize it.
 
-## Choose its appearance
+### Set the rectangle appearance (optional)
 
-Set defaults before the user draws:
+Set the appearance before activating the tool when you want a different default for new rectangles:
 
 ```ts
 core.annotations.setToolAppearance('rectangle', {
-  stroke: { color: '#175cd3', width: 2, dash: [] },
-  fill: { color: '#84adff', opacity: 0.18 }
+  stroke: {
+    color: '#175cd3', // Border color
+    width: 2,         // Border width
+    dash: []          // Empty means a solid line
+  },
+  fill: {
+    color: '#84adff', // Fill color
+    opacity: 0.18     // Fill opacity from 0 to 1
+  }
 })
 ```
 
-The product owns color pickers and number inputs. Core validates the values and keeps rendering, printing, and export consistent.
+Call this once during setup, before the user clicks **Rectangle**.
 
-## Observe annotation data
+## Highlight selected text
 
-```ts
-const stop = core.annotations.repository.subscribe(event => {
-  if (event.type === 'selection') return
-  console.log(core.annotations.repository.getAll())
-})
+Text markup is created in two steps: first the user selects PDF text, then an application action turns that selection into a highlight.
+
+Add one button for each step:
+
+```html
+<button id="select-text" type="button">Select text</button>
+<button id="highlight" type="button">Highlight selection</button>
 ```
 
-`getAll()` returns detached, serializable annotations. It does not return Konva nodes or page DOM.
-
-## Create a Highlight from selected text
-
-Put PDF text into selection mode:
+Connect the buttons to Core:
 
 ```ts
-core.annotations.setTool('text-select')
-```
+const selectTextButton = document.querySelector<HTMLButtonElement>('#select-text')!
+const highlightButton = document.querySelector<HTMLButtonElement>('#highlight')!
 
-After the user selects text, a product action can create the Highlight:
+selectTextButton.onclick = () => {
+  core.annotations.setTool('text-select')
+}
 
-```ts
-const selection = core.viewer.getTextSelection()
-if (selection?.kind === 'page') {
-  core.annotations.createTextMarkup('highlight', selection.selection)
+highlightButton.onclick = () => {
+  const active = core.viewer.getTextSelection()
+  if (!active) return
+
+  const selections = active.kind === 'page'
+    ? [active.selection]
+    : active.selection.fragments
+
+  for (const selection of selections) {
+    core.annotations.createTextMarkup('highlight', selection)
+  }
+
   core.viewer.clearTextSelection()
 }
 ```
 
-Cross-page selections contain ordered page fragments. Create one canonical markup per fragment. See [Search and text selection](./search-and-selection.md).
+Click **Select text**, drag across text in the PDF, then click **Highlight selection**. Core retains the PDF selection while focus moves to your button. A cross-page selection creates one page-scoped annotation for each selected page.
 
-## Clean up
+Replace `highlight` with `underline` or `strikeout` to create the other text markup types.
 
-Dispose your repository subscription before destroying the instance:
+## Inspect the result
+
+Core stores every annotation created above in `core.annotations.repository`, the annotation data store for this instance:
 
 ```ts
-stop()
-await core.destroy()
+const annotations = core.annotations.repository.getAll()
+console.log(annotations)
 ```
 
-Next, learn how to [save and restore annotations](./persistence.md) or explore all [annotation tools and appearance controls](./annotations.md).
+`getAll()` returns detached, serializable annotation data rather than Konva nodes or page DOM. To send these values to a backend and restore them later, continue with [Save and restore annotations](./persistence.md).
+
+When the page unmounts, keep the cleanup from [Getting started](./getting-started.md) and await `core.destroy()`.

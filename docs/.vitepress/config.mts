@@ -27,11 +27,9 @@ export default defineConfig({
         ],
         sidebar: [
           {
-            text: '入门',
+            text: '简介',
             items: [
-              { text: '什么是 InkLayer Core？', link: '/zh/' },
-              { text: '体验在线示例', link: '/zh/guide/try-demo' },
-              { text: '5 分钟构建 Viewer', link: '/zh/guide/getting-started' },
+              { text: '快速开始', link: '/zh/guide/getting-started' },
               { text: '创建第一个批注', link: '/zh/guide/first-annotation' }
             ]
           },
@@ -49,28 +47,29 @@ export default defineConfig({
           {
             text: '框架接入',
             items: [
-              { text: '在 Web 框架中接入', link: '/zh/guide/framework-integration' }
+              { text: '原生 JavaScript', link: '/zh/guide/framework-integration' },
+              { text: 'Vue', link: '/zh/guide/framework-vue' },
+              { text: 'React', link: '/zh/guide/framework-react' }
             ]
           },
           {
             text: '插件开发',
             items: [
               { text: '插件概览', link: '/zh/guide/plugins' },
-              { text: '第一个能力插件', link: '/zh/guide/capability-plugin' },
+              { text: '能力插件', link: '/zh/guide/capability-plugin' },
               { text: '自定义批注类型', link: '/zh/guide/custom-annotation-type' },
-              { text: '生命周期与服务', link: '/zh/guide/plugin-lifecycle' }
+              { text: '插件生命周期与服务', link: '/zh/guide/plugin-lifecycle' }
             ]
           },
           {
             text: '参考',
             items: [
               { text: '公开 API', link: '/zh/api' },
-              { text: '数据模型', link: '/zh/data-model' },
-              { text: 'CSS 合约', link: '/zh/css-contract' },
+              { text: '批注数据模型', link: '/zh/data-model' },
+              { text: '样式与 CSS 变量', link: '/zh/css-contract' },
               { text: '错误恢复', link: '/zh/error-recovery' },
               { text: '无障碍', link: '/zh/accessibility' },
-              { text: '浏览器支持', link: '/zh/browser-support' },
-              { text: '构建工具支持', link: '/zh/consumer-build-matrix' }
+              { text: '浏览器支持', link: '/zh/browser-support' }
             ]
           },
           {
@@ -125,16 +124,14 @@ export default defineConfig({
       {
         text: 'Get started',
         items: [
-          { text: 'What is InkLayer Core?', link: '/' },
-          { text: 'Try the live demo', link: '/guide/try-demo' },
-          { text: 'Build a viewer in 5 minutes', link: '/guide/getting-started' },
+          { text: 'Getting started', link: '/guide/getting-started' },
           { text: 'Create your first annotation', link: '/guide/first-annotation' }
         ]
       },
       {
         text: 'Everyday tasks',
         items: [
-          { text: 'Load PDFs', link: '/guide/loading-pdfs' },
+          { text: 'Load PDF', link: '/guide/loading-pdfs' },
           { text: 'Pages, zoom, and navigation', link: '/guide/viewer-and-pages' },
           { text: 'Search and text selection', link: '/guide/search-and-selection' },
           { text: 'Annotation tools and appearance', link: '/guide/annotations' },
@@ -145,28 +142,29 @@ export default defineConfig({
       {
         text: 'Framework integration',
         items: [
-          { text: 'Integrate with a web framework', link: '/guide/framework-integration' }
+          { text: 'Vanilla JavaScript', link: '/guide/framework-integration' },
+          { text: 'Vue', link: '/guide/framework-vue' },
+          { text: 'React', link: '/guide/framework-react' }
         ]
       },
       {
         text: 'Plugin development',
         items: [
           { text: 'Plugin overview', link: '/guide/plugins' },
-          { text: 'Your first Capability plugin', link: '/guide/capability-plugin' },
-          { text: 'Custom annotation type', link: '/guide/custom-annotation-type' },
-          { text: 'Lifecycle and services', link: '/guide/plugin-lifecycle' }
+          { text: 'Capability plugins', link: '/guide/capability-plugin' },
+          { text: 'Custom annotation types', link: '/guide/custom-annotation-type' },
+          { text: 'Plugin lifecycle and services', link: '/guide/plugin-lifecycle' }
         ]
       },
       {
         text: 'Reference',
         items: [
           { text: 'Public API', link: '/api' },
-          { text: 'Data model', link: '/data-model' },
-          { text: 'CSS contract', link: '/css-contract' },
+          { text: 'Annotation data model', link: '/data-model' },
+          { text: 'Styles and CSS variables', link: '/css-contract' },
           { text: 'Error recovery', link: '/error-recovery' },
           { text: 'Accessibility', link: '/accessibility' },
-          { text: 'Browser support', link: '/browser-support' },
-          { text: 'Build-tool support', link: '/consumer-build-matrix' }
+          { text: 'Browser support', link: '/browser-support' }
         ]
       },
       {

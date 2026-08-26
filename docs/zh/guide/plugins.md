@@ -1,58 +1,49 @@
 # 插件概览
 
-插件让某个 InkLayer 实例接入你的产品环境，或者增加一种新的批注工具。插件不能替换 PDF 坐标、验证、权限等必须在所有框架中保持一致的行为。
+InkLayer 提供两种扩展方式：为 Core 实例接入应用服务，或者增加新的批注类型。具体选择哪一种，取决于你想扩展的内容。
 
-## 选择需要的插件
+## 接入应用服务
 
-| 我想要…… | 使用 | 从这里开始 |
-|---|---|---|
-| 把日志发送给产品日志系统 | 能力插件 | [第一个能力插件](./capability-plugin.md) |
-| 把批注保存在应用拥有的 Repository | Repository Capability | [保存和恢复批注](./persistence.md) |
-| 替换 FreeText 编辑器、打印、下载、Fetch、时钟、ID 或缩略图 surface | 内置 Capability factory | [第一个能力插件](./capability-plugin.md) |
-| 引擎就绪后运行产品行为 | 使用 `onReady()` 的自定义 Capability | [生命周期与服务](./plugin-lifecycle.md) |
-| 增加新的持久化绘制工具 | Annotation Type Definition | [自定义批注类型](./custom-annotation-type.md) |
-| 修改工具栏布局、图标、对话框或面板 | 框架 UI，不是 Core 插件 | [框架接入](./framework-integration.md) |
+能力插件（Capability）用于接入应用提供的服务，例如日志、批注数据仓库、文字输入或下载处理。
 
-## 两种扩展方式
-
-### 能力插件
-
-Capability 是实例级环境服务或产品集成插件。常见服务已经提供 factory，多数应用不需要自己编写生命周期代码：
+下面的配置会把 Core 的诊断信息输出到浏览器控制台：
 
 ```ts
+import { createInkLayer, createLoggerCapability } from '@inklayer-dev/core/capabilities'
+
 const core = await createInkLayer({
   root,
-  pageFlow: { container },
-  capabilities: [
-    createLoggerCapability(appLogger),
-    createAnnotationRepositoryCapability(repository),
-    createTextInputCapability(textInput)
-  ]
+  pageFlow: { container: pages },
+  capabilities: [createLoggerCapability(console)]
 })
 ```
 
-Capability 只影响当前实例，并随实例一起清理。
+这个日志服务只作用于当前 Core 实例。另一个查看器可以使用不同的日志服务，也可以不安装该插件。
 
-### 批注类型插件
+现成能力插件的使用方法，以及自定义能力插件的写法，见[创建能力插件](./capability-plugin)。
 
-Annotation Type Definition 会增加 `custom:acme/review-area` 这样的命名空间工具。它声明工具如何创建、支持哪些外观和变换控件、渲染什么受控场景，以及如何进入 PDF 输出。
+## 增加批注类型
+
+自定义批注类型可以增加新的绘制工具，例如评审区域或测量框。类型定义会描述批注如何创建、渲染、保存、打印和导出。
 
 ```ts
 const core = await createInkLayer({
   root,
-  pageFlow: { container },
+  pageFlow: { container: pages },
   annotationTypes: [reviewArea]
 })
 
 core.annotations.setTool('custom:acme/review-area')
 ```
 
-指针输入、验证、命中测试、变换、持久化、打印、导出和清理仍由 Core 负责。插件不会得到 Konva 或 PDF.js 私有对象。
+指针交互、选中、权限、持久化和 PDF 输出仍由 Core 负责。类型定义只描述批注本身，不直接操作 Konva 或 PDF.js 的内部对象。
 
-## 插件属于实例
+包含自定义数据的完整绘制工具示例，见[创建自定义批注类型](./custom-annotation-type)。
 
-两个 Viewer 可以安装不同插件，不共享 Registry 或可变状态。安装失败时，`createInkLayer()` 会先回滚已经创建的插件资源，再返回错误。
+## 了解扩展边界
 
-16 种内置批注在内部使用同一套 Definition 模型，但它们属于受保护的 Core 行为，不能被替换或注销。
+插件只属于当前 Core 实例，不会与其他实例共享服务或批注类型；实例销毁时，插件占用的资源也会一并释放。
 
-接下来阅读[第一个能力插件](./capability-plugin.md)或[自定义批注类型](./custom-annotation-type.md)。
+16 种内置批注类型不能被替换或移除。工具栏、按钮、对话框和侧边栏属于应用界面，不属于插件系统；相关实现见[框架接入](./framework-integration)。
+
+安装顺序、服务共享、资源清理和初始化失败处理见[插件生命周期与服务](./plugin-lifecycle)。

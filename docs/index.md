@@ -4,76 +4,94 @@ layout: home
 hero:
   name: InkLayer Core
   text: One PDF engine for every web framework
-  tagline: Build your product UI. Let Core handle PDF viewing, annotations, page flow, print, and export.
+  tagline: Build your product UI. Let Core handle PDF viewing, annotations, page rendering, print, and export.
   image:
-    src: /hero-engine.svg
+    light: /hero-engine.svg
+    dark: /hero-engine-dark.svg
     alt: PDF document with a text highlight and a selected freehand annotation.
   actions:
     - theme: brand
       text: Get started
       link: /guide/getting-started
     - theme: alt
-      text: Read the API
+      text: API reference
       link: /api
     - theme: alt
-      text: Demo
+      text: Live demo
       link: 'https://inklayer-dev.github.io/inklayer-core/demo/'
 
 features:
-  - title: Framework-independent
-    details: Use the same imperative engines from React, Vue, Svelte, Angular, Web Components, or plain TypeScript.
+  - title: Use your framework of choice
+    details: Use the same Core API in React, Vue, Svelte, Angular, Web Components, or plain TypeScript.
     link: /guide/framework-integration
-  - title: Complete document behavior
-    details: Loading, Range requests, passwords, search, selection, page flow, zoom, watermarks, print, and export live in Core.
+  - title: Core handles PDF behavior
+    details: Viewing, annotations, zoom, search, watermarks, print, and export live in Core, while your application controls the interface and workflow.
     link: /guide/viewer-and-pages
-  - title: Extensible annotations
-    details: Use sixteen built-in tools or register your own drawing type with save, print, and PDF export support.
+  - title: Annotations built in and extensible
+    details: Start with sixteen types for highlights, text, shapes, signatures, and more, then define your own tools when needed.
     link: /guide/plugins
-  - title: Production lifecycle
-    details: Safe cancellation and cleanup, structured errors, isolated viewers, SSR-safe imports, and a bundled PDF.js Worker.
+  - title: Controlled from mount to teardown
+    details: Cancel in-progress loads, destroy instances cleanly, run isolated viewers side by side, and import Core safely during SSR.
     link: /error-recovery
 ---
 
-## Start with a working Viewer
+## Start with Core
 
-Install the package, give Core a scroll container, and load a PDF:
+Install Core, provide two host elements, give the scroll container an explicit size, and load a PDF.
+
+```bash
+npm install @inklayer-dev/core
+```
+
+```html
+<div id="pdf-workspace">
+  <div id="pages"></div>
+</div>
+```
+
+```css
+html, body, #pdf-workspace {
+  height: 100%;
+  margin: 0;
+}
+
+#pages {
+  height: 100%;
+  overflow: auto;
+  background: #f2f4f7;
+}
+```
 
 ```ts
 import { createInkLayer } from '@inklayer-dev/core/capabilities'
 import '@inklayer-dev/core/style'
 
+const root = document.querySelector<HTMLElement>('#pdf-workspace')!
+const pages = document.querySelector<HTMLElement>('#pages')!
+
 const core = await createInkLayer({
-  root: workspaceElement,
-  pageFlow: { container: pagesElement }
+  root,
+  pageFlow: { container: pages, scale: 'page-width' }
 })
 await core.load({ url: '/documents/review.pdf', range: 'auto' })
 ```
 
-The [5-minute guide](/guide/getting-started) adds the required DOM/CSS, loading
-state, password handling, and cleanup. InkLayer Core is headless: it owns PDF
-and annotation behavior while your framework owns the toolbar, panels, and
-workflow.
+[Getting started →](/guide/getting-started)
 
-## What do you want to build?
+> [!IMPORTANT] NOTE
+> InkLayer Core is headless: it owns PDF and annotation behavior while your framework owns the toolbar, panels, and workflow.
 
-| I want to… | Go to |
-|---|---|
-| See every feature before writing code | [Try the live demo](/guide/try-demo) |
-| Display a scrolling, zoomable PDF | [Build a viewer in 5 minutes](/guide/getting-started) |
-| Draw a rectangle or create a text highlight | [Create your first annotation](/guide/first-annotation) |
-| Load files, passwords, authenticated URLs, or large PDFs | [Load PDFs](/guide/loading-pdfs) |
-| Add page navigation, zoom, thumbnails, or an outline | [Pages, zoom, and navigation](/guide/viewer-and-pages) |
-| Search and select real PDF text | [Search and text selection](/guide/search-and-selection) |
-| Save annotations to a backend and restore them | [Save and restore annotations](/guide/persistence) |
-| Print, export, or add a watermark | [Print, export, and watermarks](/guide/output-and-security) |
-| Integrate Core with React, Vue, or another framework | [Framework integration](/guide/framework-integration) |
-| Add a product service or custom drawing tool | [Plugin overview](/guide/plugins) |
+## Choose your next task
+
+[Load PDF →](/guide/loading-pdfs) ·
+[Create your first annotation →](/guide/first-annotation) ·
+[Print and export →](/guide/output-and-security)
 
 ## Extend only when you need to
 
-Ability plugins connect logging, persistence, text input, print, download, and
-other product services. Annotation Type Definitions add namespaced drawing
-tools. Both stay inside one instance, while Core continues to own validation,
-interaction, persistence, print, export, and cleanup.
+Capability plugins connect one instance to application services such as logging,
+annotation storage, text input, printing, and downloads. Annotation Type
+Definitions add namespaced drawing tools. However you extend it, Core retains
+control of coordinates, validation, interaction, rendering, output, and cleanup.
 
 [Build your first plugin →](/guide/capability-plugin)

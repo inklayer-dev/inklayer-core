@@ -1,21 +1,72 @@
-# Canonical Data Model
+# Annotation data model
 
-`Annotation` schema version 1 is the only persisted and collaborative model.
+`Annotation` is the serializable source of truth used by repositories, persistence, import, printing, and export. Save the complete object returned by Core; do not save DOM elements, Konva nodes, or temporary toolbar state in its place.
 
-## Required semantics
+## Top-level structure
 
-- `id` is stable and unique within a document.
-- `pageIndex` is zero-based.
-- `type` is one of 16 protected built-ins or a bounded namespaced
-  `custom:<namespace>/<name>` identity; `select` is not persisted.
-- `bounds` are finite, axis-aligned, and non-negative.
-- `coordinateSpace` is explicitly `konva-stage` or `pdf-user-space`.
-- `comments`, `author`, `createdAt`, `native`, and `rendererState` are first-class.
-- `referenceNumber` is an optional positive, document-scoped display number.
-- `source` records `core`, `legacy`, or `pdf-native` provenance.
-- `typeData` optionally preserves independently versioned, Definition-owned
-  lossless JSON semantics.
-- `extensions` preserves validated generic application JSON metadata.
+```ts
+interface Annotation {
+  id: string
+  schemaVersion: 1
+  type: AnnotationTypeId
+  pageIndex: number
+  bounds: AnnotationBounds
+  coordinateSpace: AnnotationCoordinateSpace
+  appearance: AnnotationAppearance
+  comments: AnnotationComment[]
+  author: User
+  createdAt: string | null
+  native: boolean
+  rendererState: KonvaRendererState
+
+  content?: AnnotationContent
+  updatedAt?: string | null
+  referenceNumber?: number
+  source?: AnnotationSource
+  typeData?: AnnotationTypeData
+  extensions?: JsonObject
+}
+```
+
+This is the complete top-level V1 shape. Nested objects contain text or image content, appearance, comments, custom-type data, and the renderer representation.
+
+## Field meanings
+
+| Field | Meaning |
+| --- | --- |
+| `id` | Stable annotation ID, unique within one document. |
+| `schemaVersion` | Version of the complete annotation envelope; currently `1`. |
+| `type` | One of the 16 built-in types or a namespaced `custom:<namespace>/<name>` ID. `select` is a tool, not an annotation type. |
+| `pageIndex` | Zero-based PDF page index. |
+| `bounds` | Finite, non-negative, axis-aligned bounds in `coordinateSpace`. |
+| `appearance` | Fully resolved opacity, stroke, fill, and text appearance. |
+| `content` | Optional semantic text, selected text, image, signature, or references. |
+| `comments` | Comments and replies in stable order. |
+| `author` | Creator identity used by application UI and permission checks. |
+| `createdAt` / `updatedAt` | Timestamp strings, or `null` when unavailable. |
+| `native` | Whether the annotation originated in the source PDF. |
+| `referenceNumber` | Optional positive document-level display number. |
+| `source` | Optional provenance such as `core`, `legacy`, or `pdf-native`. |
+| `rendererState` | Versioned drawing representation required to redraw the annotation. |
+| `typeData` | Versioned JSON owned by a custom annotation type. |
+| `extensions` | Validated application JSON that Core preserves without interpreting. |
+
+## Author and permissions
+
+`author` is persisted on each annotation. Permission policy is not: it belongs to the current Core instance and is evaluated using the current user.
+
+```ts
+const core = await createInkLayer({
+  root,
+  pageFlow: { container: pages },
+  annotation: {
+    currentUser: { id: 'alice', name: 'Alice' },
+    permissions: { mode: 'owner-only' }
+  }
+})
+```
+
+With `owner-only`, Alice can edit annotations whose `author.id` is `alice`; another user sees the same saved annotation data but Core rejects protected operations. Change the active identity with `core.annotations.setCurrentUser(user)`. See [Persist annotations](./guide/persistence) for a complete example.
 
 ## Renderer state
 
@@ -27,23 +78,13 @@ interface KonvaRendererState {
 }
 ```
 
-For built-ins this is not a disposable cache: it is the exact redraw
-representation. Every built-in load, creation, transform, import, and export
-path uses the same snapshot parser.
-The protected Definition identifies this as the Core-private renderer strategy;
-construction, restyling, content synchronization, hit testing, and transforms
-resolve Definition metadata before reaching optimized snapshot helpers.
-The parser bounds string length, depth, nodes, points, and data URLs; accepts only
-verified classes and finite attributes; rejects prototype keys; and verifies the
-root Group ID against the annotation ID.
+`rendererState` is persisted data, not a disposable cache. Save it unchanged and let Core validate and update it. Applications should not parse or edit the serialized Konva representation.
 
-When a custom Definition is missing or does not support the retained
-`typeData.schemaVersion`, `rendererState` remains opaque preserved data. Core
-does not pass it to Konva. It displays a Core-produced bounds placeholder, then
-rebuilds a controlled scene from canonical data when compatible behavior becomes
-available.
+If a custom annotation definition is unavailable, Core preserves its data and displays a safe bounds-based placeholder. Registering a compatible definition restores its normal renderer and interactions.
 
-## Type-owned JSON
+## Custom-type and application JSON
+
+Custom annotation types store their own versioned payload in `typeData`:
 
 ```ts
 interface AnnotationTypeData {
@@ -52,32 +93,18 @@ interface AnnotationTypeData {
 }
 ```
 
-`JsonValue` accepts only null, booleans, finite numbers, strings, arrays, and
-plain string-keyed objects. Core bounds depth, total values, strings, and keys;
-it rejects functions, undefined, symbols, class instances, Dates, Maps, Sets,
-cycles, accessors, non-enumerable fields, dangerous prototype keys, and
-non-finite numbers. Envelope parsing never depends on plugin availability.
+The owning type definition must declare support for that schema version and validate the payload. `extensions` is different: it is general application metadata that Core preserves but does not interpret.
 
-For pointer-created custom annotations, a Definition may derive initial
-`typeData` from normalized page-space gesture geometry. Core persists the
-returned JSON only after envelope and codec validation. A pure transform reducer
-may replace bounds and `typeData` together, keeping semantic measurements or
-other domain values synchronized without treating renderer snapshots as source
-data.
+`JsonValue` supports `null`, booleans, finite numbers, strings, arrays, and plain string-keyed objects. Functions, class instances, dates, maps, sets, circular references, accessors, and non-finite numbers are rejected.
 
 ## Coordinates
 
-Legacy and live Painter bounds use unscaled, top-left Stage coordinates. Native
-PDF dictionaries use bottom-left PDF user space. Central geometry functions
-convert points, rectangles, page boxes, scale-independent bounds, and rotations
-0/90/180/270. Formats must never infer a coordinate space from field names.
+`konva-stage` uses an unscaled top-left origin. `pdf-user-space` uses the PDF bottom-left origin. Core handles conversion for rendering, import, printing, and export; applications should not infer a coordinate system from field names or mix values from the two spaces.
 
-## Collaboration
+`bounds` are stored in page units and do not change when the Viewer zoom changes.
 
-Comments and references use stable IDs plus readable labels. Reference label
-synchronization can renumber visible `#N` text without losing the target ID.
-Permissions use one action vocabulary and one mode/callback contract. Comment and
-status mutations preserve exact renderer state.
+## Repository and synchronization
 
-All runtime entry points detach validated values; repository getters and events
-do not expose mutable internal collections.
+Repository getters and events return detached values, so changing a returned object does not mutate Core state. Use annotation-engine or repository methods to make changes.
+
+Repository events describe local state changes; they are not a network synchronization protocol. An application that supports collaboration must still define transport, authentication, conflict resolution, ordering, and retry behavior.

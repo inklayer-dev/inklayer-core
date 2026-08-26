@@ -1,6 +1,9 @@
 # Load PDFs
 
-Use the same `core.load()` method for a URL, local file bytes, password-protected documents, and automatic HTTP Range loading. Your UI chooses the source and presents progress or errors; Core owns the loading task and document lifecycle.
+Use `core.load()` for PDFs from URLs or local files, including password-protected documents. For URLs, Core can also negotiate HTTP Range automatically.
+
+> [!TIP] TIP
+> Your UI chooses the source and presents progress or errors; Core owns the loading task and document lifecycle.
 
 ## Load a URL
 
@@ -22,7 +25,7 @@ if (file) {
 }
 ```
 
-Core does not own the file picker. The bytes become part of the current document generation and are released when the document is replaced or the instance is destroyed.
+Core does not own the file picker. The bytes are released when the document is replaced or the instance is destroyed.
 
 ## Send headers and credentials
 
@@ -40,29 +43,29 @@ Do not copy source URLs, authorization headers, or PDF contents into visible err
 ## Show loading progress
 
 ```ts
-const stop = core.viewer.subscribe(event => {
+const stopProgress = core.viewer.subscribe(event => {
   if (event.type === 'loadProgress') {
     updateProgress(event.progress.percentage, event.progress.phase)
   }
 })
 ```
 
-The phase is `probing`, `downloading`, or `parsing`. Unknown totals use `null`; a Range-backed document can become ready before every byte has arrived.
+The phase is `probing`, `downloading`, or `parsing`. When the total is unknown, `percentage` is `null`; a Range-backed document can become ready before every byte has arrived. Call `stopProgress()` during the same unmount cleanup that destroys `core`.
 
 ## Ask for a password
 
 ```ts
-core.viewer.subscribe(event => {
+const stopPassword = core.viewer.subscribe(event => {
   if (event.type !== 'passwordRequired') return
   openPasswordDialog({
     reason: event.request.reason,
-    submit: password => core.viewer.submitPassword(event.request.id, password),
-    cancel: () => core.viewer.cancelPassword(event.request.id)
+    submit: password => core.viewer.submitPassword(event.request.requestId, password),
+    cancel: () => core.viewer.cancelPassword(event.request.requestId)
   })
 })
 ```
 
-Keep the same dialog open after an incorrect password and submit again with the new request state. Core never stores the password in snapshots or errors.
+After an incorrect password, update the existing dialog with the new request instead of opening another one. Core never stores the password in snapshots or errors. Call `stopPassword()` during unmount cleanup.
 
 ## Cancel or replace a load
 
@@ -71,4 +74,4 @@ await core.cancelLoad()
 await core.load(nextSource)
 ```
 
-A newer load wins and stale work cannot replace it. Map structured outcomes to product messages using [Error recovery](../error-recovery.md).
+A newer load wins and stale work cannot replace it. See [Error recovery](../error-recovery.md) to turn structured loading errors into product messages.

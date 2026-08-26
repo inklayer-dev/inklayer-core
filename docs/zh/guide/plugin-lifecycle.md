@@ -1,63 +1,112 @@
 # 插件生命周期与服务
 
-请在安装过基础 Capability 后阅读本页。这里解释插件代码何时运行、插件如何共享服务，以及安装失败时为什么仍能可靠清理。
+能力插件分两个阶段运行：`setup()` 在 Core 创建引擎之前执行，`onReady()` 在引擎创建完成后执行。区分这两个阶段，才能在合适的时机注册服务、订阅事件和清理资源。
 
-## 在引擎之前安装
+## 在引擎创建前执行 setup
 
-`setup(context)` 会在 Viewer 和 Annotation Engine 创建前按数组顺序运行。可用于提供服务、消费更早的服务、注册自定义批注类型，或把自有清理加入插件生命周期。
+`setup(context)` 会按照插件在 `capabilities` 数组中的顺序执行。它适合注册服务、注册批注类型，或绑定不依赖查看器和批注引擎的资源：
 
 ```ts
-const plugin: InkLayerCapability = {
-  id: 'acme:feature',
+import type { InkLayerCapability } from '@inklayer-dev/core/capabilities'
+
+const resizePlugin: InkLayerCapability = {
+  id: 'acme:resize-listener',
   setup(context) {
-    const resource = createResource()
-    context.lifecycle.add(() => resource.destroy(), 'feature-resource')
+    function onResize() {
+      console.log('Viewer container resized')
+    }
+
+    window.addEventListener('resize', onResize)
+
+    context.lifecycle.add(() => {
+      window.removeEventListener('resize', onResize)
+    })
   }
 }
 ```
 
-不要在 setup 中访问 Viewer 或 Annotation Engine，因为它们此时还不存在。
+`context.lifecycle.add()` 用于登记当前实例的清理操作。不要在 `setup()` 中访问 `viewer` 或 `annotations`，因为这时两个引擎尚未创建。
 
-## 在引擎就绪后运行
+## 在引擎创建后执行 onReady
+
+需要使用查看器或批注引擎时，通过 `context.onReady()` 注册回调。直接返回取消订阅函数，Core 会在实例销毁时自动执行：
 
 ```ts
-setup(context) {
-  context.onReady(({ viewer, annotations }) => {
-    const stop = viewer.subscribe(handleViewerEvent)
-    annotations.setCurrentUser(currentUser)
-    return stop
-  })
+import type { InkLayerCapability } from '@inklayer-dev/core/capabilities'
+
+const progressPlugin: InkLayerCapability = {
+  id: 'acme:load-progress',
+  setup(context) {
+    context.onReady(({ viewer }) => {
+      return viewer.subscribe(event => {
+        if (event.type === 'loadProgress') {
+          console.log('PDF loading:', event.progress.percentage)
+        }
+      })
+    })
+  }
 }
 ```
 
-ready effect 按 Capability 顺序运行。任一失败都会让 `createInkLayer()` 失败并回滚完整实例。
+`onReady()` 回调同样按插件顺序执行。如果其中一个回调失败，`createInkLayer()` 会终止创建，并释放此前已经安装的资源。
 
-## 提供和消费服务
+## 在插件之间共享服务
 
-```ts
-setup(context) {
-  context.provide('acme:review-policy', reviewPolicy)
-}
-```
-
-后面的 Capability 可以读取它：
+一个插件可以提供当前实例专用的服务，后面的插件再读取它。提供服务的插件必须排在 `capabilities` 数组前面：
 
 ```ts
-setup(context) {
-  const policy = context.get<ReviewPolicy>('acme:review-policy')
+import { createInkLayer } from '@inklayer-dev/core/capabilities'
+import type { InkLayerCapability } from '@inklayer-dev/core/capabilities'
+
+const reviewPolicy = { mode: 'internal' }
+
+const providePolicy: InkLayerCapability = {
+  id: 'acme:provide-policy',
+  setup(context) {
+    context.provide('acme:review-policy', reviewPolicy)
+  }
 }
+
+const usePolicy: InkLayerCapability = {
+  id: 'acme:use-policy',
+  setup(context) {
+    const policy = context.get<typeof reviewPolicy>('acme:review-policy')
+    if (!policy) throw new Error('Review policy is not installed')
+
+    context.root.dataset.reviewMode = policy.mode
+    return () => { delete context.root.dataset.reviewMode }
+  }
+}
+
+const core = await createInkLayer({
+  root,
+  pageFlow: { container: pages },
+  capabilities: [providePolicy, usePolicy]
+})
 ```
 
-Capability ID 和单 Provider service key 在一个实例内必须唯一。重复占用会明确失败，不会因为加载顺序不同而悄悄改变行为。
+插件 ID 和服务名称在同一个实例内必须唯一。重复注册时会直接报错，不会悄悄覆盖之前的插件或服务。
 
-## 清理顺序
+## 在实例销毁时清理资源
 
-Capability 按数组顺序安装、按相反顺序销毁。Core 会先取消新工作，单个 disposer 失败后继续清理，并把清理失败聚合成结构化错误。返回的清理函数和 `context.lifecycle.add()` 都由实例幂等管理。
+插件按照数组顺序安装，并按照相反顺序清理：
 
-Core 不销毁借用服务，但插件创建的订阅或监听仍由插件清理。Repository Capability 默认 borrowed，也可以明确设置为 `owned`。
+```ts
+const core = await createInkLayer({
+  root,
+  pageFlow: { container: pages },
+  capabilities: [providePolicy, usePolicy]
+})
 
-## 保持插件隔离
+await core.destroy()
+```
 
-不要把 Registry、服务、监听器或当前引擎放入模块级可变全局状态。通过实例 context 安装，才能让同时运行的 Viewer、销毁、测试和未来框架适配器彼此独立。
+这里会先清理 `usePolicy`，再清理 `providePolicy`。`setup()` 或 `onReady()` 返回的清理函数，以及通过 `context.lifecycle.add()` 登记的操作，都会自动执行；其中某一项失败时，Core 仍会继续清理其他资源。
 
-完整 service key 和类型化 factory 见[公开 API：Composition Root 与 Capabilities](../api.md#composition-root-与-capabilities)。
+通过 `createAnnotationRepositoryCapability(repository)` 接入的批注数据仓库默认只由 Core 借用，调用 `core.destroy()` 后仍然可用。传入 `{ ownership: 'owned' }` 后，则会随 Core 实例一起销毁。
+
+## 保持实例之间相互独立
+
+不要把某个实例的服务、事件监听、批注类型注册表或引擎存放在共享的模块级变量中。通过插件上下文安装这些资源，多个查看器才能独立运行和销毁。
+
+全部内置服务名称和创建函数见[公开 API：Composition Root 与 Capabilities](../api#composition-root-与-capabilities)。

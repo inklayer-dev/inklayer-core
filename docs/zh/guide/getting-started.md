@@ -1,14 +1,14 @@
-# 5 分钟构建 Viewer
+# 快速开始
 
-完成本页后，浏览器会显示一个支持连续滚动、文字选择、批注和内置缩放手势的 PDF。你只需提供两个 DOM 元素和一个 PDF URL；Core 负责创建并清理文档区域。
+本页会显示一个支持连续滚动和内置缩放手势的 PDF。如何启用文字选择见[搜索与文字选择](./search-and-selection.md)，如何使用批注工具见[创建第一个批注](./first-annotation.md)。
 
-> InkLayer Core 是无头引擎，不附带固定工具栏或侧边栏。你在自己的框架中实现控件，再调用本文展示的相同方法。
+提供两个 DOM 元素和一个 PDF URL，Core 会负责创建和清理文档区域。
 
 ## 环境要求
 
 - Node.js `^22.13.0` 或 `>=24.0.0`
 - Vite 或 Webpack 浏览器应用
-- 由应用服务器提供的 PDF URL
+- 浏览器可以访问的 PDF URL
 
 ## 安装
 
@@ -64,11 +64,11 @@ const documentHandle = await core.load({
 console.log(`Opened ${documentHandle.numPages} pages`)
 ```
 
-现在应该能看到连续滚动的 PDF。`pageFlow` 会在 `#pages` 中挂载并虚拟化页面 Canvas、TextLayer 和批注层。服务器支持时，`range: 'auto'` 会用 HTTP 字节分块加载大型文件。
+现在应该能看到连续滚动的 PDF。`pageFlow` 会在 `#pages` 中挂载并虚拟化页面画布、文字层和批注层。服务器支持时，`range: 'auto'` 会通过 HTTP Range 分块加载大型文件。
 
-Core 已经内置版本匹配的 PDF.js Worker。普通 Vite 和 Webpack 应用不需要下载、复制或配置 `pdf.worker`。
+Core 已经内置版本匹配的 PDF.js Worker。通常情况下，Vite 和 Webpack 应用不需要下载、复制或配置 `pdf.worker`。
 
-只有自托管 CSP 或部署方式要求时才覆盖 Worker URL：
+仅当 CSP 或部署环境要求自行托管 Worker 时，才需要覆盖 Worker URL：
 
 ```ts
 const core = await createInkLayer({
@@ -78,7 +78,7 @@ const core = await createInkLayer({
 })
 ```
 
-## 展示加载和密码界面
+## 展示加载进度和密码界面
 
 Core 报告状态，应用决定如何展示：
 
@@ -107,25 +107,4 @@ async function unmount() {
 }
 ```
 
-条件允许时，应在复用宿主前等待 `destroy()` 完成。它会释放文档、Worker lease、页面 surface、监听器、插件和未完成任务。
-
-## 接下来做什么
-
-| 我想要…… | 继续阅读 |
-|---|---|
-| 绘制矩形或从文字创建高亮 | [创建第一个批注](./first-annotation.md) |
-| 加载文件、密码、鉴权 URL 或大型 PDF | [加载 PDF](./loading-pdfs.md) |
-| 增加缩放、页码导航、缩略图或目录 | [页面、缩放与导航](./viewer-and-pages.md) |
-| 搜索或选择 PDF 文字 | [搜索与文字选择](./search-and-selection.md) |
-| 把批注保存到后端 | [保存和恢复批注](./persistence.md) |
-| 在 React、Vue 或其他框架中管理生命周期 | [框架接入](./framework-integration.md) |
-| 增加产品服务或自定义绘制工具 | [插件概览](./plugins.md) |
-
-## 后续会遇到的术语
-
-- `createInkLayer()` 会以一个实例创建 Viewer、批注引擎、可选 Page Flow 和已安装插件。
-- Page Flow 是 Core 可选的单页/连续/对页布局和虚拟化。
-- Repository 是可保存批注的唯一数据来源。
-- Capability 是实例级能力插件，例如日志、持久化、文字输入、打印或下载。
-
-完成普通教程并不需要先理解这些架构术语；开发适配器或插件时再深入即可。
+重新使用由 Core 管理的宿主元素前，应尽量等待 `destroy()` 完成。它会释放当前文档、Worker 资源、页面渲染层、事件监听器、插件和未完成的任务。
