@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "packageVersion": "0.1.0",
+  "packageVersion": "0.2.0",
   "packageEntries": [
     ".",
     "./viewer",
@@ -39,7 +39,7 @@
     },
     "./export/pdf": {
       "exportCount": 5,
-      "signatureHash": "e870c3de7096e74a3286e809d179969372ed7c94931c615cf8d8fc9819a4cc53"
+      "signatureHash": "e5afd83992e13ec0f82f6142a4c18e8f55c25cdda922ba47da03cd13fc91c9c1"
     },
     "./export/excel": {
       "exportCount": 4,

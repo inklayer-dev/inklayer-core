@@ -6,12 +6,13 @@
  */
 
 import { describe, expect, it } from 'vitest'
+import packageJson from '../../package.json'
 
 describe('root entry', () => {
   it('imports without browser globals', async () => {
     const root = await import('../../src/index')
 
-    expect(root.CORE_VERSION).toBe('0.1.0')
+    expect(root.CORE_VERSION).toBe(packageJson.version)
     expect(root.ANNOTATION_SCHEMA_VERSION).toBe(1)
     expect(root.InkLayerError).toBeTypeOf('function')
     expect(root.parseAnnotation).toBeTypeOf('function')

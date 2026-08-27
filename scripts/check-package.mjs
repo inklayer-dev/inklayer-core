@@ -65,7 +65,11 @@ async function listFiles(directory) {
 
 const packageJson = JSON.parse(await readFile(resolve(projectRoot, 'package.json'), 'utf8'))
 assertPackage(packageJson.name === '@inklayer-dev/core', 'Package name must be @inklayer-dev/core.')
-assertPackage(packageJson.version === '0.1.0', 'Unexpected Phase 1 package version.')
+assertPackage(
+  typeof packageJson.version === 'string'
+    && /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(packageJson.version),
+  'Package version must be a valid release version.'
+)
 assertPackage(
   packageJson.repository?.url === 'git+https://github.com/inklayer-dev/inklayer-core.git',
   'Package repository metadata is incorrect.'
@@ -102,7 +106,10 @@ for (const file of distFiles) {
 }
 
 const imported = await import(resolve(projectRoot, 'dist/index.js'))
-assertPackage(imported.CORE_VERSION === '0.1.0', 'Built ESM root import returned the wrong version.')
+assertPackage(
+  imported.CORE_VERSION === packageJson.version,
+  'Built ESM root import returned the wrong version.'
+)
 assertPackage(typeof imported.parseAnnotation === 'function', 'Built root is missing annotation validation.')
 assertPackage(
   typeof imported.createMemoryAnnotationRepository === 'function',

@@ -12,6 +12,8 @@ import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
 const projectRoot = resolve(import.meta.dirname, '..')
+const packageJson = JSON.parse(await readFile(resolve(projectRoot, 'package.json'), 'utf8'))
+const expectedVersion = packageJson.version
 const matrixRoot = await mkdtemp(resolve(tmpdir(), 'inklayer-core-consumer-matrix-'))
 const viteRoot = resolve(matrixRoot, 'vite')
 const webpackRoot = resolve(matrixRoot, 'webpack')
@@ -144,7 +146,7 @@ app.textContent = [CORE_VERSION, createMemoryAnnotationRepository,
   const rootImport = await execFileAsync('node', [
     '--input-type=module',
     '--eval',
-    "import('@inklayer-dev/core').then((core) => { if (core.CORE_VERSION !== '0.1.0') process.exit(1) })"
+    `import('@inklayer-dev/core').then((core) => { if (core.CORE_VERSION !== ${JSON.stringify(expectedVersion)}) process.exit(1) })`
   ], { cwd: viteRoot })
   if (rootImport.stderr.trim() !== '') throw new Error(rootImport.stderr)
   const builtIndex = await readFile(resolve(viteRoot, 'dist/index.html'), 'utf8')
@@ -235,7 +237,7 @@ module.exports = [
     cwd: webpackRoot
   })
   const ssrProof = JSON.parse(ssr.stdout)
-  if (ssrProof.version !== '0.1.0' || ssrProof.repository !== 'function'
+  if (ssrProof.version !== expectedVersion || ssrProof.repository !== 'function'
     || ssrProof.viewer !== 'function' || ssrProof.status !== 'idle') {
     throw new Error(`Webpack SSR bundle returned invalid Core exports: ${ssr.stdout}`)
   }
