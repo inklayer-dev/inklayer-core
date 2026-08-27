@@ -18,7 +18,7 @@ hero:
       link: /api
     - theme: alt
       text: Live demo
-      link: 'https://inklayer-dev.github.io/inklayer-core/demo/'
+      link: 'https://core.inklayer.dev/demo/'
 
 features:
   - title: Use your framework of choice

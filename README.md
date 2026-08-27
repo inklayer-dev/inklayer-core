@@ -8,7 +8,7 @@
 
 InkLayer Core provides framework-independent PDF viewing and annotation behavior. Use it with React, Vue, another web framework, or plain TypeScript while your application keeps control of the toolbar, panels, and workflow.
 
-[Getting started](https://inklayer-dev.github.io/inklayer-core/guide/getting-started) · [Live demo](https://inklayer-dev.github.io/inklayer-core/demo/) · [Documentation](https://inklayer-dev.github.io/inklayer-core/)
+[Getting started](https://core.inklayer.dev/guide/getting-started) · [Live demo](https://core.inklayer.dev/demo/) · [Documentation](https://core.inklayer.dev/)
 
 ## Minimal Viewer
 
@@ -62,7 +62,7 @@ This creates a virtualized, continuously scrolling Viewer with built-in zoom ges
 
 Core ships with a version-matched PDF.js Worker. Ordinary Vite and Webpack applications do not need to download, copy, or configure `pdf.worker`.
 
-[Continue with the complete tutorial →](https://inklayer-dev.github.io/inklayer-core/guide/getting-started)
+[Continue with the complete tutorial →](https://core.inklayer.dev/guide/getting-started)
 
 ## What Core provides
 
@@ -74,7 +74,7 @@ Core ships with a version-matched PDF.js Worker. Ordinary Vite and Webpack appli
 - Add watermarks and generate printable PDFs, annotated PDFs, secure raster print output, or annotation workbooks.
 - Run multiple isolated instances, report structured errors, release resources deterministically, and import packages safely during SSR.
 
-[Create your first annotation →](https://inklayer-dev.github.io/inklayer-core/guide/first-annotation)
+[Create your first annotation →](https://core.inklayer.dev/guide/first-annotation)
 
 ## Core handles documents; your application handles UI
 
@@ -89,21 +89,21 @@ InkLayer Core is headless: it provides the document engine and interaction APIs,
 | Repository operations and change events | Server persistence, synchronization, and conflict handling |
 | Watermark, print, PDF, and Excel generation APIs | Buttons, filenames, uploads, downloads, and invocation timing |
 
-See [Core boundary](https://inklayer-dev.github.io/inklayer-core/core-boundary) for the complete responsibility model.
+See [Core boundary](https://core.inklayer.dev/core-boundary) for the complete responsibility model.
 
 ## Choose your integration
 
-- [Vanilla JavaScript](https://inklayer-dev.github.io/inklayer-core/guide/framework-integration): build a Viewer with navigation, thumbnails, a toolbar, and an annotation list.
-- [Vue](https://inklayer-dev.github.io/inklayer-core/guide/framework-vue): keep one Core instance in the component and connect it to Vue state and lifecycle.
-- [React](https://inklayer-dev.github.io/inklayer-core/guide/framework-react): keep one Core instance in a ref and connect it to React state and effects.
+- [Vanilla JavaScript](https://core.inklayer.dev/guide/framework-integration): build a Viewer with navigation, thumbnails, a toolbar, and an annotation list.
+- [Vue](https://core.inklayer.dev/guide/framework-vue): keep one Core instance in the component and connect it to Vue state and lifecycle.
+- [React](https://core.inklayer.dev/guide/framework-react): keep one Core instance in a ref and connect it to React state and effects.
 
 The same Core APIs can also be used from Svelte, Angular, Web Components, or another client framework.
 
 ## Extend Core when needed
 
-[Capability plugins](https://inklayer-dev.github.io/inklayer-core/guide/capability-plugin) connect one instance to application services such as logging, authenticated PDF requests, text input, annotation storage, printing, and downloads. Some services are called automatically by Core; print and download services are called explicitly by the application.
+[Capability plugins](https://core.inklayer.dev/guide/capability-plugin) connect one instance to application services such as logging, authenticated PDF requests, text input, annotation storage, printing, and downloads. Some services are called automatically by Core; print and download services are called explicitly by the application.
 
-[Custom annotation types](https://inklayer-dev.github.io/inklayer-core/guide/custom-annotation-type) add namespaced tools with their own data validation, creation behavior, renderer, and output support. Extensions work through public contracts and do not receive mutable Konva nodes or PDF.js private state.
+[Custom annotation types](https://core.inklayer.dev/guide/custom-annotation-type) add namespaced tools with their own data validation, creation behavior, renderer, and output support. Extensions work through public contracts and do not receive mutable Konva nodes or PDF.js private state.
 
 ## Low-level Viewer
 
@@ -143,7 +143,7 @@ const viewer = createPdfViewerEngine({
 - Application builds: Vite, Webpack browser builds, and Node SSR imports
 - Node tooling: `^22.13.0 || >=24.0.0`
 
-Embedded WebViews require separate verification. See [browser support](https://inklayer-dev.github.io/inklayer-core/browser-support) and the [public API](https://inklayer-dev.github.io/inklayer-core/api).
+Embedded WebViews require separate verification. See [browser support](https://core.inklayer.dev/browser-support) and the [public API](https://core.inklayer.dev/api).
 
 ## Development
 

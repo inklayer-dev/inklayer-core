@@ -23,7 +23,7 @@ export default defineConfig({
           { text: 'API', link: '/zh/api' },
           { text: '插件', link: '/zh/guide/plugins' },
           { text: '架构', link: '/zh/architecture' },
-          { text: '示例', link: 'https://inklayer-dev.github.io/inklayer-core/demo/' }
+          { text: '示例', link: 'https://core.inklayer.dev/demo/' }
         ],
         sidebar: [
           {
@@ -118,7 +118,7 @@ export default defineConfig({
       { text: 'API', link: '/api' },
       { text: 'Plugins', link: '/guide/plugins' },
       { text: 'Architecture', link: '/architecture' },
-      { text: 'Demo', link: 'https://inklayer-dev.github.io/inklayer-core/demo/' }
+      { text: 'Demo', link: 'https://core.inklayer.dev/demo/' }
     ],
     sidebar: [
       {

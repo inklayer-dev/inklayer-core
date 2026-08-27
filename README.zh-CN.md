@@ -8,7 +8,7 @@
 
 InkLayer Core 提供与框架无关的 PDF 查看和批注能力。无论使用 React、Vue、其他 Web 框架，还是不依赖框架的 JavaScript/TypeScript，都可以调用同一套 Core API；工具栏、面板和产品流程仍由应用控制。
 
-[快速开始](https://inklayer-dev.github.io/inklayer-core/zh/guide/getting-started) · [在线示例](https://inklayer-dev.github.io/inklayer-core/demo/) · [文档](https://inklayer-dev.github.io/inklayer-core/zh/)
+[快速开始](https://core.inklayer.dev/zh/guide/getting-started) · [在线示例](https://core.inklayer.dev/demo/) · [文档](https://core.inklayer.dev/zh/)
 
 ## 最简单的查看器
 
@@ -62,7 +62,7 @@ await core.load({ url: '/documents/review.pdf', range: 'auto' })
 
 Core 已包含版本匹配的 PDF.js Worker。普通 Vite 和 Webpack 应用不需要下载、复制或配置 `pdf.worker`。
 
-[继续阅读完整教程 →](https://inklayer-dev.github.io/inklayer-core/zh/guide/getting-started)
+[继续阅读完整教程 →](https://core.inklayer.dev/zh/guide/getting-started)
 
 ## Core 提供哪些能力
 
@@ -74,7 +74,7 @@ Core 已包含版本匹配的 PDF.js Worker。普通 Vite 和 Webpack 应用不�
 - 添加水印，并生成打印 PDF、带批注 PDF、用于安全打印的栅格 PDF 或批注工作簿。
 - 运行多个相互隔离的实例，报告结构化错误，可靠释放资源，并在 SSR 环境中安全导入。
 
-[创建第一个批注 →](https://inklayer-dev.github.io/inklayer-core/zh/guide/first-annotation)
+[创建第一个批注 →](https://core.inklayer.dev/zh/guide/first-annotation)
 
 ## Core 负责文档能力，应用负责界面
 
@@ -89,21 +89,21 @@ InkLayer Core 是无头引擎：它提供文档引擎和交互接口，但不提
 | 数据仓库操作和变更事件 | 服务端持久化、同步和冲突处理 |
 | 水印、打印、PDF 和 Excel 生成接口 | 按钮、文件名、上传、下载和调用时机 |
 
-完整的职责划分见 [Core 边界](https://inklayer-dev.github.io/inklayer-core/zh/core-boundary)。
+完整的职责划分见 [Core 边界](https://core.inklayer.dev/zh/core-boundary)。
 
 ## 选择接入方式
 
-- [原生 JavaScript](https://inklayer-dev.github.io/inklayer-core/zh/guide/framework-integration)：构建包含导航、缩略图、工具栏和批注列表的查看器。
-- [Vue](https://inklayer-dev.github.io/inklayer-core/zh/guide/framework-vue)：在组件中保留一个 Core 实例，并接入 Vue 状态与生命周期。
-- [React](https://inklayer-dev.github.io/inklayer-core/zh/guide/framework-react)：用 ref 保存一个 Core 实例，并接入 React 状态与副作用。
+- [原生 JavaScript](https://core.inklayer.dev/zh/guide/framework-integration)：构建包含导航、缩略图、工具栏和批注列表的查看器。
+- [Vue](https://core.inklayer.dev/zh/guide/framework-vue)：在组件中保留一个 Core 实例，并接入 Vue 状态与生命周期。
+- [React](https://core.inklayer.dev/zh/guide/framework-react)：用 ref 保存一个 Core 实例，并接入 React 状态与副作用。
 
 Svelte、Angular、Web Components 或其他客户端框架同样可以使用这些 Core API。
 
 ## 需要时再扩展 Core
 
-[能力插件](https://inklayer-dev.github.io/inklayer-core/zh/guide/capability-plugin)用于为单个实例接入日志、带鉴权的 PDF 请求、文字输入、批注数据仓库、打印和下载等应用服务。其中一部分服务由 Core 自动调用；打印和下载服务则由应用主动调用。
+[能力插件](https://core.inklayer.dev/zh/guide/capability-plugin)用于为单个实例接入日志、带鉴权的 PDF 请求、文字输入、批注数据仓库、打印和下载等应用服务。其中一部分服务由 Core 自动调用；打印和下载服务则由应用主动调用。
 
-[自定义批注类型](https://inklayer-dev.github.io/inklayer-core/zh/guide/custom-annotation-type)可以添加带命名空间的工具，并定义自己的数据校验、创建行为、渲染器和输出支持。扩展功能只使用公开接口，不会得到可变的 Konva 节点或 PDF.js 私有状态。
+[自定义批注类型](https://core.inklayer.dev/zh/guide/custom-annotation-type)可以添加带命名空间的工具，并定义自己的数据校验、创建行为、渲染器和输出支持。扩展功能只使用公开接口，不会得到可变的 Konva 节点或 PDF.js 私有状态。
 
 ## 底层查看器
 
@@ -143,7 +143,7 @@ const viewer = createPdfViewerEngine({
 - 构建环境：Vite、Webpack 浏览器构建和 Node SSR 导入
 - Node 工具链：`^22.13.0 || >=24.0.0`
 
-内嵌 WebView 需要单独验证。具体见[浏览器支持](https://inklayer-dev.github.io/inklayer-core/zh/browser-support)和[公开 API](https://inklayer-dev.github.io/inklayer-core/zh/api)。
+内嵌 WebView 需要单独验证。具体见[浏览器支持](https://core.inklayer.dev/zh/browser-support)和[公开 API](https://core.inklayer.dev/zh/api)。
 
 ## 本地开发
 

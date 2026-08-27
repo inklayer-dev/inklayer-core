@@ -27,7 +27,7 @@ jobs:
       - run: npm run build:example
       - run: npm run docs:build
         env:
-          DOCS_BASE: /inklayer-core/
+          DOCS_BASE: /
       - run: mkdir -p docs/.vitepress/dist/demo
       - run: cp -R dist-example/. docs/.vitepress/dist/demo/
       - uses: actions/configure-pages@v5

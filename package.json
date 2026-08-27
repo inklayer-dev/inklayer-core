@@ -20,7 +20,7 @@
   "bugs": {
     "url": "https://github.com/inklayer-dev/inklayer-core/issues"
   },
-  "homepage": "https://inklayer-dev.github.io/inklayer-core/",
+  "homepage": "https://core.inklayer.dev/",
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"
