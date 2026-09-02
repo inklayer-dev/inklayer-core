@@ -9,6 +9,8 @@ import { resolve } from 'node:path'
 
 const projectRoot = resolve(import.meta.dirname, '..')
 const packageJson = JSON.parse(await readFile(resolve(projectRoot, 'package.json'), 'utf8'))
+const schema = await readFile(resolve(projectRoot, 'src/domain/schema.ts'), 'utf8')
+const apiSnapshot = JSON.parse(await readFile(resolve(projectRoot, 'api/public-api-v1.json'), 'utf8'))
 const releaseTag = process.argv.slice(2).find(argument => !argument.startsWith('-'))
 const expectedTag = `v${packageJson.version}`
 
@@ -19,6 +21,14 @@ function assertRelease(condition, message) {
 
 assertRelease(releaseTag !== undefined, `Pass the release tag, for example: npm run check:release -- ${expectedTag}`)
 assertRelease(releaseTag === expectedTag, `Release tag ${releaseTag} must match package version ${expectedTag}.`)
+assertRelease(
+  schema.includes(`CORE_VERSION = '${packageJson.version}'`),
+  `CORE_VERSION must match package version ${packageJson.version}. Run npm run version.`
+)
+assertRelease(
+  apiSnapshot.packageVersion === packageJson.version,
+  `The public API snapshot must match package version ${packageJson.version}. Run npm run version.`
+)
 assertRelease(packageJson.name === '@inklayer-dev/core', 'The npm package name must be @inklayer-dev/core.')
 assertRelease(packageJson.private !== true, 'The npm package must not be private.')
 assertRelease(
