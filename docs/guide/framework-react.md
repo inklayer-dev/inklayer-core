@@ -216,3 +216,27 @@ export default function App() {
 :::
 
 For text highlights, author permissions, and saving annotations, see [Create your first annotation](./first-annotation) and [Persist annotations](./persistence).
+
+## Subscribe to the Highlighter Controller
+
+React does not need an InkLayer wrapper package. Create the Controller from the existing Viewer and Annotation Engine ports, then pass its stable functions directly to `useSyncExternalStore`:
+
+```tsx
+const controller = useMemo(
+  () => createKeywordHighlighter({ viewer, annotations }),
+  [viewer, annotations]
+)
+
+useEffect(() => {
+  controller.setRules(rules)
+}, [controller, rules])
+useEffect(() => () => controller.destroy(), [controller])
+
+const snapshot = useSyncExternalStore(
+  controller.subscribe,
+  controller.getSnapshot,
+  controller.getSnapshot
+)
+```
+
+Render `snapshot.matches` with `match.id` as the React key, and call `includeMatch()`, `excludeMatch()`, `activateMatch()`, and `applyMatches()` from event handlers. The maintained [React consumption fixture](https://github.com/inklayer-dev/inklayer-core/blob/main/examples/framework-consumers/react-keyword-highlighter.tsx) is type-checked and production-built without adding React to Core's runtime dependencies.

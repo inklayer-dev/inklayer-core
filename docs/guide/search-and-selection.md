@@ -77,6 +77,110 @@ core.viewer.clearSearchHighlights()
 
 If your adapter uses the separately configured PDF.js web Viewer instead of Page Flow, navigate with `core.viewer.goToPage(match.pageIndex)`.
 
+## Search multiple terms in one pass
+
+Use `searchMany()` when a product needs several keywords. Core extracts each page once for the batch, retains input query order, and reports matches in page and source-offset order within each query:
+
+```ts
+const searchController = new AbortController()
+const batch = await core.viewer.searchMany([
+  { id: 'risk', query: 'automatic renewal', options: { wholeWord: true } },
+  { id: 'payment', query: 'payment term' },
+  { id: 'liability', query: 'liability', options: { maxResults: 200 } }
+], {
+  signal: searchController.signal,
+  maxTotalResults: 2_000,
+  onProgress: ({ completedPages, totalPages }) => {
+    updateSearchProgress(completedPages, totalPages)
+  }
+})
+
+for (const query of batch.queries) {
+  renderKeywordMatches(query.id, query.matches, query.truncated)
+}
+```
+
+Query IDs must be unique. Each query accepts ordinary `PdfSearchOptions`; its default result limit is 1,000. The batch-wide default limit is 100,000. `truncated` on a query means its own limit was reached, while top-level `truncated` means the batch-wide limit stopped further scanning.
+
+Progress starts at zero and advances after each completed page. An empty batch, or a batch containing only empty normalized queries, returns immediately without progress callbacks. Calling `searchController.abort()` rejects with `PDF_FEATURE_CANCELLED` and leaves the loaded document ready for another operation.
+
+## Resolve source ranges to page geometry
+
+Search matches identify text with a zero-based page index and UTF-16 source offsets. Resolve those offsets before creating text-markup annotations or another geometry-based feature:
+
+```ts
+const search = await core.viewer.search('termination clause')
+const ranges = await core.viewer.resolveTextRanges(search.matches, {
+  signal: geometryController.signal
+})
+
+for (const range of ranges) {
+  console.log(range.text, range.rects)
+}
+```
+
+Results retain caller order. Each result contains the exact source substring and one or more rectangles in scale-one page coordinates with a top-left origin. Geometry already reflects the PDF page rotation and does not depend on Viewer zoom or an attached TextLayer. A range may span multiple PDF.js text items and line endings, but it must stay on one page.
+
+Invalid offsets, surrogate-pair splits, newline-only ranges, and text items without usable geometry reject with `PDF_FEATURE_FAILED` instead of returning an imprecise whole-line rectangle. Caller cancellation and document replacement reject with `PDF_FEATURE_CANCELLED`. Page text extracted by `search()`, `searchMany()`, and `resolveTextRanges()` shares the same generation-scoped cache.
+
+## Layer temporary text highlights
+
+Use temporary layers when several rule groups need independent colors or review state. This state belongs to the Viewer and does not create annotations:
+
+```ts
+core.viewer.setTextHighlightLayers([
+  {
+    id: 'risk',
+    ranges: riskMatches,
+    style: { color: '#ef4444', activeColor: '#b91c1c' },
+    activeRangeIndex: 2
+  },
+  {
+    id: 'dates',
+    ranges: dateMatches,
+    style: { color: '#f59e0b' },
+    visible: true
+  }
+])
+```
+
+Every call atomically replaces the complete ordered layer collection. Earlier layers are below later layers when ranges overlap. `activeRangeIndex` refers to the original `ranges` order. Setting `visible: false` retains a layer without projecting marks.
+
+```ts
+core.viewer.clearTextHighlightLayers(['dates']) // retain every other layer
+core.viewer.clearTextHighlightLayers()          // clear all temporary layers
+```
+
+Core detaches the supplied objects, validates the whole replacement before changing state, and restores retained layers when a virtualized TextLayer is mounted again. Replacing the PDF document clears the old generation with its TextLayer controller. Legacy `setSearchHighlights()` decoration can coexist with these caller-owned layers.
+
+Projected marks expose `data-inklayer-highlight-layer`, `data-inklayer-highlight-range`, and `data-inklayer-highlight-state` for functional testing and application selectors. Their engine-owned classes and custom properties are implementation details; applications should set colors through the public layer style.
+
+These Viewer methods are the low-level primitives. To build the complete rules → scan → preview → review → permanent annotation workflow, follow the standalone [Keyword Highlighter guide](./highlighter.md).
+
+## Create permanent text markups from ranges
+
+After review, convert resolved ranges to ordinary Annotation Engine records. Supply deterministic document-level IDs so a repeated application skips annotations that already exist:
+
+```ts
+const created = core.annotations.createTextMarkupsFromRanges(
+  'highlight',
+  ranges.map((range, index) => ({
+    id: deterministicAnnotationId(documentFingerprint, ruleId, index),
+    range,
+    extensions: {
+      highlighter: { ruleId, matchId: `${ruleId}:${index}` }
+    }
+  })),
+  { appearance: { fill: { color: '#f59e0b' } } }
+)
+```
+
+Each multi-line range becomes one annotation with multiple text rectangles. Input order determines repository and reference-number order. Existing IDs, including duplicates earlier in the same call, are skipped and omitted from the return value. New entries use the engine's current identity, clock, appearance, permission policy, and repository behavior; application metadata is bounded, validated, and detached before storage.
+
+P0 commits entries sequentially rather than as one repository transaction. If permission or validation fails, the call throws and stops, while earlier successful entries remain canonical. Creation does not enter deletion undo history and does not select annotations or change the active tool. Deleting or undoing one later remains an explicit Annotation Engine operation.
+
+PDF export writes the stable annotation ID as `/NM`, and the metadata-aware PDF.js importer restores it after reload so the same deterministic ID still prevents duplication. Arbitrary `extensions` remain canonical repository metadata; only the stable ID is currently guaranteed through PDF export and re-import.
+
 ## Let users select PDF text
 
 Add an application button that switches pointer input to text selection:

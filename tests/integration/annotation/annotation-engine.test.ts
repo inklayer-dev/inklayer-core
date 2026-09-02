@@ -5,6 +5,8 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
+import { PDFDocument } from 'pdf-lib'
+import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import {
   BUILT_IN_ANNOTATION_TYPES,
   type Annotation,
@@ -20,6 +22,8 @@ import {
 import { createTestAnnotation } from '../../helpers/annotation'
 import { createAnnotationTypeRegistry } from '../../../src/annotation-types/annotation-type-registry'
 import { createTestAnnotationTypeDefinition } from '../../helpers/annotation-type'
+import { buildAnnotatedPdf } from '../../../src/export/pdf'
+import { importPdfJsAnnotationsWithMetadata } from '../../../src/import/pdfjs/metadata'
 
 /** Creates the root state surface used before a page renderer is attached. */
 function createRoot(): HTMLElement & { classNames: Set<string>; attributes: Map<string, string> } {
@@ -282,6 +286,149 @@ describe('Annotation Engine tools', () => {
     expect(strikeout.rendererState.serialized).not.toBe(highlight.rendererState.serialized)
     expect(underline.rendererState.serialized).not.toBe(strikeout.rendererState.serialized)
     expect(listener).toHaveBeenCalledWith(expect.objectContaining({ type: 'textSelected' }))
+    engine.destroy()
+  })
+
+  it('creates stable-ID text markups from resolved ranges and skips duplicates', () => {
+    const engine = createAnnotationEngine(createOptions())
+    const provenance = { highlighter: { ruleId: 'rule-legal', matchId: 'match-1' } }
+    const created = engine.createTextMarkupsFromRanges('highlight', [{
+      id: 'highlighter-doc-match-1',
+      range: {
+        pageIndex: 2, start: 10, length: 8, text: 'InkLayer',
+        rects: [
+          { x: 10, y: 20, width: 40, height: 10 },
+          { x: 10, y: 32, width: 20, height: 10 }
+        ]
+      },
+      extensions: provenance
+    }, {
+      id: 'highlighter-doc-match-2',
+      range: {
+        pageIndex: 3, start: 4, length: 4, text: 'Core',
+        rects: [{ x: 5, y: 8, width: 30, height: 9 }]
+      }
+    }], { appearance: { fill: { color: '#00ff00', opacity: 0.35 } } })
+
+    expect(created.map((annotation) => annotation.id)).toEqual([
+      'highlighter-doc-match-1', 'highlighter-doc-match-2'
+    ])
+    expect(created[0]).toMatchObject({
+      type: 'highlight', pageIndex: 2,
+      bounds: { x: 10, y: 20, width: 40, height: 22 },
+      content: { text: '', selectedText: 'InkLayer' },
+      appearance: { fill: { color: '#00ff00', opacity: 0.35 } },
+      referenceNumber: 1,
+      extensions: provenance
+    })
+    expect(created[1]?.referenceNumber).toBe(2)
+    provenance.highlighter.ruleId = 'mutated'
+    expect(engine.getAnnotations()[0]?.extensions).toEqual({
+      highlighter: { ruleId: 'rule-legal', matchId: 'match-1' }
+    })
+
+    const repeated = engine.createTextMarkupsFromRanges('highlight', [{
+      id: 'highlighter-doc-match-1',
+      range: {
+        pageIndex: 9, start: 0, length: 7, text: 'ignored',
+        rects: [{ x: 0, y: 0, width: 1, height: 1 }]
+      }
+    }, {
+      id: 'highlighter-doc-match-2',
+      range: {
+        pageIndex: 3, start: 4, length: 4, text: 'Core',
+        rects: [{ x: 5, y: 8, width: 30, height: 9 }]
+      }
+    }])
+    expect(repeated).toEqual([])
+    expect(engine.getAnnotations()).toHaveLength(2)
+    engine.destroy()
+  })
+
+  it('stops a range batch on failure while retaining earlier canonical changes', () => {
+    let createChecks = 0
+    const engine = createAnnotationEngine(createOptions({
+      permissions: {
+        can: ({ action }) => action !== 'annotation.create' || (createChecks += 1) === 1
+      }
+    }))
+    const input = (id: string, text: string) => ({
+      id,
+      range: {
+        pageIndex: 0, start: 0, length: text.length, text,
+        rects: [{ x: 1, y: 2, width: 20, height: 8 }]
+      }
+    })
+    expect(() => engine.createTextMarkupsFromRanges('underline', [
+      input('range-first', 'first'), input('range-second', 'second')
+    ])).toThrowError(expect.objectContaining<Partial<InkLayerError>>({ code: 'ANNOTATION_INVALID' }))
+    expect(engine.getAnnotations().map((annotation) => annotation.id)).toEqual(['range-first'])
+    engine.destroy()
+  })
+
+  it('keeps batch creation outside deletion undo until deletion is explicit', () => {
+    const engine = createAnnotationEngine(createOptions())
+    const [created] = engine.createTextMarkupsFromRanges('strikeout', [{
+      id: 'range-delete-boundary',
+      range: {
+        pageIndex: 0, start: 0, length: 4, text: 'term',
+        rects: [{ x: 2, y: 3, width: 18, height: 7 }]
+      }
+    }])
+    expect(engine.canUndoDeletion()).toBe(false)
+    expect(engine.deleteAnnotation(created?.id ?? '')?.id).toBe('range-delete-boundary')
+    expect(engine.canUndoDeletion()).toBe(true)
+    expect(engine.undoLastDeletion()?.id).toBe('range-delete-boundary')
+    expect(engine.getAnnotations()).toHaveLength(1)
+    engine.destroy()
+  })
+
+  it('preserves stable markup identity and geometry after PDF export and reload', async () => {
+    const engine = createAnnotationEngine(createOptions())
+    const [annotation] = engine.createTextMarkupsFromRanges('highlight', [{
+      id: 'highlighter-export-roundtrip',
+      range: {
+        pageIndex: 0, start: 12, length: 9, text: 'important',
+        rects: [
+          { x: 10, y: 20, width: 40, height: 10 },
+          { x: 10, y: 34, width: 25, height: 10 }
+        ]
+      }
+    }])
+    if (annotation === undefined) throw new Error('Expected a created text markup.')
+    const source = await PDFDocument.create()
+    source.addPage([200, 300])
+    const bytes = await buildAnnotatedPdf(await source.save(), [annotation])
+    const loadingTask = getDocument({ data: bytes.slice() })
+    const pdf = await loadingTask.promise
+    const decoded = await (await pdf.getPage(1)).getAnnotations()
+    const imported = await importPdfJsAnnotationsWithMetadata([{
+      pageIndex: 0,
+      pageBox: { xMin: 0, yMin: 0, xMax: 200, yMax: 300, rotation: 0 },
+      annotations: decoded
+    }], bytes)
+    expect(imported.warnings).toEqual([])
+    expect(imported.supportedIds).toEqual([decoded[0]?.id])
+    expect(imported.annotations).toEqual([expect.objectContaining({
+      id: 'highlighter-export-roundtrip',
+      type: 'highlight',
+      bounds: { x: 10, y: 20, width: 40, height: 24 },
+      native: true
+    })])
+    await loadingTask.destroy()
+    engine.destroy()
+  })
+
+  it('rejects invalid resolved ranges before creating their annotation', () => {
+    const engine = createAnnotationEngine(createOptions())
+    expect(() => engine.createTextMarkupsFromRanges('highlight', [{
+      id: 'invalid-range',
+      range: {
+        pageIndex: 0, start: 0, length: 3, text: 'mismatch',
+        rects: [{ x: 1, y: 2, width: 20, height: 8 }]
+      }
+    }])).toThrowError(expect.objectContaining<Partial<InkLayerError>>({ code: 'ANNOTATION_INVALID' }))
+    expect(engine.getAnnotations()).toEqual([])
     engine.destroy()
   })
 

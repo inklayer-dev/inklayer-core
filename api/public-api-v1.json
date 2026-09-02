@@ -7,6 +7,7 @@
     "./annotation",
     "./capabilities",
     "./annotation-types",
+    "./highlighter",
     "./import/pdfjs",
     "./export/pdf",
     "./export/excel",
@@ -14,16 +15,16 @@
   ],
   "entries": {
     ".": {
-      "exportCount": 223,
-      "signatureHash": "3ed61095d4fab36927a24ab699f03665bb88acc0cdc23da8fe48ea80484c7411"
+      "exportCount": 240,
+      "signatureHash": "abbd439e06debc3e3d9dc12a134da2dd989f7d974e1b452973256962099dec68"
     },
     "./viewer": {
-      "exportCount": 48,
-      "signatureHash": "065e21cd298eeb4a3e2cfad8b2d9365be06165b1ad50b5dac7668f03daa5dab2"
+      "exportCount": 61,
+      "signatureHash": "12589bc053f45f5fcee32c81afcd8ceaedde4f9cc7c9bb58196a22816d287b4a"
     },
     "./annotation": {
-      "exportCount": 56,
-      "signatureHash": "dd1dd0b8c14f546f468729defe2f5985eac07014387fe5af980cdd728bb48a54"
+      "exportCount": 58,
+      "signatureHash": "1e21b6fc9e652be9309f78f28fdc8a60182d15eb5ea697ccd4010a3460131eb7"
     },
     "./capabilities": {
       "exportCount": 26,
@@ -32,6 +33,10 @@
     "./annotation-types": {
       "exportCount": 31,
       "signatureHash": "6bead00452e171b9abe1f35c4259ccab9887c066baffaa82ddb8102047215657"
+    },
+    "./highlighter": {
+      "exportCount": 32,
+      "signatureHash": "da1f918be02aa35db17d90e26d90a9e6bc2dde60d72557d68a3083ae2a62c1a7"
     },
     "./import/pdfjs": {
       "exportCount": 13,

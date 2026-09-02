@@ -1,5 +1,7 @@
 # Pages, zoom, and navigation
 
+Open the [Viewer demo](https://core.inklayer.dev/demo/#viewer) to try these APIs in the default Continuous layout.
+
 This page covers page navigation and zoom after a PDF has loaded. It starts with the Core-managed continuous Page Flow from [Getting started](./getting-started.md), then explains the separate PDF.js web Viewer modes for single-page and facing layouts.
 
 ## Use the continuous multi-page view

@@ -1,7 +1,8 @@
 /**
  * @file Packed-package consumer build matrix quality gate.
  * @description Installs one real tarball into temporary Vite and Webpack apps,
- * then verifies browser assets, CSS, Worker resolution, and Node SSR execution.
+ * then verifies browser assets, CSS, Worker resolution, optional Highlighter
+ * imports, and Node SSR execution.
  */
 
 import { execFile } from 'node:child_process'
@@ -70,8 +71,18 @@ try {
   await writeFile(resolve(viteRoot, 'index.html'), '<main id="app"></main><script type="module" src="/src.ts"></script>')
   await writeFile(resolve(viteRoot, 'src.ts'), `
 import { CORE_VERSION, createMemoryAnnotationRepository } from '@inklayer-dev/core'
-import { createPdfViewerEngine, type PdfSearchOptions } from '@inklayer-dev/core/viewer'
-import { createAnnotationEngine } from '@inklayer-dev/core/annotation'
+import {
+  createPdfViewerEngine,
+  type PdfViewerEngine,
+  type PdfRegexSearchManyQuery,
+  type PdfSearchOptions,
+  type PdfTextHighlightLayer,
+  type PdfTextRange
+} from '@inklayer-dev/core/viewer'
+import {
+  createAnnotationEngine,
+  type AnnotationEngine
+} from '@inklayer-dev/core/annotation'
 import {
   INKLAYER_CAPABILITY_SERVICE_KEYS,
   createClockCapability,
@@ -83,6 +94,12 @@ import {
   createAnnotationTypeRegistry,
   type AnnotationTypeDefinition
 } from '@inklayer-dev/core/annotation-types'
+import {
+  createKeywordHighlighter,
+  type KeywordHighlighter,
+  type KeywordRegexPattern,
+  type KeywordRule
+} from '@inklayer-dev/core/highlighter'
 import { importPdfJsAnnotations } from '@inklayer-dev/core/import/pdfjs'
 import { buildAnnotatedPdf } from '@inklayer-dev/core/export/pdf'
 import { buildAnnotationWorkbook } from '@inklayer-dev/core/export/excel'
@@ -128,11 +145,35 @@ const printKey: 'inklayer.port.print' = INKLAYER_CAPABILITY_SERVICE_KEYS.print
 const searchOptions: PdfSearchOptions = {
   matchCase: false, wholeWord: true, matchDiacritics: false, maxResults: 100
 }
+const textRanges: readonly PdfTextRange[] = [{ pageIndex: 0, start: 0, length: 1 }]
+const highlightLayers: readonly PdfTextHighlightLayer[] = [{
+  id: 'consumer', ranges: textRanges, style: { color: '#f59e0b' }
+}]
+const amountPattern: KeywordRegexPattern = {
+  id: 'amount', kind: 'regex', source: '\\\\b\\\\d+(?:\\\\.\\\\d{2})?%?\\\\b', flags: 'u'
+}
+const regexQuery: PdfRegexSearchManyQuery = {
+  id: amountPattern.id, kind: 'regex', source: amountPattern.source,
+  options: { flags: amountPattern.flags, maxResults: 100 }
+}
+const keywordRules: readonly KeywordRule[] = [{
+  id: 'risk', label: 'Risk', terms: ['risk'], patterns: [amountPattern], color: '#ef4444'
+}]
+const connectHighlighter = (
+  viewerPort: PdfViewerEngine,
+  annotationPort: AnnotationEngine
+): KeywordHighlighter => createKeywordHighlighter({
+  viewer: viewerPort,
+  annotations: annotationPort
+})
+const viewer = createPdfViewerEngine()
 app.textContent = [CORE_VERSION, createMemoryAnnotationRepository,
-  createPdfViewerEngine(), createAnnotationEngine, createInkLayer,
-  createAnnotationTypeRegistry, importPdfJsAnnotations,
+  viewer, viewer.resolveTextRanges, createAnnotationEngine, createInkLayer,
+  createAnnotationTypeRegistry, createKeywordHighlighter, connectHighlighter,
+  keywordRules, importPdfJsAnnotations,
   buildAnnotatedPdf, exportCustom, buildAnnotationWorkbook,
-  portCapabilities, printKey, searchOptions].map(String).join(' ')
+  portCapabilities, printKey, searchOptions, regexQuery, textRanges, highlightLayers,
+  viewer.setTextHighlightLayers, viewer.clearTextHighlightLayers].map(String).join(' ')
 `)
   await writeFile(resolve(viteRoot, 'tsconfig.json'), JSON.stringify({
     compilerOptions: {
@@ -149,6 +190,12 @@ app.textContent = [CORE_VERSION, createMemoryAnnotationRepository,
     `import('@inklayer-dev/core').then((core) => { if (core.CORE_VERSION !== ${JSON.stringify(expectedVersion)}) process.exit(1) })`
   ], { cwd: viteRoot })
   if (rootImport.stderr.trim() !== '') throw new Error(rootImport.stderr)
+  const highlighterImport = await execFileAsync('node', [
+    '--input-type=module',
+    '--eval',
+    "import('@inklayer-dev/core/highlighter').then((module) => { if (typeof module.createKeywordHighlighter !== 'function') process.exit(1) })"
+  ], { cwd: viteRoot })
+  if (highlighterImport.stderr.trim() !== '') throw new Error(highlighterImport.stderr)
   const builtIndex = await readFile(resolve(viteRoot, 'dist/index.html'), 'utf8')
   if (!builtIndex.includes('assets/')) throw new Error('Temporary consumer production build is empty.')
   const builtAssets = await readdir(resolve(viteRoot, 'dist/assets'))
@@ -158,22 +205,25 @@ app.textContent = [CORE_VERSION, createMemoryAnnotationRepository,
   await writeFile(resolve(webpackRoot, 'client.mjs'), `
 import { CORE_VERSION, createMemoryAnnotationRepository } from '@inklayer-dev/core'
 import { createPdfViewerEngine } from '@inklayer-dev/core/viewer'
+import { createKeywordHighlighter } from '@inklayer-dev/core/highlighter'
 import '@inklayer-dev/core/style'
 const viewer = createPdfViewerEngine()
 const app = document.querySelector('#app')
 if (app === null) throw new Error('Webpack consumer root is missing.')
 app.textContent = [CORE_VERSION, typeof createMemoryAnnotationRepository,
-  viewer.getSnapshot().status].join(':')
+  typeof createKeywordHighlighter, viewer.getSnapshot().status].join(':')
 void viewer.destroy()
 `)
   await writeFile(resolve(webpackRoot, 'server.mjs'), `
 import { CORE_VERSION, createMemoryAnnotationRepository } from '@inklayer-dev/core'
 import { createPdfViewerEngine } from '@inklayer-dev/core/viewer'
+import { createKeywordHighlighter } from '@inklayer-dev/core/highlighter'
 const viewer = createPdfViewerEngine()
 process.stdout.write(JSON.stringify({
   version: CORE_VERSION,
   repository: typeof createMemoryAnnotationRepository,
   viewer: typeof createPdfViewerEngine,
+  highlighter: typeof createKeywordHighlighter,
   status: viewer.getSnapshot().status
 }))
 await viewer.destroy()
@@ -238,12 +288,13 @@ module.exports = [
   })
   const ssrProof = JSON.parse(ssr.stdout)
   if (ssrProof.version !== expectedVersion || ssrProof.repository !== 'function'
-    || ssrProof.viewer !== 'function' || ssrProof.status !== 'idle') {
+    || ssrProof.viewer !== 'function' || ssrProof.highlighter !== 'function'
+    || ssrProof.status !== 'idle') {
     throw new Error(`Webpack SSR bundle returned invalid Core exports: ${ssr.stdout}`)
   }
   process.stdout.write(
-    'Packed consumer matrix passed: Vite browser/typecheck/Node import and '
-    + 'Webpack browser CSS/Worker plus executable Node SSR.\n'
+    'Packed consumer matrix passed: Vite browser/typecheck, optional Highlighter, '
+    + 'Node import, and Webpack browser CSS/Worker plus executable Node SSR.\n'
   )
 } finally {
   await rm(matrixRoot, { recursive: true, force: true })

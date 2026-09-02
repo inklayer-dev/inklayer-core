@@ -27,6 +27,8 @@ export interface PdfJsPoint {
 export interface PdfJsAnnotationInput {
   /** Stable PDF annotation identifier. */
   id: string
+  /** Original PDF.js object identity retained for annotationStorage updates. */
+  pdfjsId?: string
   /** PDF.js numeric annotation type. */
   annotationType: number
   /** PDF annotation subtype. */

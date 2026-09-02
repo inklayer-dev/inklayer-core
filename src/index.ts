@@ -130,14 +130,27 @@ export type {
   PdfPasswordReason,
   PdfPasswordRequest,
   PdfSearchMatch,
+  PdfRegexSearchManyQuery,
+  PdfRegexSearchOptions,
+  PdfSearchManyInputQuery,
+  PdfSearchManyOptions,
+  PdfSearchManyProgress,
+  PdfSearchManyQuery,
+  PdfSearchManyQueryResult,
+  PdfSearchManyResult,
   PdfSearchOptions,
   PdfSearchResult,
+  PdfResolvedTextRange,
+  PdfResolveTextRangesOptions,
   PdfSource,
   PdfThumbnail,
   PdfThumbnailOptions,
   PdfThumbnailSurface,
   PdfThumbnailSurfaceProvider,
   PdfTextLayerAttachment,
+  PdfTextHighlightLayer,
+  PdfTextHighlightStyle,
+  PdfTextRange,
   PdfTextSelection,
   PdfTextSelectionSource,
   PdfTextSelectionRect,
@@ -168,6 +181,10 @@ export {
   type SecureRasterPrintOptions
 } from './raster-print'
 export {
+  buildSecureRedactedPdf,
+  type SecureRedactedPdfOptions
+} from './redaction'
+export {
   createPdfPageFlow,
   type PdfPageFlowController,
   type PdfPageFlowOptions
@@ -178,6 +195,8 @@ export {
   type AnnotationEngineOptions,
   type AnnotationSnapshotStrategy,
   type CreateAnnotationInput,
+  type CreateTextMarkupRangeInput,
+  type CreateTextMarkupsFromRangesOptions,
   type TransformAnnotationInput
 } from './annotation/annotation-engine'
 export type {

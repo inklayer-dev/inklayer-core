@@ -31,11 +31,18 @@ import type {
   PdfOutlineItem,
   PdfPageRaster,
   PdfPageRasterOptions,
+  PdfResolvedTextRange,
+  PdfResolveTextRangesOptions,
   PdfSearchOptions,
   PdfSearchMatch,
+  PdfSearchManyOptions,
+  PdfSearchManyInputQuery,
+  PdfSearchManyResult,
   PdfSearchResult,
   PdfThumbnail,
   PdfThumbnailOptions,
+  PdfTextHighlightLayer,
+  PdfTextRange,
   PdfTextLayerAttachment,
   PdfUrlSource,
   PdfViewerEngine,
@@ -378,6 +385,40 @@ class PdfViewerEngineImpl implements PdfViewerEngine {
   /** Searches the current document without prescribing search UI. */
   public async search(query: string, options?: PdfSearchOptions): Promise<PdfSearchResult> {
     return await this.requireDocumentFeatures('search').search(query, options)
+  }
+
+  /** Searches multiple queries while sharing current-document page extraction. */
+  public async searchMany(
+    queries: readonly PdfSearchManyInputQuery[],
+    options?: PdfSearchManyOptions
+  ): Promise<PdfSearchManyResult> {
+    return await this.requireDocumentFeatures('searchMany').searchMany(queries, options)
+  }
+
+  /** Resolves extracted source offsets to scale-one page-local rectangles. */
+  public async resolveTextRanges(
+    ranges: readonly PdfTextRange[],
+    options?: PdfResolveTextRangesOptions
+  ): Promise<readonly PdfResolvedTextRange[]> {
+    return await this.requireDocumentFeatures('resolveTextRanges')
+      .resolveTextRanges(ranges, options)
+  }
+
+  /** Atomically replaces temporary caller-owned text-highlight layers. */
+  public setTextHighlightLayers(layers: readonly PdfTextHighlightLayer[]): void {
+    this.assertActive('setTextHighlightLayers')
+    if (this.textLayers === null || this.snapshot.status !== 'ready') {
+      throw new InkLayerError('PDF_FEATURE_FAILED', 'A ready PDF document is required.', {
+        operation: 'setTextHighlightLayers'
+      })
+    }
+    this.textLayers.setTextHighlightLayers(layers)
+  }
+
+  /** Clears every temporary text-highlight layer, or selected layer identities. */
+  public clearTextHighlightLayers(layerIds?: readonly string[]): void {
+    this.assertActive('clearTextHighlightLayers')
+    this.textLayers?.clearTextHighlightLayers(layerIds)
   }
 
   /** Applies transient search highlights to every currently attached TextLayer. */

@@ -57,6 +57,11 @@
       "import": "./dist/annotation-types.js",
       "require": "./dist/annotation-types.cjs"
     },
+    "./highlighter": {
+      "types": "./dist/highlighter/index.d.ts",
+      "import": "./dist/highlighter.js",
+      "require": "./dist/highlighter.cjs"
+    },
     "./import/pdfjs": {
       "types": "./dist/import/pdfjs/index.d.ts",
       "import": "./dist/import/pdfjs.js",
@@ -94,8 +99,9 @@
     "docs:preview": "vitepress preview docs",
     "build": "vite build && tsc -p tsconfig.build.json",
     "build:example": "vite build --config examples/vanilla/vite.config.ts --outDir ../../dist-example --emptyOutDir",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
-    "lint": "eslint src tests scripts examples/vanilla docs/.vitepress/config.mts docs/.vitepress/theme vite.config.ts vitest.config.ts playwright.config.ts eslint.config.mjs --report-unused-disable-directives",
+    "build:framework-examples": "vite build --config examples/framework-consumers/vite.config.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit && tsc -p tsconfig.framework-examples.json --noEmit",
+    "lint": "eslint src tests scripts examples/vanilla examples/framework-consumers docs/.vitepress/config.mts docs/.vitepress/theme vite.config.ts vitest.config.ts playwright.config.ts eslint.config.mjs --report-unused-disable-directives",
     "test": "vitest run",
     "test:browser": "playwright test --project=chromium",
     "test:browser:matrix": "playwright test",
@@ -108,19 +114,24 @@
     "check:release": "node scripts/check-release.mjs",
     "check:consumer": "node scripts/check-consumer.mjs",
     "benchmark": "npm run build && npm run build:example && node --expose-gc scripts/benchmark.mjs",
-    "check": "npm run typecheck && npm run lint && npm run check:comments && npm run check:docs && npm run check:dependencies && npm run test && npm run test:browser && npm run build && npm run build:example && npm run docs:build && npm run check:api && npm run check:package && npm run check:consumer"
+    "check": "npm run typecheck && npm run lint && npm run check:comments && npm run check:docs && npm run check:dependencies && npm run test && npm run test:browser && npm run build && npm run build:example && npm run build:framework-examples && npm run docs:build && npm run check:api && npm run check:package && npm run check:consumer"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
     "@playwright/test": "^1.62.1",
     "@types/node": "^24.10.0",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
     "eslint": "^9.39.5",
     "globals": "^16.4.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.66.0",
     "vite": "^8.2.1",
     "vitepress": "^1.6.4",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "vue": "^3.5.42"
   },
   "dependencies": {
     "@pdf-lib/fontkit": "^1.1.1",

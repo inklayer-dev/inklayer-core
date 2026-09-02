@@ -1,5 +1,7 @@
 # 页面、缩放与导航
 
+打开 [Viewer 示例](https://core.inklayer.dev/demo/#viewer)，可以在默认 Continuous 布局中体验本页 API。
+
 本页介绍 PDF 加载完成后的页面跳转和缩放。首先使用[快速开始](./getting-started.md)中由 Core 管理的连续多页视图，然后介绍另一条渲染路径：PDF.js web Viewer 提供的单页和对页模式。
 
 ## 使用连续多页视图

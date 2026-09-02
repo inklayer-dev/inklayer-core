@@ -36,7 +36,16 @@ export function appMarkup(): string {
           <button id="destroy-all" class="quiet-action" type="button" title="Destroy and recreate every Core instance">Restart Core</button>
         </div>
       </header>
-      <section id="instance-grid" class="instance-grid" aria-label="InkLayer Core workspace"></section>
+      <nav class="demo-feature-tabs" aria-label="Core demos">
+        <a href="#viewer" data-demo-route="viewer" aria-current="page">Viewer</a>
+        <a href="#annotations" data-demo-route="annotations">Annotations</a>
+        <a href="#stamp-sign" data-demo-route="stamp-sign">Stamp &amp; Sign</a>
+        <a href="#highlighter" data-demo-route="highlighter">Keyword Highlighter</a>
+        <a href="#redaction" data-demo-route="redaction">Redaction</a>
+        <a href="#watermark" data-demo-route="watermark">Watermark</a>
+        <a href="#custom-annotations" data-demo-route="custom-annotations">Custom Annotations</a>
+      </nav>
+      <section id="instance-grid" class="instance-grid" aria-label="InkLayer Core workspace" data-demo-route-panel></section>
     </main>`
 }
 
@@ -60,9 +69,11 @@ export function instanceMarkup(label: string): string {
         <div><strong class="document-name">InkLayer Core sample.pdf</strong><span>Framework-free reference workspace</span></div>
       </div>
       <div class="workspace-actions">
+        <button class="show-code quiet-action" type="button" aria-label="Show code" aria-haspopup="dialog"><span class="code-action-symbol" aria-hidden="true">&lt;/&gt;</span><span class="code-action-label">Show code</span><span class="code-action-label-mobile">Code</span></button>
         <label class="file-control primary-action">${toolIcon('note')}<span>Open PDF</span><input class="pdf-file" type="file" accept="application/pdf,.pdf"></label>
         <div class="output-menu-wrap">
           <button class="print quiet-action" type="button">Print</button>
+          <button class="export-redacted primary-action" type="button" disabled><span class="export-redacted-label">Export redacted copy</span><span class="export-redacted-label-mobile">Export redacted</span></button>
           <button class="output-toggle primary-action" type="button" aria-expanded="false">Export</button>
           <div class="output-menu" hidden>
             <button class="export-pdf" type="button"><strong>Annotated PDF</strong><span>Native, editable annotations</span></button>
@@ -99,8 +110,8 @@ export function instanceMarkup(label: string): string {
         </select></label>
       </div>
       <div class="toolbar-group layout-controls" role="group" aria-label="Page layout">
-        <button class="single segmented active" type="button" aria-pressed="true">Single</button>
-        <button class="continuous segmented" type="button" aria-pressed="false">Continuous</button>
+        <button class="single segmented" type="button" aria-pressed="false">Single</button>
+        <button class="continuous segmented active" type="button" aria-pressed="true">Continuous</button>
       </div>
     </div>
 
@@ -124,6 +135,7 @@ export function instanceMarkup(label: string): string {
           <p class="panel-hint">Matches and active highlights are calculated by Core.</p>
           <div class="search-results" aria-live="polite"></div>
         </section>
+        <section class="side-panel highlighter-panel" data-side-panel="highlighter" hidden></section>
       </aside>
 
       <section class="document-stage" aria-label="PDF document">
@@ -146,19 +158,59 @@ export function instanceMarkup(label: string): string {
           <button class="mobile-panel-close" type="button" aria-label="Close annotation tools">×</button>
         </div>
         <section class="right-panel active" data-right-panel="tools">
+          <section class="stamp-sign-panel" aria-labelledby="${label}-stamp-sign-title">
+            <div class="stamp-sign-heading">
+              <div><strong id="${label}-stamp-sign-title">Stamp &amp; Sign</strong><span>Place once or repeat across pages</span></div>
+              <span class="stamp-sign-kind">Image annotations</span>
+            </div>
+            <div class="stamp-sign-assets" role="group" aria-label="Default stamp and signature">
+              <button class="stamp-sign-asset active" type="button" data-stamp-sign-type="stamp" aria-pressed="true">
+                <span class="stamp-sign-preview"><img class="stamp-sign-stamp-preview" alt=""></span>
+                <span><strong>Approved stamp</strong><small>Default demo asset</small></span>
+              </button>
+              <button class="stamp-sign-asset" type="button" data-stamp-sign-type="signature" aria-pressed="false">
+                <span class="stamp-sign-preview"><img class="stamp-sign-signature-preview" alt=""></span>
+                <span><strong>Demo signature</strong><small>Visual signature image</small></span>
+              </button>
+            </div>
+            <section class="stamp-sign-section">
+              <div class="stamp-sign-section-heading"><strong>Appearance</strong><span>Also updates a selected mark</span></div>
+              <label class="stamp-sign-field"><span>Opacity</span><input class="stamp-sign-opacity" type="range" min="0.05" max="1" step="0.05" value="0.8"><output class="stamp-sign-opacity-value">80%</output></label>
+              <label class="stamp-sign-field"><span>Width</span><input class="stamp-sign-width" type="range" min="60" max="220" step="10" value="140"><output class="stamp-sign-width-value">140 pt</output></label>
+              <button class="stamp-sign-manual primary-action" type="button">Place manually</button>
+            </section>
+            <section class="stamp-sign-section stamp-sign-batch-section">
+              <div class="stamp-sign-section-heading"><strong>Batch placement</strong><span>One mark per selected page</span></div>
+              <label class="stamp-sign-control"><span>Pages</span><input class="stamp-sign-pages" value="all" placeholder="all or 1-3, 5" aria-describedby="${label}-stamp-pages-help"></label>
+              <p id="${label}-stamp-pages-help" class="stamp-sign-help">Use all, current, odd, even, or ranges such as 1-3, 5.</p>
+              <label class="stamp-sign-control"><span>Position</span><select class="stamp-sign-position"><option value="bottom-right" selected>Bottom right</option><option value="bottom-left">Bottom left</option><option value="top-right">Top right</option><option value="top-left">Top left</option><option value="center">Center</option></select></label>
+              <button class="stamp-sign-batch primary-action" type="button">Apply to pages</button>
+            </section>
+            <button class="stamp-sign-remove quiet-action" type="button">Remove selected</button>
+            <p class="stamp-sign-disclaimer">A visual signature is not a certificate-backed PDF digital signature.</p>
+          </section>
+          <section class="watermark-panel" aria-labelledby="${label}-watermark-title">
+            <div class="watermark-heading">
+              <div><strong id="${label}-watermark-title">Document watermark</strong><span>One policy across viewer, print and export</span></div>
+              <span class="watermark-kind">Viewer policy</span>
+            </div>
+            <div class="watermark-controls">
+              <label class="watermark-control"><span>Text</span><input class="watermark-text" value="Demo · InkLayer Core"></label>
+              <label class="watermark-control"><span>Layout</span><select class="watermark-layout"><option value="repeated" selected>Repeated</option><option value="center">Centered</option></select></label>
+              <label class="watermark-field"><span>Opacity</span><input class="watermark-opacity" type="range" min="0.05" max="0.5" step="0.05" value="0.1"><output class="watermark-opacity-value">10%</output></label>
+              <label class="watermark-field"><span>Rotation</span><input class="watermark-rotation" type="range" min="-90" max="90" step="1" value="-28"><output class="watermark-rotation-value">−28°</output></label>
+              <fieldset class="watermark-targets"><legend>Output targets</legend><label><input class="watermark-target-viewer" type="checkbox" checked><span>Viewer</span></label><label><input class="watermark-target-print" type="checkbox" checked><span>Print</span></label><label><input class="watermark-target-export" type="checkbox" checked><span>Export</span></label></fieldset>
+              <label class="check-field watermark-enabled-field"><input class="watermark-enabled" type="checkbox" checked><span>Watermark enabled</span></label>
+              <p class="watermark-help">Watermarks discourage casual redistribution; they are not access control or tamper-proof signatures.</p>
+            </div>
+          </section>
           <select class="tool-select sr-only" aria-label="Annotation tool">${tools}</select>
-          <section class="plugin-showcase" data-state="uninstalled" aria-labelledby="${label}-plugin-title">
+          <section class="plugin-showcase" data-state="installed" aria-labelledby="${label}-plugin-title">
             <div class="plugin-heading">
-              <div><strong id="${label}-plugin-title">Annotation plugin</strong><span>Interactive lifecycle demo</span></div>
-              <span class="plugin-state">Not installed</span>
+              <div><strong id="${label}-plugin-title">Custom annotation types</strong><span>Application-owned Definitions</span></div>
+              <span class="plugin-state">3 registered</span>
             </div>
-            <p class="plugin-description">Install a custom Measurement type. It will appear in the tool palette below.</p>
-            <div class="plugin-actions">
-              <button class="plugin-install primary-action" type="button">Install Measurement plugin</button>
-              <button class="plugin-unload quiet-action" type="button" hidden>Unload plugin</button>
-              <button class="plugin-reload primary-action" type="button" hidden>Reload plugin</button>
-            </div>
-            <output class="plugin-result" aria-live="polite">No custom Definition is registered.</output>
+            <p class="plugin-description">Each tool owns semantic <code>typeData</code> while Core supplies gestures, transforms, persistence, print, and export.</p>
           </section>
           <div class="tool-palette">${toolGroups}</div>
           <section class="appearance-panel">
@@ -184,9 +236,25 @@ export function instanceMarkup(label: string): string {
 
     <footer class="status-bar">
       <button class="capability-toggle" type="button" aria-expanded="false">${toolIcon('note')}<span>Capability Lab</span></button>
-      <span class="status-divider"></span><span class="status-page">Page 1</span><span class="status-divider"></span><span class="status-scale">100%</span><span class="status-divider"></span><span class="status-layout">Single page</span>
-      <span class="status-spacer"></span><p class="instance-status" role="status" aria-live="polite">Idle</p><span class="status-divider"></span><span class="status-annotations">0 annotations</span>
+      <span class="status-divider"></span><span class="status-page">Page 1</span><span class="status-divider"></span><span class="status-scale">100%</span><span class="status-divider"></span><span class="status-layout">Continuous scroll</span>
+      <span class="status-spacer"></span><p class="instance-status" role="status" aria-live="polite">Idle</p><span class="status-divider annotation-status-divider"></span><span class="status-annotations">0 annotations</span>
     </footer>
+
+    <dialog class="code-dialog" aria-labelledby="${label}-code-title">
+      <div class="code-shell">
+        <header class="code-header">
+          <div><span class="code-eyebrow">COPYABLE TYPESCRIPT</span><h2 id="${label}-code-title" class="code-title">Minimal Core example</h2></div>
+          <button class="code-close icon-button" type="button" aria-label="Close code example">×</button>
+        </header>
+        <div class="code-intro"><p class="code-summary"></p><p class="code-requirement"></p></div>
+        <div class="code-source-controls">
+          <div class="code-toolbar"><span>TypeScript</span><button class="code-copy quiet-action" type="button">Copy code</button></div>
+          <div class="code-variants" role="tablist" aria-label="Code examples" hidden></div>
+        </div>
+        <pre class="code-block" tabindex="0"><code></code></pre>
+        <footer class="code-footer"><a class="code-guide primary-action" target="_blank" rel="noreferrer">Read full guide</a><a class="code-source quiet-action" target="_blank" rel="noreferrer">View demo source</a></footer>
+      </div>
+    </dialog>
 
     <dialog class="capability-dialog" aria-labelledby="${label}-lab-title">
       <div class="lab-shell">
@@ -194,7 +262,6 @@ export function instanceMarkup(label: string): string {
         <div class="lab-grid">
           <section><h3>Loading & security</h3><p>Password lifecycle, HTTP Range and cancellation.</p><div class="lab-actions"><button class="password-sample" type="button">Password PDF</button><button class="range-sample" type="button">URL Range PDF</button><button class="cancel-load" type="button">Cancel load</button><button class="reload" type="button">Reload</button></div></section>
           <section><h3>Page flow</h3><p>Mixed geometry and bounded long-document virtualization.</p><div class="lab-actions"><button class="mixed-sample" type="button">Mixed PDF</button><button class="long-sample" type="button">Long PDF</button></div></section>
-          <section><h3>Watermark</h3><p>One policy across viewer, print and export targets.</p><label class="lab-field"><span>Text</span><input class="watermark-text" value="Demo · InkLayer Core"></label><label class="check-field"><input class="watermark-enabled" type="checkbox" checked><span>Show on viewer, print and export</span></label></section>
           <section><h3>Lifecycle</h3><p>Dispose and rebuild Viewer, Annotation and PageFlow together.</p><div class="lab-actions"><button class="restart-instance" type="button">Restart this workspace</button></div></section>
           <section><h3>Collaboration policy</h3><p>Switch the canonical repository between unrestricted and owner-only editing.</p><label class="check-field"><input class="owner-only" type="checkbox"><span>Owner-only annotation changes</span></label></section>
         </div>

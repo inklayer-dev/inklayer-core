@@ -15,6 +15,9 @@ Core reports structured errors; the application decides what the user sees and w
 | Incorrect password | `passwordRequired` event with `reason: 'incorrect'` | Keep the same password dialog open and submit another password for the active `requestId`. |
 | User cancels password input | Pending load rejects with `PDF_PASSWORD_CANCELLED` | Return to the document picker or let the user start a new load. |
 | Application cancels loading | Pending load rejects with `PDF_LOAD_CANCELLED` | Treat cancellation as expected; start a new load only when requested. |
+| Application cancels `searchMany()` | Pending batch rejects with `PDF_FEATURE_CANCELLED` | Treat cancellation as expected; retain the loaded document and start another search only when requested. |
+| Application cancels `resolveTextRanges()` | Pending geometry work rejects with `PDF_FEATURE_CANCELLED` | Treat cancellation as expected; the loaded document and cached page text remain usable. |
+| Temporary text-highlight layer input is invalid | `PDF_FEATURE_FAILED` with `setTextHighlightLayers` or `clearTextHighlightLayers` | Correct duplicate/blank IDs, page ranges, active indexes, visibility values, or CSS colors; the previously retained layers remain unchanged. |
 | Page, search, thumbnail, or raster operation fails | `PDF_FEATURE_FAILED`, often with `operation` and `pageIndex` | Retry the specific feature after fixing its input or browser resource problem. |
 | PDF permission blocks printing | `PDF_PERMISSION_DENIED` | Disable printing and explain that the document does not allow it. |
 | Core instance has been destroyed | `ENGINE_DESTROYED` | Create a new instance; a destroyed instance cannot be restarted. |

@@ -66,7 +66,7 @@ export function createLongDocumentPdf(): Uint8Array {
 /** Builds the shared document with optional pre-xref comment padding. */
 function createPdf(minimumBytes: number): Uint8Array {
   const streams = [
-    'BT /F1 18 Tf 24 500 Td (InkLayer Core Vanilla) Tj 0 -34 Td /F1 12 Tf (Overview and document navigation) Tj ET',
+    'BT /F1 18 Tf 24 500 Td (InkLayer Core Vanilla) Tj 0 -34 Td /F1 12 Tf (Overview and document navigation) Tj 0 -24 Td (Review date 2026-08-31 and amount RMB 1,200.50) Tj ET',
     'BT /F1 18 Tf 24 500 Td (Viewer Features) Tj 0 -34 Td /F1 12 Tf (Search and outline live in Core) Tj ET',
     'BT /F1 18 Tf 24 500 Td (Text Selection) Tj 0 -34 Td /F1 12 Tf (Select this sentence to create a highlight) Tj ET'
   ]

@@ -18,7 +18,7 @@ hero:
       link: /zh/api
     - theme: alt
       text: 在线示例
-      link: 'https://core.inklayer.dev/demo/'
+      link: 'https://core.inklayer.dev/demo/#viewer'
 
 features:
   - title: 使用你熟悉的 Web 框架

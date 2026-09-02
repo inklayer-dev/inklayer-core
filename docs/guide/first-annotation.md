@@ -2,6 +2,8 @@
 
 Continue with the same `core` instance from [Getting started](./getting-started.md). In this tutorial, you will add application buttons that draw a rectangle and turn selected PDF text into a highlight.
 
+Open the [Annotations demo](https://core.inklayer.dev/demo/#annotations) to try the isolated annotation workspace and inspect its **Show code** example.
+
 > [!IMPORTANT] NOTE
 InkLayer Core is headless: it does not ship a toolbar or sidebar. You build those controls in your framework and call the same methods shown here.
 

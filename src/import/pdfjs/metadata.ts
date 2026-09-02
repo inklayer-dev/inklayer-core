@@ -229,8 +229,15 @@ function enrichPages(
       if (!isRecord(annotation) || typeof annotation['id'] !== 'string') return annotation
       const record = byId.get(annotation['id'])
       if (record === undefined) return annotation
+      const pdfjsId = annotation['id']
+      const inReplyTo = typeof annotation['inReplyTo'] === 'string'
+        ? byId.get(annotation['inReplyTo'])?.id ?? annotation['inReplyTo']
+        : undefined
       return {
         ...annotation,
+        id: record.id,
+        ...(pdfjsId === record.id ? {} : { pdfjsId }),
+        ...(inReplyTo === undefined ? {} : { inReplyTo }),
         inkLayerType: record.type,
         ...(record.canonicalType === undefined ? {} : { canonicalType: record.canonicalType }),
         ...(record.appearance === undefined ? {} : { appearance: record.appearance }),

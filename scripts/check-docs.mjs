@@ -67,6 +67,15 @@ const gettingStarted = await readFile(resolve(projectRoot, 'docs/guide/getting-s
 const chineseReadme = await readFile(resolve(projectRoot, 'README.zh-CN.md'), 'utf8')
 const vitePressConfig = await readFile(resolve(projectRoot, 'docs/.vitepress/config.mts'), 'utf8')
 const exampleViteConfig = await readFile(resolve(projectRoot, 'examples/vanilla/vite.config.ts'), 'utf8')
+const reactHighlighterExample = await readFile(resolve(
+  projectRoot, 'examples/framework-consumers/react-keyword-highlighter.tsx'
+), 'utf8')
+const vueHighlighterExample = await readFile(resolve(
+  projectRoot, 'examples/framework-consumers/vue-keyword-highlighter.ts'
+), 'utf8')
+const vanillaHighlighterExample = await readFile(resolve(
+  projectRoot, 'examples/vanilla/src/ui/highlighter-panel.ts'
+), 'utf8')
 const docsWorkflow = await readFile(resolve(projectRoot, '.github/workflows/docs.yml'), 'utf8')
 const schema = await readFile(resolve(projectRoot, 'src/domain/schema.ts'), 'utf8')
 const vitest = await commandJson(resolve(projectRoot, 'node_modules/.bin/vitest'), ['list', '--json'])
@@ -100,14 +109,27 @@ for (const entry of Object.keys(packageJson.exports)) {
 }
 check(packageJson.scripts?.['docs:build'] === 'vitepress build docs',
   'package.json must expose the VitePress production build.')
+check(packageJson.scripts?.['build:framework-examples']
+  === 'vite build --config examples/framework-consumers/vite.config.ts',
+'package.json must build the direct React and Vue Highlighter fixtures.')
+check(reactHighlighterExample.includes('useSyncExternalStore')
+  && reactHighlighterExample.includes('controller.destroy()'),
+'React Highlighter fixture must use the external-store contract and release its Controller.')
+check(vueHighlighterExample.includes('shallowRef')
+  && vueHighlighterExample.includes('controller.subscribe')
+  && vueHighlighterExample.includes('onScopeDispose'),
+'Vue Highlighter fixture must project snapshots and release its effect scope.')
 check(vitePressConfig.includes("link: '/guide/framework-integration'"),
   'VitePress navigation must expose the framework integration guide.')
 const taskGuides = [
   'getting-started',
   'first-annotation',
+  'first-keyword-highlight',
   'loading-pdfs',
   'viewer-and-pages',
   'search-and-selection',
+  'highlighter',
+  'stamp-and-sign',
   'annotations',
   'persistence',
   'output-and-security',
@@ -131,6 +153,29 @@ const frameworkExamples = [
   'URL.revokeObjectURL(',
   'repository.subscribe(',
   '.destroy()'
+]
+const highlighterGuideExamples = [
+  "createKeywordHighlighter({",
+  'highlighter.setRules(rules)',
+  'highlighter.subscribe(render)',
+  'highlighter.scan({ maxTotalResults:',
+  'highlighter.cancelScan()',
+  'highlighter.activateMatch(match.id)',
+  'highlighter.applyMatches({',
+  'clearPreview()',
+  'highlighter.destroy()',
+  'snapshot.truncated',
+  'patterns: [',
+  'match.matchedText',
+  "worker-src 'self' blob:",
+  'useSyncExternalStore(',
+  'onScopeDispose('
+]
+const firstKeywordHighlightExamples = [
+  'structuredReviewRules',
+  'patterns: [',
+  "kind: 'regex'",
+  'match.matchedText'
 ]
 const referenceDocuments = [
   'api',
@@ -158,6 +203,22 @@ for (const guide of taskGuides) {
       }
     }
   }
+  if (guide === 'highlighter') {
+    for (const [locale, contents] of [['English', english], ['Chinese', chinese]]) {
+      for (const example of highlighterGuideExamples) {
+        check(contents.includes(example),
+          `${locale} Highlighter guide must demonstrate ${example}.`)
+      }
+    }
+  }
+  if (guide === 'first-keyword-highlight') {
+    for (const [locale, contents] of [['English', english], ['Chinese', chinese]]) {
+      for (const example of firstKeywordHighlightExamples) {
+        check(contents.includes(example),
+          `${locale} first keyword highlight guide must demonstrate ${example}.`)
+      }
+    }
+  }
 }
 for (const document of referenceDocuments) {
   const english = await readFile(resolve(projectRoot, `docs/${document}.md`), 'utf8')
@@ -174,6 +235,10 @@ check(exampleViteConfig.includes("base: './'"),
   'Vanilla production assets must use a relative base for nested GitHub Pages deployment.')
 check(exampleViteConfig.includes("fileName: 'range-sample.pdf'"),
   'Vanilla production output must include its base-aware Range sample PDF.')
+check(vanillaHighlighterExample.includes("kind: 'regex'")
+  && vanillaHighlighterExample.includes('.highlighter-rule-patterns')
+  && vanillaHighlighterExample.includes('match.matchedText'),
+'Vanilla Highlighter must demonstrate editable regex rules and exact matched text.')
 
 const retiredDocuments = [
   'implementation-progress', 'roadmap', 'final-report', 'release-candidate',

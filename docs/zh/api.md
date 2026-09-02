@@ -9,6 +9,7 @@
 | `@inklayer-dev/core` | 数据模型、数据仓库、底层查看器与批注引擎、浏览器辅助函数和公共类型 |
 | `@inklayer-dev/core/capabilities` | 推荐使用的 `createInkLayer()` 组合 API 和能力插件 |
 | `@inklayer-dev/core/annotation-types` | 自定义批注类型定义和类型注册表 |
+| `@inklayer-dev/core/highlighter` | 无头关键词扫描、审核、预览和永久高亮 |
 | `@inklayer-dev/core/viewer` | 底层 PDF 查看器 API |
 | `@inklayer-dev/core/annotation` | 底层批注引擎 API |
 | `@inklayer-dev/core/import/pdfjs` | 导入 PDF.js 读取的原生批注 |
@@ -83,7 +84,9 @@ const viewer = createPdfViewerEngine()
 | `setScale()` / `getScale()` | 设置或读取数值及预设缩放比例 |
 | `zoomIn()` / `zoomOut()` / `goToPage()` | 控制已配置的 Web Viewer |
 | `getOutline()` / `resolveDestination()` | 读取文档目录与跳转目标 |
-| `search()` | 搜索经过规范化的 PDF 文字 |
+| `search()` / `searchMany()` | 搜索单个普通文字，或按顺序批量搜索普通文字与正则查询 |
+| `resolveTextRanges()` | 将同页 UTF-16 原文范围解析为 scale-one、左上角原点的页面矩形 |
+| `setTextHighlightLayers()` / `clearTextHighlightLayers()` | 替换或按 ID 清除有序、临时、由调用方设定颜色的 TextLayer 高亮 |
 | `setSearchHighlights()` / `clearSearchHighlights()` | 在已挂载文字层中显示临时搜索结果 |
 | `getTextSelection()` / `clearTextSelection()` | 读取或清除经过规范化的浏览器文字选择 |
 | `renderThumbnail()` | 返回编码为 PNG 的缩略图 Blob |
@@ -109,6 +112,70 @@ console.log(pageFlow?.getCurrentPage())
 
 控制器提供 `scrollToPage()`、`setScale()`、`getScale()`、`zoomIn()`、`zoomOut()`、`getCurrentPage()` 和 `destroy()`。替换文档时，旧控制器会被销毁，并为新文档创建新的控制器。
 
+## 关键词 Highlighter
+
+可选的 `@inklayer-dev/core/highlighter` 入口把 Viewer 的搜索与预览能力和 Annotation Engine 的持久化能力组合起来。它负责工作流状态而不提供 UI，因此 React、Vue 和其他宿主可以订阅同一套不可变快照。
+
+```ts
+import {
+  createKeywordHighlighter,
+  type KeywordRule
+} from '@inklayer-dev/core/highlighter'
+
+const rules: readonly KeywordRule[] = [
+  {
+    id: 'risk', label: 'Risk terms',
+    terms: ['liability', 'termination'], color: '#ef4444'
+  },
+  {
+    id: 'structured', label: 'Dates and amounts', color: '#8b5cf6',
+    patterns: [
+      { id: 'date', kind: 'regex', source: '\\b\\d{4}-\\d{2}-\\d{2}\\b', flags: 'u' },
+      { id: 'amount', kind: 'regex', source: 'RMB\\s*\\d+(?:,\\d{3})*', flags: 'iu' }
+    ]
+  }
+]
+
+const highlighter = createKeywordHighlighter({
+  viewer: core.viewer,
+  annotations: core.annotations
+})
+
+highlighter.setRules(rules)
+const unsubscribe = highlighter.subscribe(snapshot => {
+  console.log(snapshot.status, snapshot.includedCount)
+})
+
+await highlighter.scan()
+const firstMatch = highlighter.getSnapshot().matches[0]
+if (firstMatch !== undefined) highlighter.excludeMatch(firstMatch.id)
+
+const result = await highlighter.applyMatches()
+console.log(result.createdAnnotationIds, result.skippedMatchIds)
+
+unsubscribe()
+highlighter.destroy()
+```
+
+`terms` 是普通文字匹配器，`patterns` 是可序列化的正则表达式。正则 source 不带 `/.../` 分隔符，只接受互不重复的 `i`、`m`、`s`、`u` flags。命中结果通过 `pattern` 提供配置的匹配器，并通过 `matchedText` 提供 PDF 中的精确原文。
+
+| 方法 | 用途 |
+| --- | --- |
+| `setRules()` | 规范化并替换全部关键词规则，但不自动扫描 |
+| `scan()` / `cancelScan()` | 批量搜索已就绪文档，并支持进度和取消 |
+| `getSnapshot()` / `subscribe()` | 读取或监听与框架无关的不可变工作流状态 |
+| `activateMatch()` | 激活一个命中，并让 Viewer 跳转到对应页面 |
+| `includeMatch()` / `excludeMatch()` | 修改单个命中的预览和应用资格 |
+| `includeRule()` / `excludeRule()` | 修改一条规则产生的全部命中的资格 |
+| `applyMatches()` | 为包含的命中创建尚不存在的永久 Highlight 批注 |
+| `clearPreview()` | 只隐藏当前 Controller 的临时层，不丢弃审核状态 |
+| `reset()` | 清除 Controller 规则和临时状态，但不删除永久批注 |
+| `destroy()` | 取消任务，并释放订阅和当前 Controller 拥有的预览层 |
+
+`applyMatches()` 使用确定性的批注 ID，因此重复执行会跳过仓库中已经存在的批注。应用过程有意不提供事务性：如果后续规则失败，前面已经成功的批注仍是规范仓库状态，并会同步回下一份快照。应用作用域结束时必须调用 `destroy()`。
+
+完整接入流程请先阅读独立的[关键词高亮指南](./guide/highlighter)。同一个 Controller 的三种 UI 所有权写法，可参考仓库维护的 [Vanilla](./guide/framework-integration)、[React](./guide/framework-react)和 [Vue](./guide/framework-vue)示例。
+
 ## 批注引擎
 
 推荐使用 `core.annotations`；也可以通过 `createAnnotationEngine()` 创建底层批注引擎。
@@ -122,7 +189,9 @@ console.log(pageFlow?.getCurrentPage())
 | `getAppearanceCapabilities()` | 判断某种类型支持哪些外观控件 |
 | `setImageAsset()` / `getImageAsset()` | 为签名或盖章准备待放置图片 |
 | `createAnnotation()` | 根据规范输入创建批注 |
+| `getAnnotations()` | 按仓库顺序读取全部已脱离的规范批注 |
 | `createTextMarkup()` | 根据文字选择创建高亮、下划线或删除线 |
+| `createTextMarkupsFromRanges()` | 根据已解析范围批量创建尚不存在的稳定 ID 文字批注 |
 | `requestFreeText()` / `requestEditText()` | 打开已配置的文字输入界面 |
 | `updateContent()` / `updateAppearance()` / `transformAnnotation()` | 编辑已有批注 |
 | `addComment()` / `updateComment()` / `deleteComment()` | 管理评论和回复 |
@@ -178,6 +247,7 @@ import {
   importPdfJsAnnotationsWithMetadata
 } from '@inklayer-dev/core/import/pdfjs'
 import {
+  buildSecureRedactedPdf,
   buildSecureRasterPrintPdf,
   downloadBlob,
   printPdfBlob
@@ -196,11 +266,12 @@ import { buildAnnotationWorkbook } from '@inklayer-dev/core/export/excel'
 | `buildAnnotatedPdf()` | 包含规范批注的 PDF 字节 |
 | `buildPrintablePdf()` | 用于打印的 PDF 字节 |
 | `buildSecureRasterPrintPdf()` | 根据查看器中已打开的文档生成仅含图片的打印 PDF |
+| `buildSecureRedactedPdf()` | 根据审核后的文字范围生成不可恢复覆盖、仅含页面图片的 PDF |
 | `buildAnnotationWorkbook()` | 包含批注数据的 XLSX 字节 |
 | `printPdfBlob()` | 使用生成的字节打开浏览器打印对话框 |
 | `downloadBlob()` | 在浏览器中下载生成的字节 |
 
-输出函数只负责返回内容；是否打印、下载或上传由应用决定。详见[打印、导出与水印](./guide/output-and-security)。
+`buildSecureRedactedPdf()` 接收 `viewer`、非空 `ranges`、可选的 `pixelRatio`、`margin`、进度和取消信号。它生成的文件不会保留可选择的页面文字。输出函数只负责返回内容；是否打印、下载或上传由应用决定。详见[打印、导出与水印](./guide/output-and-security)。
 
 ## 错误
 

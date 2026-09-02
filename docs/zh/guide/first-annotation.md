@@ -2,6 +2,8 @@
 
 接着[快速开始](./getting-started.md)，继续使用其中创建的同一个 `core` 实例。本页会添加几个应用按钮，用它们绘制矩形，并把选中的 PDF 文字变成高亮。
 
+打开[批注示例](https://core.inklayer.dev/demo/#annotations)，可以先体验独立的批注工作区，并通过 **Show code** 查看最小实现。
+
 > [!IMPORTANT] 注意
 > InkLayer Core 是无头引擎，不附带固定工具栏或侧边栏。你需要在自己的框架中实现控件，再调用本文展示的相同方法。
 

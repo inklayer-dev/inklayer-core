@@ -216,3 +216,27 @@ export default function App() {
 :::
 
 文字高亮、作者权限和批注保存请分别参考[创建第一个批注](./first-annotation)与[保存和恢复批注](./persistence)。
+
+## 订阅 Highlighter Controller
+
+React 不需要 InkLayer 框架封装包。直接用已有 Viewer 和 Annotation Engine 端口创建 Controller，然后把稳定的订阅函数交给 `useSyncExternalStore`：
+
+```tsx
+const controller = useMemo(
+  () => createKeywordHighlighter({ viewer, annotations }),
+  [viewer, annotations]
+)
+
+useEffect(() => {
+  controller.setRules(rules)
+}, [controller, rules])
+useEffect(() => () => controller.destroy(), [controller])
+
+const snapshot = useSyncExternalStore(
+  controller.subscribe,
+  controller.getSnapshot,
+  controller.getSnapshot
+)
+```
+
+渲染 `snapshot.matches` 时使用 `match.id` 作为 React key，并在事件处理器中调用 `includeMatch()`、`excludeMatch()`、`activateMatch()` 和 `applyMatches()`。仓库中的 [React 消费 fixture](https://github.com/inklayer-dev/inklayer-core/blob/main/examples/framework-consumers/react-keyword-highlighter.tsx)会经过类型检查和生产构建，同时不会把 React 加入 Core 的运行时依赖。

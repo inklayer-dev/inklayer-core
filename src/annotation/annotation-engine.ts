@@ -16,6 +16,7 @@ import {
   type AnnotationType
 } from '../domain/annotation'
 import { isBuiltInAnnotationType } from '../domain/annotation'
+import type { JsonObject } from '../domain/json-value'
 import {
   createAnnotationTypeRegistry,
   type AnnotationTypeDefinition,
@@ -76,6 +77,7 @@ import {
   updateBuiltInRendererContent
 } from './built-in-runtime'
 import type { AnnotationCreationMode, AnnotationTool } from './tools'
+import type { PdfResolvedTextRange } from '../viewer/types'
 import {
   buildAnnotationSceneRendererState,
   buildUnavailableAnnotationRendererState
@@ -108,6 +110,24 @@ export interface CreateAnnotationInput {
   textRects?: readonly AnnotationBounds[]
   /** Optional independently versioned semantic payload for a custom type. */
   typeData?: AnnotationTypeData
+  /** Optional bounded application metadata retained by the annotation. */
+  extensions?: JsonObject
+}
+
+/** One stable-ID request for a permanent text markup annotation. */
+export interface CreateTextMarkupRangeInput {
+  /** Deterministic annotation identity used for duplicate prevention. */
+  readonly id: string
+  /** Resolved same-page text and geometry. */
+  readonly range: PdfResolvedTextRange
+  /** Optional bounded application provenance retained by the annotation. */
+  readonly extensions?: JsonObject
+}
+
+/** Options shared by one batch of permanent text markup annotations. */
+export interface CreateTextMarkupsFromRangesOptions {
+  /** Optional appearance override applied to every created annotation. */
+  readonly appearance?: AnnotationAppearanceInput
 }
 
 /** Exact renderer and bounds update for a transform operation. */
@@ -198,12 +218,20 @@ export interface AnnotationEngine {
   setPermissions(permissions: AnnotationPermissions | undefined): void
   /** Creates any persisted annotation type through its real snapshot builder. */
   createAnnotation(input: CreateAnnotationInput): Annotation
+  /** Returns every detached canonical annotation in repository order. */
+  getAnnotations(): readonly Annotation[]
   /** Creates highlight, strikeout, or underline from normalized text selection. */
   createTextMarkup(
     type: 'highlight' | 'strikeout' | 'underline',
     selection: AnnotationTextSelection,
     appearance?: AnnotationAppearanceInput
   ): Annotation
+  /** Creates missing stable-ID text markups in input order. */
+  createTextMarkupsFromRanges(
+    type: 'highlight' | 'strikeout' | 'underline',
+    inputs: readonly CreateTextMarkupRangeInput[],
+    options?: CreateTextMarkupsFromRangesOptions
+  ): readonly Annotation[]
   /** Opens the configured text input and creates FreeText on submit. */
   requestFreeText(pageIndex: number, bounds: AnnotationBounds): Promise<Annotation | null>
   /** Opens the configured text input to edit an existing FreeText or Note. */
@@ -772,7 +800,8 @@ class AnnotationEngineImpl implements AnnotationEngine {
       rendererState,
       ...(content === undefined ? {} : { content }),
       appearance,
-      ...(typeData === undefined ? {} : { typeData })
+      ...(typeData === undefined ? {} : { typeData }),
+      ...(input.extensions === undefined ? {} : { extensions: input.extensions })
     })
     if ('render' in definition.renderer) {
       this.annotationTypes.validate(annotation)
@@ -787,6 +816,12 @@ class AnnotationEngineImpl implements AnnotationEngine {
     annotation = assignAnnotationReferenceNumber(annotation, this.repository.getAll())
     this.repository.add(annotation)
     return cloneAnnotation(annotation)
+  }
+
+  /** Returns the detached canonical repository collection. */
+  public getAnnotations(): readonly Annotation[] {
+    this.assertActive('getAnnotations')
+    return this.repository.getAll()
   }
 
   /** Creates a text markup annotation from normalized selection rectangles. */
@@ -810,6 +845,34 @@ class AnnotationEngineImpl implements AnnotationEngine {
       content: { text: '', selectedText: selection.text },
       ...(appearance === undefined ? {} : { appearance })
     }))
+  }
+
+  /** Creates one permanent text markup for every not-yet-persisted stable ID. */
+  public createTextMarkupsFromRanges(
+    type: 'highlight' | 'strikeout' | 'underline',
+    inputs: readonly CreateTextMarkupRangeInput[],
+    options: CreateTextMarkupsFromRangesOptions = {}
+  ): readonly Annotation[] {
+    this.assertActive('createTextMarkupsFromRanges')
+    const knownIds = new Set(this.repository.getAll().map((annotation) => annotation.id))
+    const created: Annotation[] = []
+    for (const input of inputs) {
+      if (knownIds.has(input.id)) continue
+      validateResolvedTextRange(input.range)
+      const annotation = this.createAnnotation({
+        id: input.id,
+        type,
+        pageIndex: input.range.pageIndex,
+        bounds: unionBounds(input.range.rects),
+        textRects: input.range.rects,
+        content: { text: '', selectedText: input.range.text },
+        ...(options.appearance === undefined ? {} : { appearance: options.appearance }),
+        ...(input.extensions === undefined ? {} : { extensions: input.extensions })
+      })
+      knownIds.add(annotation.id)
+      created.push(annotation)
+    }
+    return created
   }
 
   /** Requests instance-owned text input and creates FreeText after submission. */
@@ -1553,6 +1616,26 @@ function unionBounds(rects: readonly AnnotationBounds[]): AnnotationBounds {
     bottom = Math.max(bottom, rect.y + rect.height)
   }
   return { x: left, y: top, width: right - left, height: bottom - top }
+}
+
+/** Validates that caller-supplied geometry still represents one resolved source range. */
+function validateResolvedTextRange(range: PdfResolvedTextRange): void {
+  if (!Number.isSafeInteger(range.pageIndex) || range.pageIndex < 0
+    || !Number.isSafeInteger(range.start) || range.start < 0
+    || !Number.isSafeInteger(range.length) || range.length <= 0
+    || range.text.length !== range.length || range.rects.length === 0) {
+    throw new InkLayerError('ANNOTATION_INVALID', 'Resolved text range is invalid.', {
+      operation: 'createTextMarkupsFromRanges', pageIndex: range.pageIndex
+    })
+  }
+  for (const rect of range.rects) {
+    validateBounds(rect)
+    if (rect.width === 0 || rect.height === 0) {
+      throw new InkLayerError('ANNOTATION_INVALID', 'Resolved text range has empty geometry.', {
+        operation: 'createTextMarkupsFromRanges', pageIndex: range.pageIndex
+      })
+    }
+  }
 }
 
 /** Validates finite non-negative bounds used before canonical parsing. */

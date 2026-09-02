@@ -57,7 +57,10 @@ export function importPdfJsAnnotations(
         // Keep that native raster visible until Core has an equivalent image payload;
         // the canonical overlay still supplies selection and metadata interaction.
         if (canReplaceNativeAppearance(annotation)) {
-          supportedIds.push(value.id, ...(replies.get(value.id) ?? []).map((reply) => reply.id))
+          supportedIds.push(
+            value.pdfjsId ?? value.id,
+            ...(replies.get(value.id) ?? []).map((reply) => reply.pdfjsId ?? reply.id)
+          )
         }
       } catch (cause) {
         const candidateId = getCandidateId(input)

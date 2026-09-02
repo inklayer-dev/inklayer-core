@@ -23,14 +23,17 @@ export default defineConfig({
           { text: 'API', link: '/zh/api' },
           { text: '插件', link: '/zh/guide/plugins' },
           { text: '架构', link: '/zh/architecture' },
-          { text: '示例', link: 'https://core.inklayer.dev/demo/' }
+          { text: '示例', link: 'https://core.inklayer.dev/demo/#viewer' }
         ],
         sidebar: [
           {
             text: '入门',
             items: [
               { text: '快速开始', link: '/zh/guide/getting-started' },
-              { text: '创建第一个批注', link: '/zh/guide/first-annotation' }
+              { text: '创建第一个批注', link: '/zh/guide/first-annotation' },
+              { text: '创建第一个关键词高亮', link: '/zh/guide/first-keyword-highlight' },
+              { text: '创建第一个关键词脱敏', link: '/zh/guide/first-keyword-redaction' },
+              { text: '创建第一个自定义批注', link: '/zh/guide/first-custom-annotation' }
             ]
           },
           {
@@ -39,6 +42,10 @@ export default defineConfig({
               { text: '加载 PDF', link: '/zh/guide/loading-pdfs' },
               { text: '页面、缩放与导航', link: '/zh/guide/viewer-and-pages' },
               { text: '搜索与文字选择', link: '/zh/guide/search-and-selection' },
+              { text: '关键词高亮', link: '/zh/guide/highlighter' },
+              { text: '安全关键词脱敏', link: '/zh/guide/keyword-redaction' },
+              { text: '盖章与可视签名', link: '/zh/guide/stamp-and-sign' },
+              { text: '文档水印', link: '/zh/guide/watermarks' },
               { text: '批注工具与外观', link: '/zh/guide/annotations' },
               { text: '保存和恢复批注', link: '/zh/guide/persistence' },
               { text: '打印、导出与水印', link: '/zh/guide/output-and-security' }
@@ -118,14 +125,17 @@ export default defineConfig({
       { text: 'API', link: '/api' },
       { text: 'Plugins', link: '/guide/plugins' },
       { text: 'Architecture', link: '/architecture' },
-      { text: 'Demo', link: 'https://core.inklayer.dev/demo/' }
+      { text: 'Demo', link: 'https://core.inklayer.dev/demo/#viewer' }
     ],
     sidebar: [
       {
         text: 'Get started',
         items: [
           { text: 'Getting started', link: '/guide/getting-started' },
-          { text: 'Create your first annotation', link: '/guide/first-annotation' }
+          { text: 'Create your first annotation', link: '/guide/first-annotation' },
+          { text: 'Create your first keyword highlight', link: '/guide/first-keyword-highlight' },
+          { text: 'Create your first keyword redaction', link: '/guide/first-keyword-redaction' },
+          { text: 'Create your first custom annotation', link: '/guide/first-custom-annotation' }
         ]
       },
       {
@@ -134,6 +144,10 @@ export default defineConfig({
           { text: 'Load PDF', link: '/guide/loading-pdfs' },
           { text: 'Pages, zoom, and navigation', link: '/guide/viewer-and-pages' },
           { text: 'Search and text selection', link: '/guide/search-and-selection' },
+          { text: 'Keyword Highlighter', link: '/guide/highlighter' },
+          { text: 'Secure keyword redaction', link: '/guide/keyword-redaction' },
+          { text: 'Stamp and visual signature', link: '/guide/stamp-and-sign' },
+          { text: 'Document watermarks', link: '/guide/watermarks' },
           { text: 'Annotation tools and appearance', link: '/guide/annotations' },
           { text: 'Save and restore annotations', link: '/guide/persistence' },
           { text: 'Print, export, and watermarks', link: '/guide/output-and-security' }

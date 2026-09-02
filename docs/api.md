@@ -9,6 +9,7 @@ This page is a map of the public package entries and the APIs application develo
 | `@inklayer-dev/core` | Data model, repositories, low-level Viewer and annotation factories, browser helpers, and shared types |
 | `@inklayer-dev/core/capabilities` | Recommended `createInkLayer()` composition API and Capability plugins |
 | `@inklayer-dev/core/annotation-types` | Custom annotation definitions and the type registry |
+| `@inklayer-dev/core/highlighter` | Headless keyword scanning, review, preview, and permanent highlighting |
 | `@inklayer-dev/core/viewer` | Low-level PDF Viewer APIs |
 | `@inklayer-dev/core/annotation` | Low-level annotation-engine APIs |
 | `@inklayer-dev/core/import/pdfjs` | Importing native PDF.js annotation data |
@@ -83,7 +84,9 @@ const viewer = createPdfViewerEngine()
 | `setScale()` / `getScale()` | Set or read numeric and named scale values |
 | `zoomIn()` / `zoomOut()` / `goToPage()` | Control a configured web Viewer |
 | `getOutline()` / `resolveDestination()` | Read document navigation data |
-| `search()` | Search normalized PDF text |
+| `search()` / `searchMany()` | Search one literal query or an ordered batch of literal and regex queries |
+| `resolveTextRanges()` | Resolve same-page UTF-16 source ranges to scale-one top-left page rectangles |
+| `setTextHighlightLayers()` / `clearTextHighlightLayers()` | Replace or selectively clear ordered, temporary, caller-styled TextLayer highlights |
 | `setSearchHighlights()` / `clearSearchHighlights()` | Display temporary search results in attached text layers |
 | `getTextSelection()` / `clearTextSelection()` | Read or clear normalized browser text selection |
 | `renderThumbnail()` | Return an encoded PNG thumbnail Blob |
@@ -109,6 +112,73 @@ console.log(pageFlow?.getCurrentPage())
 
 The controller exposes `scrollToPage()`, `setScale()`, `getScale()`, `zoomIn()`, `zoomOut()`, `getCurrentPage()`, and `destroy()`. Replacing the document destroys the old controller and creates a new one.
 
+## Keyword Highlighter
+
+The optional `@inklayer-dev/core/highlighter` entry composes Viewer search and preview primitives with Annotation Engine persistence. It owns workflow state, not UI, so React, Vue, and other hosts subscribe to the same immutable snapshots.
+
+```ts
+import {
+  createKeywordHighlighter,
+  type KeywordRule
+} from '@inklayer-dev/core/highlighter'
+
+const rules: readonly KeywordRule[] = [
+  {
+    id: 'risk', label: 'Risk terms',
+    terms: ['liability', 'termination'], color: '#ef4444'
+  },
+  {
+    id: 'structured', label: 'Dates and amounts', color: '#8b5cf6',
+    patterns: [
+      { id: 'date', kind: 'regex', source: '\\b\\d{4}-\\d{2}-\\d{2}\\b', flags: 'u' },
+      { id: 'amount', kind: 'regex', source: 'RMB\\s*\\d+(?:,\\d{3})*', flags: 'iu' }
+    ]
+  }
+]
+
+const highlighter = createKeywordHighlighter({
+  viewer: core.viewer,
+  annotations: core.annotations
+})
+
+highlighter.setRules(rules)
+const unsubscribe = highlighter.subscribe(snapshot => {
+  console.log(snapshot.status, snapshot.includedCount)
+})
+
+await highlighter.scan()
+const firstMatch = highlighter.getSnapshot().matches[0]
+if (firstMatch !== undefined) highlighter.excludeMatch(firstMatch.id)
+
+const result = await highlighter.applyMatches()
+console.log(result.createdAnnotationIds, result.skippedMatchIds)
+
+unsubscribe()
+highlighter.destroy()
+```
+
+`terms` are literal matchers; `patterns` are serializable regular expressions.
+Regex sources omit `/.../` delimiters and accept only unique `i`, `m`, `s`, and
+`u` flags. A match exposes the configured matcher through `pattern` and the
+exact PDF source text through `matchedText`.
+
+| Method | Purpose |
+| --- | --- |
+| `setRules()` | Normalize and replace all keyword rules without scanning automatically |
+| `scan()` / `cancelScan()` | Batch-search the ready document with progress and cancellation |
+| `getSnapshot()` / `subscribe()` | Read or observe framework-neutral immutable workflow state |
+| `activateMatch()` | Mark one match active and navigate the Viewer to its page |
+| `includeMatch()` / `excludeMatch()` | Change one match's preview and application eligibility |
+| `includeRule()` / `excludeRule()` | Change eligibility for every match produced by one rule |
+| `applyMatches()` | Create missing permanent Highlight annotations for included matches |
+| `clearPreview()` | Hide only this Controller's temporary layers without discarding review state |
+| `reset()` | Clear Controller rules and transient state without deleting permanent annotations |
+| `destroy()` | Cancel work and release subscriptions and owned preview layers |
+
+`applyMatches()` uses deterministic annotation IDs, so a repeated pass skips annotations already present in the repository. Application is intentionally not transactional: if a later rule fails, earlier successful annotations remain canonical and are reconciled into the next snapshot. Always call `destroy()` when the owning application scope ends.
+
+Start with the standalone [Keyword Highlighter guide](./guide/highlighter) for the complete integration workflow. Then see the maintained [Vanilla](./guide/framework-integration), [React](./guide/framework-react), and [Vue](./guide/framework-vue) examples for three UI ownership patterns over the same Controller.
+
 ## Annotation engine
 
 Use `core.annotations`, or create the low-level engine with `createAnnotationEngine()`.
@@ -122,7 +192,9 @@ Use `core.annotations`, or create the low-level engine with `createAnnotationEng
 | `getAppearanceCapabilities()` | Determine which appearance controls a type supports |
 | `setImageAsset()` / `getImageAsset()` | Prepare a signature or stamp image for placement |
 | `createAnnotation()` | Create an annotation from canonical input |
+| `getAnnotations()` | Read every detached canonical annotation in repository order |
 | `createTextMarkup()` | Create highlight, underline, or strikeout from text selection |
+| `createTextMarkupsFromRanges()` | Batch-create missing stable-ID text markups from resolved ranges |
 | `requestFreeText()` / `requestEditText()` | Open the configured text input provider |
 | `updateContent()` / `updateAppearance()` / `transformAnnotation()` | Edit an existing annotation |
 | `addComment()` / `updateComment()` / `deleteComment()` | Manage comments and replies |
@@ -178,6 +250,7 @@ import {
   importPdfJsAnnotationsWithMetadata
 } from '@inklayer-dev/core/import/pdfjs'
 import {
+  buildSecureRedactedPdf,
   buildSecureRasterPrintPdf,
   downloadBlob,
   printPdfBlob
@@ -196,11 +269,12 @@ import { buildAnnotationWorkbook } from '@inklayer-dev/core/export/excel'
 | `buildAnnotatedPdf()` | PDF bytes containing canonical annotations |
 | `buildPrintablePdf()` | PDF bytes composed for printing |
 | `buildSecureRasterPrintPdf()` | Browser-generated, image-only print PDF for a document already opened by the Viewer |
+| `buildSecureRedactedPdf()` | Browser-generated, image-only PDF with reviewed text ranges irreversibly covered |
 | `buildAnnotationWorkbook()` | XLSX bytes containing annotation data |
 | `printPdfBlob()` | Open the browser print dialog for generated bytes |
 | `downloadBlob()` | Download generated bytes in the browser |
 
-Output builders return content; printing, downloading, or uploading it remains an application decision. See [Print, export, and watermarks](./guide/output-and-security).
+`buildSecureRedactedPdf()` accepts `viewer`, a non-empty `ranges` array, optional `pixelRatio` and `margin`, progress, and cancellation. Its output intentionally contains no selectable page text. Output builders return content; printing, downloading, or uploading it remains an application decision. See [Print, export, and watermarks](./guide/output-and-security).
 
 ## Errors
 

@@ -6,9 +6,9 @@
 
 [![npm](https://img.shields.io/npm/v/%40inklayer-dev%2Fcore)](https://www.npmjs.com/package/@inklayer-dev/core) [![Core CI](https://github.com/inklayer-dev/inklayer-core/actions/workflows/ci.yml/badge.svg)](https://github.com/inklayer-dev/inklayer-core/actions/workflows/ci.yml) [![license](https://img.shields.io/npm/l/%40inklayer-dev%2Fcore)](https://github.com/inklayer-dev/inklayer-core/blob/main/LICENSE)
 
-InkLayer Core provides framework-independent PDF viewing and annotation behavior. Use it with React, Vue, another web framework, or plain TypeScript while your application keeps control of the toolbar, panels, and workflow.
+InkLayer Core is a headless, framework-agnostic PDF interaction engine for the web. Use it to build custom document viewers, annotation systems, search and keyword-highlighting experiences, and review workflows with React, Vue, any other framework, or vanilla TypeScript—while your application retains full control of the UI and product workflow.
 
-[Getting started](https://core.inklayer.dev/guide/getting-started) · [Live demo](https://core.inklayer.dev/demo/) · [Documentation](https://core.inklayer.dev/)
+[Getting started](https://core.inklayer.dev/guide/getting-started) · [Keyword Highlighter](https://core.inklayer.dev/guide/highlighter) · [Live demo](https://core.inklayer.dev/demo/#viewer) · [Documentation](https://core.inklayer.dev/)
 
 ## Minimal Viewer
 
@@ -132,6 +132,7 @@ const viewer = createPdfViewerEngine({
 | `@inklayer-dev/core/viewer` | PDF Viewer and Page Flow |
 | `@inklayer-dev/core/annotation` | Annotation engine and interactions |
 | `@inklayer-dev/core/annotation-types` | Built-in and custom annotation type definitions |
+| `@inklayer-dev/core/highlighter` | Headless literal/regex scanning, review, preview, and permanent highlighting workflow |
 | `@inklayer-dev/core/import/pdfjs` | Native PDF annotation import through PDF.js |
 | `@inklayer-dev/core/export/pdf` | Annotated PDF and printable PDF generation |
 | `@inklayer-dev/core/export/excel` | Annotation workbook generation |

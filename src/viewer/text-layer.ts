@@ -11,6 +11,8 @@ import type {
   PdfTextLayerAttachment,
   PdfDocumentTextSelection,
   PdfSearchMatch,
+  PdfTextHighlightLayer,
+  PdfTextRange,
   PdfTextSelection,
   PdfTextSelectionSource,
   PdfTextSelectionRect
@@ -39,6 +41,7 @@ export class PdfTextLayerController {
   private destroyed = false
   private searchMatches: readonly PdfSearchMatch[] = []
   private activeSearchIndex: number | null = null
+  private textHighlightLayers: readonly PdfTextHighlightLayer[] = []
   private lastDocumentSelectionSignature = ''
 
   /** Creates a TextLayer controller around one live document. */
@@ -99,7 +102,7 @@ export class PdfTextLayerController {
       this.attachSelectionListeners(resources)
       await layer.render()
       this.assertCurrent(attachment.pageIndex, generation)
-      this.applySearchHighlights(resources)
+      this.applyHighlights(resources)
     } catch (cause) {
       if (this.generations.get(attachment.pageIndex) === generation) {
         this.detachResources(attachment.pageIndex)
@@ -131,7 +134,29 @@ export class PdfTextLayerController {
     }
     this.searchMatches = matches.map((match) => ({ ...match }))
     this.activeSearchIndex = activeIndex
-    for (const resources of this.pages.values()) this.applySearchHighlights(resources)
+    for (const resources of this.pages.values()) this.applyHighlights(resources)
+  }
+
+  /** Atomically replaces ordered temporary layers and refreshes attached pages. */
+  public setTextHighlightLayers(layers: readonly PdfTextHighlightLayer[]): void {
+    this.assertActive('setTextHighlightLayers')
+    this.textHighlightLayers = validateTextHighlightLayers(layers, this.document.numPages)
+    for (const resources of this.pages.values()) this.applyHighlights(resources)
+  }
+
+  /** Clears all temporary layers, or only caller-selected layer identities. */
+  public clearTextHighlightLayers(layerIds?: readonly string[]): void {
+    this.assertActive('clearTextHighlightLayers')
+    if (layerIds === undefined) {
+      if (this.textHighlightLayers.length === 0) return
+      this.textHighlightLayers = []
+    } else {
+      const ids = validateTextHighlightLayerIds(layerIds)
+      const retained = this.textHighlightLayers.filter((layer) => !ids.has(layer.id))
+      if (retained.length === this.textHighlightLayers.length) return
+      this.textHighlightLayers = retained
+    }
+    for (const resources of this.pages.values()) this.applyHighlights(resources)
   }
 
   /** Clears native browser selection and permits the same text to be selected again. */
@@ -149,6 +174,8 @@ export class PdfTextLayerController {
   public destroy(): void {
     if (this.destroyed) return
     this.destroyed = true
+    this.searchMatches = []
+    this.textHighlightLayers = []
     for (const pageIndex of [...this.pages.keys()]) this.detach(pageIndex)
     this.generations.clear()
   }
@@ -241,20 +268,37 @@ export class PdfTextLayerController {
     this.pages.delete(pageIndex)
   }
 
-  /** Maps normalized page offsets to the rendered TextLayer text nodes. */
-  private applySearchHighlights(resources: TextLayerResources): void {
-    clearSearchMarks(resources.container)
+  /** Rebuilds legacy search and ordered caller-layer marks on one TextLayer. */
+  private applyHighlights(resources: TextLayerResources): void {
+    clearHighlightMarks(resources.container)
     const pageMatches = this.searchMatches
       .map((match, index) => ({ match, index }))
       .filter(({ match }) => match.pageIndex === resources.pageIndex)
       .sort((left, right) => right.match.start - left.match.start)
     for (const { match, index } of pageMatches) {
-      markTextRange(
+      markSearchTextRange(
         resources.container,
         match.start,
         match.length,
         index === this.activeSearchIndex
       )
+    }
+    for (const layer of this.textHighlightLayers) {
+      if (layer.visible === false) continue
+      const ranges = layer.ranges
+        .map((range, index) => ({ range, index }))
+        .filter(({ range }) => range.pageIndex === resources.pageIndex)
+        .sort((left, right) => right.range.start - left.range.start
+          || right.range.length - left.range.length || right.index - left.index)
+      for (const { range, index } of ranges) {
+        markLayerTextRange(
+          resources.container,
+          range.start,
+          range.length,
+          layer,
+          index
+        )
+      }
     }
   }
 
@@ -278,31 +322,84 @@ export class PdfTextLayerController {
   }
 }
 
-/** Removes Core-owned search wrappers while retaining PDF.js text nodes. */
-function clearSearchMarks(container: HTMLElement): void {
-  for (const mark of container.querySelectorAll('mark[data-inklayer-search-match]')) {
+/** Removes Core-owned temporary wrappers while retaining PDF.js text nodes. */
+function clearHighlightMarks(container: HTMLElement): void {
+  const selector = 'mark[data-inklayer-search-match], mark[data-inklayer-highlight-layer]'
+  for (const mark of container.querySelectorAll(selector)) {
     mark.replaceWith(...mark.childNodes)
   }
   container.normalize()
 }
 
-/** Wraps the intersecting part of each TextLayer text node in a semantic mark. */
-function markTextRange(
+/** Wraps one legacy search result in a semantic mark. */
+function markSearchTextRange(
   container: HTMLElement,
   start: number,
   length: number,
   active: boolean
 ): void {
+  wrapTextRange(container, start, length, (document) => {
+    const mark = document.createElement('mark')
+    mark.dataset['inklayerSearchMatch'] = active ? 'active' : 'match'
+    mark.className = active
+      ? 'inklayer-search-highlight inklayer-search-highlight-active'
+      : 'inklayer-search-highlight'
+    return mark
+  })
+}
+
+/** Wraps one caller-layer range with stable semantic identity and CSS tokens. */
+function markLayerTextRange(
+  container: HTMLElement,
+  start: number,
+  length: number,
+  layer: PdfTextHighlightLayer,
+  rangeIndex: number
+): void {
+  const active = layer.activeRangeIndex === rangeIndex
+  wrapTextRange(container, start, length, (document) => {
+    const mark = document.createElement('mark')
+    mark.dataset['inklayerHighlightLayer'] = layer.id
+    mark.dataset['inklayerHighlightRange'] = String(rangeIndex)
+    mark.dataset['inklayerHighlightState'] = active ? 'active' : 'match'
+    mark.className = active
+      ? 'inklayer-text-highlight inklayer-text-highlight-active'
+      : 'inklayer-text-highlight'
+    mark.style.setProperty('--inklayer-text-highlight-color', layer.style.color)
+    mark.style.setProperty(
+      '--inklayer-text-highlight-active-color',
+      layer.style.activeColor ?? layer.style.color
+    )
+    return mark
+  })
+}
+
+/** Wraps the intersecting part of each TextLayer text node. */
+function wrapTextRange(
+  container: HTMLElement,
+  start: number,
+  length: number,
+  createMark: (document: Document) => HTMLElement
+): void {
   const document = container.ownerDocument
-  const nodeFilter = document.defaultView?.NodeFilter.SHOW_TEXT ?? 4
-  const walker = document.createTreeWalker(container, nodeFilter)
+  const nodeFilter = document.defaultView?.NodeFilter
+  const showText = nodeFilter?.SHOW_TEXT ?? 4
+  const showElement = nodeFilter?.SHOW_ELEMENT ?? 1
+  const walker = document.createTreeWalker(container, showText | showElement)
   const nodes: Array<{ node: Text; start: number; end: number }> = []
   let offset = 0
   let current = walker.nextNode()
   while (current !== null) {
-    const text = current.textContent ?? ''
-    nodes.push({ node: current as Text, start: offset, end: offset + text.length })
-    offset += text.length
+    if (current.nodeType === 3) {
+      const text = current.textContent ?? ''
+      nodes.push({ node: current as Text, start: offset, end: offset + text.length })
+      offset += text.length
+    } else if ((current as Element).tagName === 'BR') {
+      // PDF.js emits one presentation <br> for every TextItem.hasEOL. Search
+      // offsets include that same line break even though HTMLElement.textContent
+      // does not, so it must participate in the source-offset projection.
+      offset += 1
+    }
     current = walker.nextNode()
   }
   const end = start + length
@@ -313,13 +410,99 @@ function markTextRange(
     const range = document.createRange()
     range.setStart(entry.node, localStart)
     range.setEnd(entry.node, localEnd)
-    const mark = document.createElement('mark')
-    mark.dataset['inklayerSearchMatch'] = active ? 'active' : 'match'
-    mark.className = active
-      ? 'inklayer-search-highlight inklayer-search-highlight-active'
-      : 'inklayer-search-highlight'
-    range.surroundContents(mark)
+    range.surroundContents(createMark(document))
   }
+}
+
+const MAX_TEXT_HIGHLIGHT_LAYER_ID_LENGTH = 512
+const MAX_TEXT_HIGHLIGHT_COLOR_LENGTH = 256
+
+/** Validates and deeply detaches one atomic temporary-layer replacement. */
+function validateTextHighlightLayers(
+  layers: readonly PdfTextHighlightLayer[],
+  pageCount: number
+): PdfTextHighlightLayer[] {
+  if (!Array.isArray(layers)) throw invalidTextHighlightLayers('Layers must be an array.')
+  const ids = new Set<string>()
+  return layers.map((layer) => {
+    if (typeof layer !== 'object' || layer === null
+      || typeof layer.id !== 'string' || layer.id.trim().length === 0
+      || layer.id.length > MAX_TEXT_HIGHLIGHT_LAYER_ID_LENGTH || ids.has(layer.id)
+      || !Array.isArray(layer.ranges)
+      || typeof layer.style !== 'object' || layer.style === null
+      || !isCssColor(layer.style.color)
+      || (layer.style.activeColor !== undefined && !isCssColor(layer.style.activeColor))
+      || (layer.visible !== undefined && typeof layer.visible !== 'boolean')) {
+      throw invalidTextHighlightLayers('Temporary text-highlight layer is invalid.')
+    }
+    ids.add(layer.id)
+    const ranges = layer.ranges.map((range: PdfTextRange) => {
+      if (typeof range !== 'object' || range === null
+        || !Number.isSafeInteger(range.pageIndex)
+        || !Number.isSafeInteger(range.start)
+        || !Number.isSafeInteger(range.length)
+        || range.pageIndex < 0 || range.pageIndex >= pageCount
+        || range.start < 0 || range.length <= 0
+        || !Number.isSafeInteger(range.start + range.length)) {
+        throw invalidTextHighlightLayers('Temporary text-highlight range is invalid.')
+      }
+      return { pageIndex: range.pageIndex, start: range.start, length: range.length }
+    })
+    const activeRangeIndex = layer.activeRangeIndex ?? null
+    if (activeRangeIndex !== null && (!Number.isSafeInteger(activeRangeIndex)
+      || activeRangeIndex < 0 || activeRangeIndex >= ranges.length)) {
+      throw invalidTextHighlightLayers('Active temporary text-highlight range is invalid.')
+    }
+    return {
+      id: layer.id,
+      ranges,
+      style: {
+        color: layer.style.color,
+        ...(layer.style.activeColor === undefined
+          ? {}
+          : { activeColor: layer.style.activeColor })
+      },
+      activeRangeIndex,
+      visible: layer.visible ?? true
+    }
+  })
+}
+
+/** Validates named-layer clearing without mutating retained state. */
+function validateTextHighlightLayerIds(layerIds: readonly string[]): Set<string> {
+  if (!Array.isArray(layerIds)) {
+    throw invalidTextHighlightLayers('Layer IDs must be an array.', 'clearTextHighlightLayers')
+  }
+  const ids = new Set<string>()
+  for (const id of layerIds) {
+    if (typeof id !== 'string' || id.trim().length === 0
+      || id.length > MAX_TEXT_HIGHLIGHT_LAYER_ID_LENGTH) {
+      throw invalidTextHighlightLayers(
+        'Temporary text-highlight layer ID is invalid.',
+        'clearTextHighlightLayers'
+      )
+    }
+    ids.add(id)
+  }
+  return ids
+}
+
+/** Checks one bounded CSS color, using the host parser when available. */
+function isCssColor(value: unknown): value is string {
+  if (typeof value !== 'string' || value.trim().length === 0
+    || value.length > MAX_TEXT_HIGHLIGHT_COLOR_LENGTH) return false
+  return typeof CSS === 'undefined' || typeof CSS.supports !== 'function'
+    || CSS.supports('color', value)
+}
+
+/** Creates one structured layer validation failure. */
+function invalidTextHighlightLayers(
+  message: string,
+  operation = 'setTextHighlightLayers'
+): InkLayerError {
+  return new InkLayerError('PDF_FEATURE_FAILED', message, {
+    operation
+  })
 }
 
 /** Validates one public TextLayer page attachment. */

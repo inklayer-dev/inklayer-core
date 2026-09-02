@@ -1,6 +1,8 @@
 # Getting started
 
-This page sets up a PDF with continuous scrolling and built-in zoom gestures. Activate text selection in [Search and text selection](./search-and-selection.md), and activate annotation tools in [Create your first annotation](./first-annotation.md).
+This page sets up a PDF with continuous scrolling and built-in zoom gestures. Next, try [Create your first annotation](./first-annotation.md), [Create your first keyword highlight](./first-keyword-highlight.md), or [Create your first custom annotation](./first-custom-annotation.md). Secure output from reviewed matches starts with [keyword redaction](./first-keyword-redaction.md).
+
+Open the [Viewer demo](https://core.inklayer.dev/demo/#viewer) to see the completed minimal Viewer before writing the code below.
 
 Provide two DOM elements and a PDF URL; Core creates and cleans up the document surface.
 

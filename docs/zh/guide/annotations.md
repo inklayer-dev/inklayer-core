@@ -1,6 +1,8 @@
 # 批注工具与外观
 
-本页是批注工具和外观设置的参考，汇总全部内置类型、工具切换方式、创建模式和外观能力。想先完成一次实际操作，请阅读[创建第一个批注](./first-annotation.md)；需要增加新的批注类型，请阅读[自定义批注类型](./custom-annotation-type.md)。
+本页是批注工具和外观设置的参考，汇总全部内置类型、工具切换方式、创建模式和外观能力。想先完成一次实际操作，请阅读[创建第一个批注](./first-annotation.md)；需要增加新的批注类型，请先阅读[创建第一个自定义批注](./first-custom-annotation.md)，再继续查看[自定义批注类型](./custom-annotation-type.md)。独立的[自定义批注示例](https://core.inklayer.dev/demo/#custom-annotations)不会混入内置绘图工具。
+
+需要体验完整内置工具、外观控制、Repository 列表、打印和导出流程时，打开[批注示例](https://core.inklayer.dev/demo/#annotations)。
 
 ## 内置批注类型
 

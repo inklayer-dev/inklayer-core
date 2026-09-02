@@ -6,9 +6,9 @@
 
 [![npm](https://img.shields.io/npm/v/%40inklayer-dev%2Fcore)](https://www.npmjs.com/package/@inklayer-dev/core) [![Core CI](https://github.com/inklayer-dev/inklayer-core/actions/workflows/ci.yml/badge.svg)](https://github.com/inklayer-dev/inklayer-core/actions/workflows/ci.yml) [![license](https://img.shields.io/npm/l/%40inklayer-dev%2Fcore)](https://github.com/inklayer-dev/inklayer-core/blob/main/LICENSE)
 
-InkLayer Core 提供与框架无关的 PDF 查看和批注能力。无论使用 React、Vue、其他 Web 框架，还是不依赖框架的 JavaScript/TypeScript，都可以调用同一套 Core API；工具栏、面板和产品流程仍由应用控制。
+InkLayer Core 是面向 Web 的无头、框架无关 PDF 交互引擎。你可以用它在 React、Vue、其他任意框架或原生 TypeScript 中构建自定义文档查看器、批注系统、搜索与关键词高亮体验和审阅工作流，同时由应用完整掌控界面与产品流程。
 
-[快速开始](https://core.inklayer.dev/zh/guide/getting-started) · [在线示例](https://core.inklayer.dev/demo/) · [文档](https://core.inklayer.dev/zh/)
+[快速开始](https://core.inklayer.dev/zh/guide/getting-started) · [关键词高亮](https://core.inklayer.dev/zh/guide/highlighter) · [在线示例](https://core.inklayer.dev/demo/#viewer) · [文档](https://core.inklayer.dev/zh/)
 
 ## 最简单的查看器
 
@@ -132,6 +132,7 @@ const viewer = createPdfViewerEngine({
 | `@inklayer-dev/core/viewer` | PDF 查看器和 Page Flow |
 | `@inklayer-dev/core/annotation` | 批注引擎和交互 |
 | `@inklayer-dev/core/annotation-types` | 内置和自定义批注类型定义 |
+| `@inklayer-dev/core/highlighter` | 无头普通文字/正则扫描、审核、预览和永久高亮工作流 |
 | `@inklayer-dev/core/import/pdfjs` | 通过 PDF.js 导入 PDF 原生批注 |
 | `@inklayer-dev/core/export/pdf` | 生成带批注 PDF 和打印 PDF |
 | `@inklayer-dev/core/export/excel` | 生成批注工作簿 |

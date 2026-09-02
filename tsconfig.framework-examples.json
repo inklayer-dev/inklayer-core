@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "paths": {
+      "@inklayer-dev/core/highlighter": ["./src/highlighter/index.ts"],
+      "@inklayer-dev/core/viewer": ["./src/viewer/index.ts"],
+      "@inklayer-dev/core/annotation": ["./src/annotation/index.ts"]
+    }
+  },
+  "include": ["examples/framework-consumers/**/*.ts", "examples/framework-consumers/**/*.tsx"]
+}

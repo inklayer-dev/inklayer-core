@@ -212,3 +212,11 @@ export async function destroyPdfWorkspace(): Promise<void> {
 :::
 
 Call `destroyPdfWorkspace()` when the workspace is removed. For text highlights, author permissions, and saving annotations, see [Create your first annotation](./first-annotation) and [Persist annotations](./persistence).
+
+## Add the keyword review workflow
+
+Read the standalone [Keyword Highlighter guide](./highlighter.md) first for the complete Controller contract, rule model, review states, permanent application, errors, limits, and lifecycle.
+
+The maintained Vanilla application now includes a complete product-owned Highlighter panel: editable colored rules, scan progress and cancellation, grouped match review, active-match navigation, permanent application, duplicate reporting, preview clearing, and reset. Its UI lives in [`HighlighterPanel`](https://github.com/inklayer-dev/inklayer-core/blob/main/examples/vanilla/src/ui/highlighter-panel.ts); the reusable workflow remains entirely inside `@inklayer-dev/core/highlighter`.
+
+Use the same ownership order as the example: construct the Controller after Viewer and Annotation Engine, subscribe the panel, then unsubscribe and call `highlighter.destroy()` before destroying the injected engines. No DOM elements or framework state cross into Core.

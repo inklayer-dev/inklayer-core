@@ -1,7 +1,8 @@
 /**
  * @file Source dependency direction and cycle quality gate.
  * @description Resolves local TypeScript imports, rejects cycles and forbidden
- * layer edges, and ensures framework packages never enter Core dependencies.
+ * layer edges, and ensures framework packages never enter published runtime
+ * dependencies while permitting explicit framework-consumer fixtures.
  */
 
 import { access, readFile, readdir } from 'node:fs/promises'
@@ -40,8 +41,15 @@ async function localSpecifiers(file) {
 
 /** Resolves one source-relative TypeScript module using repository conventions. */
 async function resolveLocalModule(fromFile, specifier) {
-  const base = resolve(dirname(fromFile), specifier)
-  for (const candidate of [`${base}.ts`, resolve(base, 'index.ts')]) {
+  const sourceSpecifier = specifier.split('?')[0]
+  if (sourceSpecifier === undefined) {
+    throw new Error(`Invalid local import ${specifier} from ${relative(projectRoot, fromFile)}.`)
+  }
+  const base = resolve(dirname(fromFile), sourceSpecifier)
+  const candidates = base.endsWith('.ts')
+    ? [base]
+    : [`${base}.ts`, resolve(base, 'index.ts')]
+  for (const candidate of candidates) {
     try {
       await access(candidate)
       return candidate
@@ -68,6 +76,7 @@ function allowedLayers(layer) {
     compat: ['domain', 'compat'],
     renderer: ['domain', 'geometry', 'annotation-types', 'renderer'],
     viewer: ['domain', 'ports', 'platform', 'viewer'],
+    highlighter: ['domain', 'viewer', 'annotation-types', 'annotation', 'highlighter'],
     annotation: ['domain', 'geometry', 'repository', 'renderer', 'viewer', 'ports', 'platform', 'annotation-types', 'annotation'],
     import: ['domain', 'geometry', 'renderer', 'import'],
     export: ['domain', 'geometry', 'renderer', 'annotation-types', 'export'],
@@ -135,11 +144,24 @@ if (violations.length > 0) throw new Error(`Forbidden source dependency edges:\n
 
 const packageJson = JSON.parse(await readFile(resolve(projectRoot, 'package.json'), 'utf8'))
 const forbiddenPackages = ['react', 'react-dom', 'vue', 'pinia', 'zustand', '@radix-ui/react', 'reka-ui']
-const installedNames = new Set([
+const runtimeNames = new Set([
   ...Object.keys(packageJson.dependencies ?? {}),
-  ...Object.keys(packageJson.devDependencies ?? {})
+  ...Object.keys(packageJson.peerDependencies ?? {}),
+  ...Object.keys(packageJson.optionalDependencies ?? {})
 ])
-const forbiddenInstalled = forbiddenPackages.filter((name) => installedNames.has(name))
-if (forbiddenInstalled.length > 0) throw new Error(`Forbidden framework dependencies: ${forbiddenInstalled.join(', ')}`)
+const forbiddenRuntime = forbiddenPackages.filter((name) => runtimeNames.has(name))
+if (forbiddenRuntime.length > 0) {
+  throw new Error(`Forbidden framework runtime dependencies: ${forbiddenRuntime.join(', ')}`)
+}
+const allowedFixtureDependencies = new Set(['react', 'react-dom', 'vue'])
+const forbiddenDevelopment = forbiddenPackages.filter((name) =>
+  Object.hasOwn(packageJson.devDependencies ?? {}, name) && !allowedFixtureDependencies.has(name)
+)
+if (forbiddenDevelopment.length > 0) {
+  throw new Error(`Forbidden framework development dependencies: ${forbiddenDevelopment.join(', ')}`)
+}
 
-process.stdout.write(`Dependency checks passed for ${files.length} source files with no cycles or forbidden edges.\n`)
+process.stdout.write(
+  `Dependency checks passed for ${files.length} source files with no cycles, forbidden edges, `
+  + 'or framework runtime dependencies.\n'
+)

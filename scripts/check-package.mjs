@@ -146,6 +146,22 @@ assertPackage(
   typeof annotationTypesImported.createAnnotationTypeRegistry === 'function',
   'Built Annotation Types entry is missing its registry factory.'
 )
+const highlighterImported = await import(resolve(projectRoot, 'dist/highlighter.js'))
+assertPackage(
+  typeof highlighterImported.createKeywordHighlighter === 'function',
+  'Built Highlighter entry is missing its Controller factory.'
+)
+assertPackage(
+  imported.createKeywordHighlighter === undefined,
+  'The optional Highlighter factory must not leak through the root entry.'
+)
+const highlighterBuild = await readFile(resolve(projectRoot, 'dist/highlighter.js'), 'utf8')
+for (const forbidden of ['pdfjs-dist', 'konva', 'react', 'vue']) {
+  assertPackage(
+    !highlighterBuild.includes(forbidden),
+    `Optional Highlighter build contains forbidden runtime dependency ${forbidden}.`
+  )
+}
 const pdfJsImport = await import(resolve(projectRoot, 'dist/import/pdfjs.js'))
 const pdfExport = await import(resolve(projectRoot, 'dist/export/pdf.js'))
 const excelExport = await import(resolve(projectRoot, 'dist/export/excel.js'))
@@ -166,6 +182,7 @@ const viewerRequired = require(resolve(projectRoot, 'dist/viewer.cjs'))
 const annotationRequired = require(resolve(projectRoot, 'dist/annotation.cjs'))
 const capabilitiesRequired = require(resolve(projectRoot, 'dist/capabilities.cjs'))
 const annotationTypesRequired = require(resolve(projectRoot, 'dist/annotation-types.cjs'))
+const highlighterRequired = require(resolve(projectRoot, 'dist/highlighter.cjs'))
 const pdfJsRequired = require(resolve(projectRoot, 'dist/import/pdfjs.cjs'))
 const pdfRequired = require(resolve(projectRoot, 'dist/export/pdf.cjs'))
 const excelRequired = require(resolve(projectRoot, 'dist/export/excel.cjs'))
@@ -176,6 +193,7 @@ assertPackage(
     && typeof annotationRequired.createAnnotationEngine === 'function'
     && typeof capabilitiesRequired.createInkLayer === 'function'
     && typeof annotationTypesRequired.createAnnotationTypeRegistry === 'function'
+    && typeof highlighterRequired.createKeywordHighlighter === 'function'
     && typeof pdfJsRequired.importPdfJsAnnotations === 'function'
     && typeof pdfRequired.buildAnnotatedPdf === 'function'
     && typeof excelRequired.buildAnnotationWorkbook === 'function',
@@ -214,6 +232,9 @@ for (const expected of [
   'dist/annotation-types.js',
   'dist/annotation-types.cjs',
   'dist/annotation-types/index.d.ts',
+  'dist/highlighter.js',
+  'dist/highlighter.cjs',
+  'dist/highlighter/index.d.ts',
   'dist/import/pdfjs.js',
   'dist/import/pdfjs.cjs',
   'dist/import/pdfjs/index.d.ts',

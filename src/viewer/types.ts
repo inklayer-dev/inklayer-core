@@ -49,8 +49,56 @@ export interface PdfSearchMatch {
   start: number
   /** UTF-16 character length in the extracted source page text. */
   length: number
+  /** Exact extracted source text covered by this occurrence. */
+  text: string
   /** Compact surrounding text intended for a framework result list. */
   preview: string
+}
+
+/** One same-page UTF-16 source-text range independent from rendered DOM. */
+export interface PdfTextRange {
+  /** Zero-based page containing the complete range. */
+  readonly pageIndex: number
+  /** Zero-based UTF-16 offset in extracted source page text. */
+  readonly start: number
+  /** Positive UTF-16 source length. */
+  readonly length: number
+}
+
+/** A source-text range resolved to canonical unscaled top-left page geometry. */
+export interface PdfResolvedTextRange extends PdfTextRange {
+  /** Exact source text covered by the resolved range. */
+  readonly text: string
+  /** One or more scale-one page rectangles, ordered by text flow. */
+  readonly rects: readonly PdfTextSelectionRect[]
+}
+
+/** Options for resolving source offsets without a mounted TextLayer. */
+export interface PdfResolveTextRangesOptions {
+  /** Aborts pending page loading, text extraction, and geometry calculation. */
+  readonly signal?: AbortSignal
+}
+
+/** Stable CSS presentation for one temporary highlight layer. */
+export interface PdfTextHighlightStyle {
+  /** CSS color used by ordinary matches. */
+  readonly color: string
+  /** Optional CSS color override for the active match. */
+  readonly activeColor?: string
+}
+
+/** One independently replaceable temporary source-text highlight layer. */
+export interface PdfTextHighlightLayer {
+  /** Stable caller-owned layer identity. */
+  readonly id: string
+  /** Ordered same-page source ranges displayed by this layer. */
+  readonly ranges: readonly PdfTextRange[]
+  /** CSS presentation independent from product controls. */
+  readonly style: PdfTextHighlightStyle
+  /** Active range index within `ranges`, or null when none is active. */
+  readonly activeRangeIndex?: number | null
+  /** Whether the retained layer is currently visible; defaults to true. */
+  readonly visible?: boolean
 }
 
 /** Search behavior independent from a product search field. */
@@ -73,6 +121,79 @@ export interface PdfSearchResult {
   matches: readonly PdfSearchMatch[]
   /** Whether the configured result limit truncated further matches. */
   truncated: boolean
+}
+
+/** One caller-identified query participating in a deterministic batch search. */
+export interface PdfSearchManyQuery {
+  /** Unique caller-owned identity retained in the batch result. */
+  readonly id: string
+  /** Search text interpreted with the same normalization as `search()`. */
+  readonly query: string
+  /** Per-query matching behavior and result limit. */
+  readonly options?: PdfSearchOptions
+}
+
+/** Matching behavior for one serializable regular-expression query. */
+export interface PdfRegexSearchOptions {
+  /** ECMAScript flags limited to unique i, m, s, and u characters. */
+  readonly flags?: string
+  /** Maximum returned occurrences; defaults to 1,000. */
+  readonly maxResults?: number
+}
+
+/** One caller-identified regular expression in a mixed batch search. */
+export interface PdfRegexSearchManyQuery {
+  /** Unique caller-owned identity retained in the batch result. */
+  readonly id: string
+  /** Discriminator preventing a pattern source from being treated as literal text. */
+  readonly kind: 'regex'
+  /** Serializable ECMAScript regular-expression source without slash delimiters. */
+  readonly source: string
+  /** Pattern flags and retained-result limit. */
+  readonly options?: PdfRegexSearchOptions
+}
+
+/** Input union accepted by mixed batch search. */
+export type PdfSearchManyInputQuery = PdfSearchManyQuery | PdfRegexSearchManyQuery
+
+/** Page-level progress for one active batch search. */
+export interface PdfSearchManyProgress {
+  /** Number of pages whose extraction and matching work is complete. */
+  readonly completedPages: number
+  /** Number of pages in the active document. */
+  readonly totalPages: number
+  /** Rounded completion percentage from zero through one hundred. */
+  readonly percentage: number
+}
+
+/** Controls cancellation, progress, and total safety limits for batch search. */
+export interface PdfSearchManyOptions {
+  /** Aborts extraction and matching without changing the loaded document. */
+  readonly signal?: AbortSignal
+  /** Maximum matches retained across all queries in addition to per-query limits. */
+  readonly maxTotalResults?: number
+  /** Receives an initial zero update and monotonic page-completion progress. */
+  readonly onProgress?: (progress: PdfSearchManyProgress) => void
+}
+
+/** Immutable result for one caller-identified query. */
+export interface PdfSearchManyQueryResult {
+  /** Identity copied from the corresponding input query. */
+  readonly id: string
+  /** Normalized literal query or exact regular-expression source. */
+  readonly query: string
+  /** Page- and offset-ordered occurrences for this query. */
+  readonly matches: readonly PdfSearchMatch[]
+  /** Whether this query reached its configured result limit. */
+  readonly truncated: boolean
+}
+
+/** Complete immutable result of one ordered batch search. */
+export interface PdfSearchManyResult {
+  /** Per-query results in the same order as the input queries. */
+  readonly queries: readonly PdfSearchManyQueryResult[]
+  /** Whether the batch-wide result limit stopped further scanning. */
+  readonly truncated: boolean
 }
 
 /** Thumbnail rendering request. */
@@ -483,6 +604,20 @@ export interface PdfViewerEngine {
   resolveDestination(destination: string | readonly unknown[]): Promise<PdfNavigationTarget | null>
   /** Searches normalized document text in page order. */
   search(query: string, options?: PdfSearchOptions): Promise<PdfSearchResult>
+  /** Searches multiple caller-identified queries while sharing page extraction. */
+  searchMany(
+    queries: readonly PdfSearchManyInputQuery[],
+    options?: PdfSearchManyOptions
+  ): Promise<PdfSearchManyResult>
+  /** Resolves source offsets to scale-one top-left page rectangles. */
+  resolveTextRanges(
+    ranges: readonly PdfTextRange[],
+    options?: PdfResolveTextRangesOptions
+  ): Promise<readonly PdfResolvedTextRange[]>
+  /** Atomically replaces ordered temporary text-highlight layers. */
+  setTextHighlightLayers(layers: readonly PdfTextHighlightLayer[]): void
+  /** Clears every temporary layer, or only the supplied layer identities. */
+  clearTextHighlightLayers(layerIds?: readonly string[]): void
   /** Projects search offsets into attached TextLayers and marks one active match. */
   setSearchHighlights(matches: readonly PdfSearchMatch[], activeIndex?: number | null): void
   /** Removes transient search markup from every attached TextLayer. */

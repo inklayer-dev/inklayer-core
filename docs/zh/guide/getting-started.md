@@ -1,6 +1,8 @@
 # 快速开始
 
-本页会显示一个支持连续滚动和内置缩放手势的 PDF。如何启用文字选择见[搜索与文字选择](./search-and-selection.md)，如何使用批注工具见[创建第一个批注](./first-annotation.md)。
+本页会显示一个支持连续滚动和内置缩放手势的 PDF。完成后，可以继续尝试[创建第一个批注](./first-annotation.md)、[创建第一个关键词高亮](./first-keyword-highlight.md)或[创建第一个自定义批注](./first-custom-annotation.md)。需要根据审核结果生成安全输出时，从[关键词脱敏](./first-keyword-redaction.md)开始。
+
+开始编写下面的代码前，可以先打开 [Viewer 示例](https://core.inklayer.dev/demo/#viewer)查看完成后的最小 Viewer。
 
 提供两个 DOM 元素和一个 PDF URL，Core 会负责创建和清理文档区域。
 

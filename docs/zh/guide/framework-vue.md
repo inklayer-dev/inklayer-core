@@ -215,3 +215,23 @@ import PdfWorkspace from './PdfWorkspace.vue'
 :::
 
 文字高亮、作者权限和批注保存请分别参考[创建第一个批注](./first-annotation)与[保存和恢复批注](./persistence)。
+
+## 订阅 Highlighter Controller
+
+Vue 可以直接把 Controller 快照投影到 `shallowRef`，并在所属 effect scope 结束时同时释放订阅与 Controller：
+
+```ts
+const controller = createKeywordHighlighter({ viewer, annotations })
+const snapshot = shallowRef(controller.getSnapshot())
+const unsubscribe = controller.subscribe(next => {
+  snapshot.value = next
+})
+
+watch(rules, next => controller.setRules(next), { immediate: true })
+onScopeDispose(() => {
+  unsubscribe()
+  controller.destroy()
+})
+```
+
+模板可以读取 `snapshot.status`、遍历 `snapshot.matches`，并调用与 Vanilla 或 React 完全相同的审核和应用方法。仓库中的 [Vue 消费 fixture](https://github.com/inklayer-dev/inklayer-core/blob/main/examples/framework-consumers/vue-keyword-highlighter.ts)会经过类型检查和生产构建，同时不会把 Vue 加入 Core 的运行时依赖。

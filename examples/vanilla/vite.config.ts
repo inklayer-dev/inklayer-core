@@ -33,6 +33,10 @@ export default defineConfig({
         replacement: resolve(projectRoot, 'src/annotation-types/index.ts')
       },
       {
+        find: /^@inklayer-dev\/core\/highlighter$/,
+        replacement: resolve(projectRoot, 'src/highlighter/index.ts')
+      },
+      {
         find: /^@inklayer-dev\/core\/import\/pdfjs$/,
         replacement: resolve(projectRoot, 'src/import/pdfjs/index.ts')
       },

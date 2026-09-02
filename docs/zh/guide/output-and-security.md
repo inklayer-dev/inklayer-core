@@ -2,6 +2,8 @@
 
 本页介绍如何导出带批注的 PDF 和 Excel，打印普通或受密码保护的 PDF，以及控制水印出现的位置。
 
+需要聚焦的交互示例时，打开[水印示例](https://core.inklayer.dev/demo/#watermark)；需要生成图片型敏感词安全输出时，打开[关键词脱敏示例](https://core.inklayer.dev/demo/#redaction)。
+
 > [!TIP] 说明
 > Core 负责生成输出内容；下载、上传和打开系统打印对话框由应用决定。
 
@@ -86,7 +88,39 @@ await printPdfBlob({ content: printable })
 
 生成的 PDF 仅用于临时打印，不再加密，而且每一页都被转换成图片，原有的可选文字、链接、表单和矢量细节也会随之丢失。只能用它打开打印对话框，不能把它当作受保护文档的替代下载或导出文件。如果必须导出保留矢量内容的受保护 PDF，应由可信后端完成解密、处理和重新加密。
 
+## 导出安全脱敏 PDF
+
+安全脱敏应使用审核后的文字范围，而不是普通矩形批注：
+
+```ts
+import { buildSecureRedactedPdf, downloadBlob } from '@inklayer-dev/core'
+
+const matches = highlighter.getSnapshot().matches
+  .filter(match => match.reviewState === 'included')
+
+const redacted = await buildSecureRedactedPdf({
+  viewer: core.viewer,
+  ranges: matches.map(match => match.range),
+  pixelRatio: 2,
+  margin: 1
+})
+
+downloadBlob({
+  content: redacted,
+  filename: 'review-redacted.pdf',
+  mimeType: 'application/pdf'
+})
+```
+
+Core 会先将每一页栅格化，再在解析后的文字区域上绘制不透明黑块。新 PDF 只嵌入页面图片，不会嵌入源文件字节、源文字、关键词规则或命中元数据。因此，不只是被遮住的内容，所有页面文字都会失去选择、搜索、复制和无障碍能力。
+
+页面上的 Highlighter 预览可以继续使用各规则原本的半透明颜色，方便用户阅读原文并完成审核。预览颜色不会影响输出；打印和 `buildSecureRedactedPdf()` 始终把确认保留的范围绘制成不透明黑块。
+
+不要用黑色矩形批注或普通 PDF 绘图命令代替。它们可能仍把原文字保留在内容流中。Core 会拒绝空范围以及禁止栅格输出的文档，但不会自动识别图片里的敏感像素，不会修改原文件，也不会删除其他位置保存的副本。第一次接入请从[创建第一个关键词脱敏](./first-keyword-redaction.md)开始；生产工作流与完整安全边界见[安全关键词脱敏](./keyword-redaction.md)。
+
 ## 配置水印
+
+需要一份从零开始的聚焦教程时，请先阅读[文档水印](./watermarks.md)。
 
 ```ts
 import type { PdfWatermarkSpec } from '@inklayer-dev/core'

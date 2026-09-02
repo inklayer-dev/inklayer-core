@@ -10,6 +10,8 @@ export {
   type AnnotationEngineOptions,
   type AnnotationSnapshotStrategy,
   type CreateAnnotationInput,
+  type CreateTextMarkupRangeInput,
+  type CreateTextMarkupsFromRangesOptions,
   type TransformAnnotationInput
 } from './annotation-engine'
 export type {

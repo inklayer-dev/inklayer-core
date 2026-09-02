@@ -3,7 +3,9 @@
 This page is a reference for the built-in annotation types, tool switching,
 creation modes, and appearance settings. To create an annotation through a
 complete UI interaction first, follow [Create your first annotation](./first-annotation.md).
-To add a new type, see [Custom annotation types](./custom-annotation-type.md).
+To add a new type, start with [Create your first custom annotation](./first-custom-annotation.md), then continue with [Custom annotation types](./custom-annotation-type.md). The isolated [Custom Annotations demo](https://core.inklayer.dev/demo/#custom-annotations) contains no built-in drawing tools.
+
+Use the [Annotations demo](https://core.inklayer.dev/demo/#annotations) for the complete built-in tool palette, appearance controls, repository list, print, and export workflow.
 
 ## Built-in annotation types
 

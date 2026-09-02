@@ -8,6 +8,7 @@
       "@inklayer-dev/core/annotation": ["./src/annotation/index.ts"],
       "@inklayer-dev/core/capabilities": ["./src/capabilities/index.ts"],
       "@inklayer-dev/core/annotation-types": ["./src/annotation-types/index.ts"],
+      "@inklayer-dev/core/highlighter": ["./src/highlighter/index.ts"],
       "@inklayer-dev/core/import/pdfjs": ["./src/import/pdfjs/index.ts"],
       "@inklayer-dev/core/export/pdf": ["./src/export/pdf/index.ts"],
       "@inklayer-dev/core/export/excel": ["./src/export/excel/index.ts"],

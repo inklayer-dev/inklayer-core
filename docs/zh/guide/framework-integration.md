@@ -212,3 +212,11 @@ export async function destroyPdfWorkspace(): Promise<void> {
 :::
 
 移除工作区时调用 `destroyPdfWorkspace()`。文字高亮、作者权限和批注保存请分别参考[创建第一个批注](./first-annotation)与[保存和恢复批注](./persistence)。
+
+## 加入关键词审核工作流
+
+请先阅读独立的[关键词高亮指南](./highlighter.md)，了解完整的 Controller 合同、规则模型、审核状态、永久应用、错误、上限和生命周期。
+
+仓库维护的 Vanilla 应用现在包含完整的产品侧 Highlighter 面板：可编辑分色规则、扫描进度与取消、分组命中审核、激活命中跳页、永久应用、重复结果提示、清除预览和重置。UI 位于 [`HighlighterPanel`](https://github.com/inklayer-dev/inklayer-core/blob/main/examples/vanilla/src/ui/highlighter-panel.ts)，可复用工作流则全部保留在 `@inklayer-dev/core/highlighter` 内。
+
+所有权顺序与示例保持一致：先创建 Viewer 和 Annotation Engine，再创建 Controller 并订阅面板；销毁注入的引擎之前，先取消订阅并调用 `highlighter.destroy()`。DOM 元素和框架状态都不会进入 Core。

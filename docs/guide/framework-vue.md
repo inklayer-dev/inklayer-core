@@ -215,3 +215,23 @@ import PdfWorkspace from './PdfWorkspace.vue'
 :::
 
 For text highlights, author permissions, and saving annotations, continue with [Create your first annotation](./first-annotation) and [Persist annotations](./persistence).
+
+## Subscribe to the Highlighter Controller
+
+Vue can project Controller snapshots into a `shallowRef` directly. Dispose both the subscription and Controller with the owning effect scope:
+
+```ts
+const controller = createKeywordHighlighter({ viewer, annotations })
+const snapshot = shallowRef(controller.getSnapshot())
+const unsubscribe = controller.subscribe(next => {
+  snapshot.value = next
+})
+
+watch(rules, next => controller.setRules(next), { immediate: true })
+onScopeDispose(() => {
+  unsubscribe()
+  controller.destroy()
+})
+```
+
+Templates can read `snapshot.status`, iterate over `snapshot.matches`, and call the same review and application methods as Vanilla or React. The maintained [Vue consumption fixture](https://github.com/inklayer-dev/inklayer-core/blob/main/examples/framework-consumers/vue-keyword-highlighter.ts) is type-checked and production-built without adding Vue to Core's runtime dependencies.

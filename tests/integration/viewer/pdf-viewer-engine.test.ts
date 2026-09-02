@@ -120,7 +120,23 @@ function createDocument(id: string): PDFDocumentProxy {
   return {
     numPages: 2,
     fingerprints: [id, null],
-    getPermissions: vi.fn(async () => null)
+    getPermissions: vi.fn(async () => null),
+    getPage: vi.fn(async (pageNumber: number) => {
+      const text = `Shared keyword on page ${pageNumber}`
+      return {
+        getTextContent: vi.fn(async () => ({
+        items: [{
+          str: text, dir: 'ltr', transform: [10, 0, 0, 10, 20, 580],
+          width: text.length * 8, height: 10, fontName: 'sans', hasEOL: false
+        }],
+        styles: {}, lang: null
+        })),
+        getViewport: vi.fn(() => ({
+          width: 400, height: 600, userUnit: 1,
+          transform: [1, 0, 0, -1, 0, 600]
+        }))
+      }
+    })
   } as unknown as PDFDocumentProxy
 }
 
@@ -223,6 +239,72 @@ describe('PDF Viewer Engine lifecycle', () => {
     await engine.destroy()
     expect(task.destroy).toHaveBeenCalledOnce()
     expect(engine.getSnapshot().status).toBe('destroyed')
+  })
+
+  it('exposes generation-scoped batch search through the Viewer facade', async () => {
+    const document = createDocument('batch-search')
+    mocks.getDocument.mockReturnValue(createResolvedTask(document))
+    const engine = createPdfViewerEngine({ workerSrc: '/pdf.worker.mjs' })
+    await engine.load({ data: new Uint8Array([1]) })
+
+    await expect(engine.searchMany([
+      { id: 'shared', query: 'shared' },
+      { id: 'second-page', query: 'page 2', options: { matchCase: true } }
+    ])).resolves.toMatchObject({
+      queries: [
+        { id: 'shared', matches: [{ pageIndex: 0 }, { pageIndex: 1 }] },
+        { id: 'second-page', matches: [{ pageIndex: 1 }] }
+      ],
+      truncated: false
+    })
+    expect(document.getPage).toHaveBeenCalledTimes(2)
+    await engine.destroy()
+  })
+
+  it('resolves search matches through the Viewer geometry facade', async () => {
+    const document = createDocument('range-geometry')
+    mocks.getDocument.mockReturnValue(createResolvedTask(document))
+    const engine = createPdfViewerEngine({ workerSrc: '/pdf.worker.mjs' })
+    await engine.load({ data: new Uint8Array([1]) })
+
+    const search = await engine.search('keyword', { maxResults: 1 })
+    await expect(engine.resolveTextRanges(search.matches)).resolves.toEqual([{
+      pageIndex: 0,
+      start: 7,
+      length: 7,
+      text: 'keyword',
+      rects: [{ x: 76, y: 10, width: 56, height: 10 }]
+    }])
+    expect(document.getPage).toHaveBeenCalledOnce()
+    await engine.destroy()
+  })
+
+  it('exposes validated temporary text-highlight layer lifecycle', async () => {
+    const engine = createPdfViewerEngine({ workerSrc: '/pdf.worker.mjs' })
+    expect(() => engine.setTextHighlightLayers([])).toThrow(expect.objectContaining({
+      code: 'PDF_FEATURE_FAILED', operation: 'setTextHighlightLayers'
+    }))
+    mocks.getDocument.mockReturnValue(createResolvedTask(createDocument('layer-state')))
+    await engine.load({ data: new Uint8Array([1]) })
+
+    expect(() => engine.setTextHighlightLayers([{
+      id: 'risk',
+      ranges: [{ pageIndex: 0, start: 0, length: 6 }],
+      style: { color: '#ef4444', activeColor: '#b91c1c' },
+      activeRangeIndex: 0
+    }])).not.toThrow()
+    expect(() => engine.setTextHighlightLayers([
+      { id: 'same', ranges: [], style: { color: '#ef4444' } },
+      { id: 'same', ranges: [], style: { color: '#f59e0b' } }
+    ])).toThrow(expect.objectContaining({
+      code: 'PDF_FEATURE_FAILED', operation: 'setTextHighlightLayers'
+    }))
+    expect(() => engine.clearTextHighlightLayers(['risk'])).not.toThrow()
+    expect(() => engine.clearTextHighlightLayers()).not.toThrow()
+    await engine.destroy()
+    expect(() => engine.clearTextHighlightLayers()).toThrow(expect.objectContaining({
+      code: 'ENGINE_DESTROYED'
+    }))
   })
 
   it('cancels and destroys pending loads without stale state updates', async () => {

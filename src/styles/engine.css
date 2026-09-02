@@ -70,6 +70,28 @@
   outline: 1px solid var(--inklayer-search-active-outline, rgb(194 65 12 / 70%));
 }
 
+.inklayer-engine .inklayer-text-highlight {
+  background: color-mix(
+    in srgb,
+    var(--inklayer-text-highlight-color) 42%,
+    transparent
+  );
+  color: inherit;
+}
+
+.inklayer-engine .inklayer-text-highlight-active {
+  background: color-mix(
+    in srgb,
+    var(--inklayer-text-highlight-active-color) 62%,
+    transparent
+  );
+  outline: 1px solid color-mix(
+    in srgb,
+    var(--inklayer-text-highlight-active-color) 78%,
+    transparent
+  );
+}
+
 .inklayer-engine .inklayer-text-layer :is(span, br) {
   position: absolute;
   color: transparent;

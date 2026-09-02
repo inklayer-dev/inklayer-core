@@ -311,6 +311,9 @@ class KonvaPainter implements AnnotationPainter {
       this.render(annotation)
     }
     this.applySelection()
+    const hydratedImages = await waitForHydratedImages(resources)
+    if (this.attachmentGenerations.get(attachment.pageIndex) !== generation) return
+    if (hydratedImages) resources.layer.draw()
   }
 
   /** Detaches one page without affecting another engine or page. */
@@ -1522,6 +1525,27 @@ function hydrateImageNodes(group: Konva.Group, resources: PageResources): HTMLIm
     images.push(image)
   }
   return images
+}
+
+/** Waits until image annotations are drawable before an attached page can be rasterized. */
+async function waitForHydratedImages(resources: PageResources): Promise<boolean> {
+  const hydrations: Promise<void>[] = []
+  for (const [annotationId, images] of resources.images) {
+    const group = resources.nodes.get(annotationId)
+    if (group === undefined) continue
+    const nodes = group.find('Image')
+    images.forEach((image, index) => {
+      const node = nodes[index]
+      if (node === undefined) return
+      hydrations.push((async () => {
+        await image.decode()
+        if (node.getLayer() === resources.layer) (node as Konva.Image).image(image)
+      })())
+    })
+  }
+  if (hydrations.length === 0) return false
+  await Promise.all(hydrations)
+  return true
 }
 
 /** Releases callbacks retained by DOM images after node or page removal. */

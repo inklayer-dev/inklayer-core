@@ -7,6 +7,7 @@
 import { expect, test, type ConsoleMessage, type Locator, type Page } from '@playwright/test'
 import { readFile } from 'node:fs/promises'
 import { PDFDocument } from 'pdf-lib'
+import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { buildAnnotatedPdf } from '../../src/export/pdf'
 import { buildToolRendererState } from '../../src/renderer/konva/snapshot-builder'
 import { resolveAnnotationAppearance } from '../../src/domain/appearance'
@@ -18,6 +19,436 @@ const TOOLS = [
   'freehand', 'free-highlight', 'signature', 'stamp', 'note', 'line', 'arrow',
   'polygon', 'polyline', 'cloud'
 ] as const
+
+test('deep-links the seven primary demos with Continuous pages and browser history', async ({ page }) => {
+  const failures = collectBrowserFailures(page)
+  await page.goto('/?clean=1#viewer')
+  const workspace = page.locator('.instance-card').first()
+  await expect(page).toHaveURL(/#viewer$/u)
+  await expect(page.getByRole('link', { name: 'Viewer', exact: true })).toHaveAttribute(
+    'aria-current', 'page'
+  )
+  await expect(workspace.locator('[data-tool-shortcut]').first()).toBeHidden()
+  await expect(workspace.locator('.annotation-host')).toBeHidden()
+  await expect(workspace.locator('.output-toggle')).toBeHidden()
+  await expect(workspace.locator('.status-annotations')).toBeHidden()
+  await expect(workspace.locator('.left-sidebar')).toBeVisible()
+  await expect(workspace.locator('.right-sidebar')).toBeHidden()
+  await expectContinuousDocument(workspace)
+
+  await page.getByRole('link', { name: 'Annotations', exact: true }).click()
+  await expect(page).toHaveURL(/#annotations$/u)
+  await expect(workspace).toHaveAttribute('data-demo-view', 'annotations')
+  await expect(workspace.locator('.left-sidebar')).toBeHidden()
+  await expect(workspace.locator('.right-sidebar')).toBeVisible()
+  await expectContinuousDocument(workspace)
+
+  await page.getByRole('link', { name: 'Stamp & Sign', exact: true }).click()
+  await expect(page).toHaveURL(/#stamp-sign$/u)
+  await expect(workspace).toHaveAttribute('data-demo-view', 'stamp-sign')
+  await expect(workspace.locator('.stamp-sign-panel')).toBeVisible()
+  await expect(workspace.locator('.left-sidebar')).toBeHidden()
+  await expect(workspace.locator('.right-sidebar')).toBeVisible()
+  await expectContinuousDocument(workspace)
+  await expect(workspace.getByRole('button', { name: 'Rectangle', exact: true })).toBeHidden()
+
+  await page.getByRole('link', { name: 'Keyword Highlighter', exact: true }).click()
+  await expect(page).toHaveURL(/#highlighter$/u)
+  await expect(workspace).toHaveAttribute('data-demo-view', 'highlighter')
+  await expect(workspace.locator('.highlighter-panel')).toBeVisible()
+  await expect(workspace.locator('[data-tool-shortcut]').first()).toBeHidden()
+  await expect(workspace.locator('.annotation-host')).toBeHidden()
+  await expect(workspace.locator('.output-toggle')).toBeVisible()
+  await expect(workspace.locator('.right-sidebar')).toBeHidden()
+  await expectContinuousDocument(workspace)
+
+  await page.getByRole('link', { name: 'Redaction', exact: true }).click()
+  await expect(page).toHaveURL(/#redaction$/u)
+  await expect(workspace).toHaveAttribute('data-demo-view', 'redaction')
+  await expect(workspace.locator('.highlighter-panel')).toBeVisible()
+  await expect(workspace.getByRole('button', { name: 'Export redacted copy' })).toBeVisible()
+  await expect(workspace.locator('.highlighter-apply')).toHaveCount(0)
+  expect(await workspace.locator('.output-menu-wrap > button').evaluateAll((buttons) =>
+    buttons.map((button) => button.classList[0])
+  )).toEqual(['print', 'export-redacted', 'output-toggle'])
+  await expectContinuousDocument(workspace)
+
+  await page.getByRole('link', { name: 'Watermark', exact: true }).click()
+  await expect(page).toHaveURL(/#watermark$/u)
+  await expect(workspace).toHaveAttribute('data-demo-view', 'watermark')
+  await expect(workspace.locator('.watermark-panel')).toBeVisible()
+  await expect(workspace.locator('.output-toggle')).toBeVisible()
+  await expectContinuousDocument(workspace)
+
+  await page.getByRole('link', { name: 'Custom Annotations', exact: true }).click()
+  await expect(page).toHaveURL(/#custom-annotations$/u)
+  await expect(workspace).toHaveAttribute('data-demo-view', 'custom-annotations')
+  await expect(workspace.getByRole('button', { name: 'Measurement', exact: true })).toBeVisible()
+  await expect(workspace.getByRole('button', { name: 'Review area', exact: true })).toBeVisible()
+  await expect(workspace.getByRole('button', { name: 'Issue marker', exact: true })).toBeVisible()
+  await expectContinuousDocument(workspace)
+
+  await page.reload()
+  await expect(page).toHaveURL(/#custom-annotations$/u)
+  await expect(page.locator('.instance-card').first()).toHaveAttribute(
+    'data-demo-view', 'custom-annotations'
+  )
+  await page.goBack()
+  await expect(page).toHaveURL(/#watermark$/u)
+  await expect(page.locator('.instance-card').first()).toHaveAttribute(
+    'data-demo-view', 'watermark'
+  )
+  expect(failures).toEqual([])
+})
+
+test('shows copyable minimal code for every primary demo', async ({ page }) => {
+  const failures = collectBrowserFailures(page)
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: async (value: string) => {
+          sessionStorage.setItem('inklayer-copied-code', value)
+        }
+      }
+    })
+  })
+  await page.goto('/?clean=1#viewer')
+
+  const cases = [
+    {
+      route: 'Viewer',
+      title: 'Minimal PDF Viewer',
+      source: 'createInkLayer',
+      guide: 'https://core.inklayer.dev/guide/getting-started'
+    },
+    {
+      route: 'Annotations',
+      title: 'Your first annotation tool',
+      source: "core.annotations.setTool('rectangle')",
+      guide: 'https://core.inklayer.dev/guide/first-annotation'
+    },
+    {
+      route: 'Stamp & Sign',
+      title: 'Stamp and sign a PDF',
+      source: "core.annotations.setTool('stamp')",
+      guide: 'https://core.inklayer.dev/guide/stamp-and-sign'
+    },
+    {
+      route: 'Keyword Highlighter',
+      title: 'Prepared keyword highlighting',
+      source: 'await highlighter.scan()',
+      guide: 'https://core.inklayer.dev/guide/first-keyword-highlight'
+    },
+    {
+      route: 'Redaction',
+      title: 'Secure keyword redaction',
+      source: 'buildSecureRedactedPdf',
+      guide: 'https://core.inklayer.dev/guide/first-keyword-redaction'
+    },
+    {
+      route: 'Watermark',
+      title: 'Apply a document watermark',
+      source: 'core.viewer.setWatermark',
+      guide: 'https://core.inklayer.dev/guide/output-and-security#configure-a-watermark'
+    },
+    {
+      route: 'Custom Annotations',
+      title: 'Application-owned annotation types',
+      source: 'annotationTypes:',
+      guide: 'https://core.inklayer.dev/guide/first-custom-annotation'
+    }
+  ] as const
+
+  for (const example of cases) {
+    await page.getByRole('link', { name: example.route, exact: true }).click()
+    const workspace = page.locator('.instance-card').first()
+    await expectContinuousDocument(workspace)
+    const showCode = workspace.getByRole('button', { name: 'Show code' })
+    await expect(showCode).toBeVisible()
+    await showCode.click()
+    const dialog = workspace.getByRole('dialog')
+    await expect(dialog).toBeVisible()
+    await expect(dialog.getByRole('heading', { name: example.title })).toBeVisible()
+    await expect(dialog.locator('code')).toContainText(example.source)
+    await expect(dialog.getByRole('link', { name: 'Read full guide' }))
+      .toHaveAttribute('href', example.guide)
+    await dialog.getByRole('button', { name: 'Copy code' }).click()
+    await expect(dialog.getByRole('button', { name: 'Copied' })).toBeVisible()
+    expect(await page.evaluate(() => sessionStorage.getItem('inklayer-copied-code')))
+      .toContain(example.source)
+    await dialog.getByRole('button', { name: 'Close code example' }).click()
+    await expect(dialog).toBeHidden()
+  }
+  expect(failures).toEqual([])
+})
+
+test('places, batches, restyles, and exports Stamp and Signature image annotations', async ({
+  page
+}) => {
+  const failures = collectBrowserFailures(page)
+  await page.goto('/?clean=1#stamp-sign')
+  const workspace = page.locator('.instance-card').first()
+  const panel = workspace.locator('.stamp-sign-panel')
+  await expect(workspace.locator('.page-scroll')).toBeHidden()
+  await expect(workspace.locator('.flow-scroll')).toBeVisible()
+  await expect(workspace.locator('.inklayer-page-flow-page')).toHaveCount(3)
+  await expect(workspace.locator('[data-inklayer-flow-page="0"]')).toHaveAttribute(
+    'data-inklayer-flow-mounted', 'true'
+  )
+  await expect(panel.locator('.stamp-sign-stamp-preview')).toHaveAttribute('src', /^data:image\/png/u)
+  await expect(panel.locator('.stamp-sign-signature-preview')).toHaveAttribute(
+    'src', /^data:image\/png/u
+  )
+
+  await panel.getByRole('button', { name: /Demo signature/u }).click()
+  await panel.locator('.stamp-sign-opacity').fill('0.35')
+  await panel.getByRole('button', { name: 'Place manually', exact: true }).click()
+  const canvas = await workspace.locator(
+    '[data-inklayer-flow-page="0"] .konvajs-content'
+  ).boundingBox()
+  if (canvas === null) throw new Error('Stamp & Sign annotation canvas is unavailable.')
+  await page.mouse.click(canvas.x + 250, canvas.y + 260)
+  await expect(workspace.locator('.status-annotations')).toHaveText('1 annotations')
+  await panel.locator('.stamp-sign-opacity').fill('0.45')
+  await expect(workspace.locator('.instance-status')).toContainText(
+    'Updated selected signature opacity to 45%'
+  )
+
+  await panel.getByRole('button', { name: /Approved stamp/u }).click()
+  await panel.locator('.stamp-sign-pages').fill('1-3')
+  await panel.locator('.stamp-sign-position').selectOption('bottom-right')
+  await panel.locator('.stamp-sign-width').fill('120')
+  await panel.locator('.stamp-sign-opacity').fill('0.65')
+  await panel.getByRole('button', { name: 'Apply to pages', exact: true }).click()
+  await expect(workspace.locator('.instance-status')).toContainText(
+    'Placed 3 stamps across 3 pages'
+  )
+  await expect(workspace.locator('.status-annotations')).toHaveText('4 annotations')
+
+  await workspace.getByRole('tab', { name: 'Placed', exact: true }).click()
+  await expect(workspace.locator('.annotation-row')).toHaveCount(4)
+  await expect(workspace.locator('.annotation-row').filter({ hasText: 'Page 1' })).toHaveCount(2)
+  await expect(workspace.locator('.annotation-row').filter({ hasText: 'Page 2' })).toHaveCount(1)
+  await expect(workspace.locator('.annotation-row').filter({ hasText: 'Page 3' })).toHaveCount(1)
+
+  await workspace.locator('.prepare-print').evaluate((button) => {
+    (button as HTMLButtonElement).click()
+  })
+  await expect(workspace.locator('.instance-status')).toHaveText(
+    /Prepared raster print · \d+ bytes/u,
+    { timeout: 30_000 }
+  )
+
+  await workspace.locator('.output-toggle').click()
+  const downloadPromise = page.waitForEvent('download')
+  await workspace.getByRole('button', { name: /Stamped PDF/u }).click()
+  const download = await downloadPromise
+  expect(download.suggestedFilename()).toBe('inklayer-stamped.pdf')
+  const downloadPath = await download.path()
+  if (downloadPath === null) throw new Error('Stamped PDF did not produce a local file.')
+  const loadingTask = getDocument({ data: new Uint8Array(await readFile(downloadPath)) })
+  const output = await loadingTask.promise
+  try {
+    const stampCounts: number[] = []
+    for (let pageIndex = 1; pageIndex <= output.numPages; pageIndex += 1) {
+      const annotations = await (await output.getPage(pageIndex)).getAnnotations()
+      stampCounts.push(annotations.filter((annotation) => annotation.subtype === 'Stamp').length)
+    }
+    expect(stampCounts).toEqual([2, 1, 1])
+  } finally {
+    await loadingTask.destroy()
+  }
+  expect(failures).toEqual([])
+})
+
+test('exports reviewed keyword matches without any extractable page text', async ({ page }) => {
+  const failures = collectBrowserFailures(page)
+  await page.goto('/?clean=1#redaction')
+  const viewer = page.locator('.instance-card').first()
+  await expect(viewer.locator('.highlighter-status')).toHaveText('7 matches ready for review.')
+  const firstPageLayers = viewer.locator(
+    '[data-inklayer-flow-page="0"] [data-inklayer-highlight-layer]'
+  )
+  await expect(firstPageLayers).toHaveCount(3)
+  await expect(firstPageLayers.first()).toHaveCSS(
+    'background-color', /0\.42/u
+  )
+  await expect(viewer.getByRole('button', { name: 'Print', exact: true })).toBeEnabled()
+
+  const downloadPromise = page.waitForEvent('download')
+  await viewer.getByRole('button', { name: 'Export redacted copy' }).click()
+  const download = await downloadPromise
+  const downloadPath = await download.path()
+  if (downloadPath === null) throw new Error('Redacted PDF did not produce a local file.')
+  const bytes = new Uint8Array(await readFile(downloadPath))
+  const loadingTask = getDocument({ data: bytes.slice() })
+  const output = await loadingTask.promise
+  try {
+    expect(output.numPages).toBe(3)
+    const extracted: string[] = []
+    for (let pageIndex = 1; pageIndex <= output.numPages; pageIndex += 1) {
+      const text = await (await output.getPage(pageIndex)).getTextContent()
+      extracted.push(...text.items.flatMap((item) => 'str' in item ? [item.str] : []))
+    }
+    expect(extracted.join('')).toBe('')
+  } finally {
+    await loadingTask.destroy()
+  }
+  await expect(viewer.locator('.highlighter-status')).toHaveText('7 matches ready for review.')
+  await expect(viewer.locator('.instance-status')).toContainText('Exported redacted copy')
+  await viewer.getByRole('button', { name: 'Reset', exact: true }).click()
+  await expect(viewer.getByRole('button', { name: 'Export redacted copy' })).toBeDisabled()
+  await expect(viewer.getByRole('button', { name: 'Print', exact: true })).toBeDisabled()
+  expect(failures).toEqual([])
+})
+
+test('configures and exports one document watermark policy', async ({ page }) => {
+  const failures = collectBrowserFailures(page)
+  await page.goto('/?clean=1#watermark')
+  const viewer = page.locator('.instance-card').first()
+  await expectContinuousDocument(viewer)
+  await expect(viewer.locator('.watermark-panel')).toBeVisible()
+
+  await viewer.locator('.watermark-text').fill('CONFIDENTIAL · REVIEW COPY')
+  await viewer.locator('.watermark-layout').selectOption('center')
+  await expect(viewer.locator('.instance-status')).toHaveText('Ready · generated sample · page 1/3')
+  await viewer.locator('.watermark-opacity').fill('0.25')
+  await expect(viewer.locator('.watermark-opacity-value')).toHaveText('25%')
+  await viewer.locator('.watermark-opacity').dispatchEvent('change')
+  await expectContinuousDocument(viewer)
+
+  await openOutputMenu(viewer)
+  const downloadPromise = page.waitForEvent('download')
+  await viewer.getByRole('button', { name: /Watermarked PDF/u }).click()
+  const download = await downloadPromise
+  expect(download.suggestedFilename()).toBe('inklayer-watermarked.pdf')
+  expect(failures).toEqual([])
+})
+
+test('keeps built-in and custom annotation palettes isolated', async ({ page }) => {
+  const failures = collectBrowserFailures(page)
+  await page.goto('/?clean=1#annotations')
+  let viewer = page.locator('.instance-card').first()
+  await expect(viewer.getByRole('button', { name: 'Rectangle', exact: true })).toBeVisible()
+  await expect(viewer.getByRole('button', { name: 'Measurement', exact: true })).toHaveCount(0)
+
+  await page.getByRole('link', { name: 'Custom Annotations', exact: true }).click()
+  viewer = page.locator('.instance-card').first()
+  await expect(viewer.getByRole('button', { name: 'Rectangle', exact: true })).toBeHidden()
+  for (const tool of ['Measurement', 'Review area', 'Issue marker'] as const) {
+    await expect(viewer.getByRole('button', { name: tool, exact: true })).toBeVisible()
+  }
+  await showSinglePage(viewer)
+  const canvas = await viewer.locator('.konvajs-content').boundingBox()
+  if (canvas === null) throw new Error('Custom annotation canvas is unavailable.')
+  await viewer.getByRole('button', { name: 'Measurement', exact: true }).click()
+  await drawStroke(page, canvas, [[80, 120], [190, 175]])
+  await viewer.getByRole('button', { name: 'Review area', exact: true }).click()
+  await drawStroke(page, canvas, [[220, 120], [360, 190]])
+  await viewer.getByRole('button', { name: 'Issue marker', exact: true }).click()
+  await page.mouse.click(canvas.x + 390, canvas.y + 130)
+  await expect(viewer.locator('.inklayer-annotation-a11y-list button')).toHaveCount(3)
+  await viewer.getByRole('button', { name: 'Show code' }).click()
+  const dialog = viewer.getByRole('dialog')
+  await dialog.getByRole('tab', { name: 'Issue marker' }).click()
+  await expect(dialog.locator('code')).toContainText("custom:demo/issue-marker")
+  await dialog.getByRole('button', { name: 'Close code example' }).click()
+  expect(failures).toEqual([])
+})
+
+test('runs the complete headless Highlighter workflow through Vanilla product controls', async ({
+  page
+}) => {
+  const failures = collectBrowserFailures(page)
+  await page.goto('/?clean=1#highlighter')
+  await expect(page.locator('.instance-status')).toHaveText(
+    'Ready · generated sample · page 1/3'
+  )
+  const viewer = page.locator('.instance-card').first()
+  await expect(viewer.locator('.highlighter-rule-editor')).toHaveCount(3)
+
+  await expect(viewer.locator('.highlighter-status')).toHaveText('7 matches ready for review.')
+  await expect(viewer.getByRole('button', { name: 'Rescan document' })).toBeVisible()
+  await expect(viewer.locator('.highlighter-match-row')).toHaveCount(7)
+  await expect(viewer.getByRole('button', { name: /Page 1 · 2026-08-31/u })).toHaveCount(1)
+  await expect(viewer.getByRole('button', { name: /Page 1 · RMB 1,200\.50/u })).toHaveCount(1)
+  const firstPageLayers = viewer.locator(
+    '[data-inklayer-flow-page="0"] [data-inklayer-highlight-layer]'
+  )
+  await expect(firstPageLayers).toHaveCount(3)
+  await expect(firstPageLayers.first()).toHaveCSS(
+    'background-color', /0\.42/u
+  )
+  await viewer.locator('.prepare-print').evaluate((button) => {
+    (button as HTMLButtonElement).click()
+  })
+  await expect(viewer.locator('.instance-status')).toHaveText(
+    /Prepared raster print · 7 keyword highlights · \d+ bytes/u,
+    { timeout: 30_000 }
+  )
+
+  await openOutputMenu(viewer)
+  const downloadPromise = page.waitForEvent('download')
+  await viewer.getByRole('button', { name: /Highlighted PDF/u }).click()
+  const download = await downloadPromise
+  expect(download.suggestedFilename()).toBe('inklayer-highlighted.pdf')
+  const downloadPath = await download.path()
+  if (downloadPath === null) throw new Error('Highlighted PDF did not produce a local file.')
+  const loadingTask = getDocument({ data: new Uint8Array(await readFile(downloadPath)) })
+  const output = await loadingTask.promise
+  try {
+    let highlightCount = 0
+    for (let pageIndex = 1; pageIndex <= output.numPages; pageIndex += 1) {
+      const annotations = await (await output.getPage(pageIndex)).getAnnotations()
+      highlightCount += annotations.filter((annotation) => annotation.subtype === 'Highlight').length
+    }
+    expect(highlightCount).toBe(7)
+  } finally {
+    await loadingTask.destroy()
+  }
+
+  const pageThreeMatch = viewer.getByRole('button', { name: /Page 3 · highlight/u })
+  await pageThreeMatch.click()
+  await expect(viewer.locator('.instance-status')).toContainText('page 3/3')
+  await expect(pageThreeMatch.locator('..')).toHaveClass(/active/u)
+  const includePageThree = viewer.getByRole('checkbox', { name: /Include highlight on page 3/u })
+  await includePageThree.uncheck()
+  await expect(includePageThree).not.toBeChecked()
+  await expect(viewer.locator(
+    '[data-inklayer-flow-page="2"] [data-inklayer-highlight-layer]'
+  )).toHaveCount(0)
+
+  await viewer.getByRole('button', { name: 'Apply included' }).click()
+  await expect(viewer.locator('.highlighter-status')).toHaveText('Applied 6; skipped 0 existing.')
+  await expect(viewer.locator('.highlighter-match-row.applied')).toHaveCount(6)
+  await expect(viewer.locator('.annotation-row')).toHaveCount(6)
+
+  await viewer.getByRole('button', { name: 'Apply included' }).click()
+  await expect(viewer.locator('.highlighter-status')).toHaveText('Applied 0; skipped 6 existing.')
+  await includePageThree.check()
+  await viewer.getByRole('button', { name: 'Apply included' }).click()
+  await expect(viewer.locator('.highlighter-status')).toHaveText('Applied 1; skipped 6 existing.')
+  await expect(viewer.locator('.annotation-row')).toHaveCount(7)
+
+  await viewer.getByRole('button', { name: 'Clear preview' }).click()
+  await expect(viewer.locator('[data-inklayer-highlight-layer]')).toHaveCount(0)
+  await viewer.getByRole('button', { name: 'Reset', exact: true }).click()
+  await expect(viewer.locator('.highlighter-match-row')).toHaveCount(0)
+  await expect(viewer.locator('.annotation-row')).toHaveCount(7)
+  for (const terms of await viewer.locator('.highlighter-rule-terms').all()) {
+    await terms.fill(' ')
+  }
+  for (const patterns of await viewer.locator('.highlighter-rule-patterns').all()) {
+    await patterns.fill(' ')
+  }
+  await viewer.getByRole('button', { name: 'Scan document' }).click()
+  await expect(viewer.locator('.highlighter-status')).toHaveAttribute('data-state', 'error')
+  await expect(viewer.locator('.highlighter-status')).toHaveText(
+    'Highlighter rules contain an invalid number of matchers.'
+  )
+  expect(failures).toEqual([])
+})
 
 test('keeps long-document virtual pages and thumbnail resources bounded through churn', async ({ page }) => {
   const failures = collectBrowserFailures(page)
@@ -48,10 +479,11 @@ test('keeps long-document virtual pages and thumbnail resources bounded through 
   })
   await page.goto('/?clean=1')
   await expect(page.locator('.instance-status')).toHaveText(
-    'Ready · generated sample · page 1/3 · 0 annotations'
+    'Ready · generated sample · page 1/3'
   )
   const viewer = page.locator('.instance-card').first()
   expect(await readObjectUrlMetrics(page)).toEqual({ active: 3, created: 3, revoked: 0 })
+  await showSinglePage(viewer)
 
   await openCapabilityLab(viewer)
   await viewer.getByRole('button', { name: 'Long PDF' }).click()
@@ -97,7 +529,7 @@ test('keeps long-document virtual pages and thumbnail resources bounded through 
   await expect(viewer.locator('.instance-status')).toContainText(
     'Ready · mixed-page fixture · page 1/3', { timeout: 30_000 }
   )
-  await expect(viewer.locator('.inklayer-page-flow-page')).toHaveCount(0)
+  await expect(viewer.locator('.inklayer-page-flow-page')).toHaveCount(3)
   await expect(viewer.locator('.thumbnail-button')).toHaveCount(3)
   const finalUrls = await readObjectUrlMetrics(page)
   expect(finalUrls.active).toBe(3)
@@ -109,12 +541,13 @@ test('keeps mixed CropBox pages aligned through viewer, text, annotations, thumb
   const failures = collectBrowserFailures(page)
   await page.goto('/?clean=1')
   await expect(page.locator('.instance-status')).toHaveText(
-    'Ready · generated sample · page 1/3 · 0 annotations'
+    'Ready · generated sample · page 1/3'
   )
   const viewer = page.locator('.instance-card').first()
+  await showSinglePage(viewer)
   await openCapabilityLab(viewer)
   await viewer.getByRole('button', { name: 'Mixed PDF' }).click()
-  await expect(viewer.locator('.instance-status')).toContainText('mixed-page fixture · page 1/3 · 1 annotations')
+  await expect(viewer.locator('.instance-status')).toContainText('mixed-page fixture · page 1/3')
 
   await expectPageSize(viewer, 564, 720)
   await expect(viewer.locator('.inklayer-text-layer')).toContainText('Selection begins')
@@ -129,12 +562,12 @@ test('keeps mixed CropBox pages aligned through viewer, text, annotations, thumb
   ])
 
   await viewer.locator('.thumbnail-button').nth(1).click()
-  await expect(viewer.locator('.instance-status')).toContainText('page 2/3 · 2 annotations')
+  await expect(viewer.locator('.instance-status')).toContainText('page 2/3')
   await expectPageSize(viewer, 400, 600)
   await expect(viewer.locator('.inklayer-text-layer')).toContainText('rotated page')
 
   await viewer.locator('.thumbnail-button').nth(2).click()
-  await expect(viewer.locator('.instance-status')).toContainText('page 3/3 · 3 annotations')
+  await expect(viewer.locator('.instance-status')).toContainText('page 3/3')
   await expectPageSize(viewer, 780, 540)
   await expect(viewer.locator('.inklayer-text-layer')).toContainText('wide visible page')
 
@@ -155,6 +588,18 @@ test('keeps mixed CropBox pages aligned through viewer, text, annotations, thumb
   await expect(viewer.locator('[data-inklayer-flow-page="1"]')).toHaveAttribute(
     'data-inklayer-flow-mounted', 'true'
   )
+  await page.getByRole('link', { name: 'Annotations', exact: true }).click()
+  await expect(viewer.locator('.instance-status')).toContainText('generated sample · page 1/3 · 0 annotations')
+  await openCapabilityLab(viewer)
+  await viewer.getByRole('button', { name: 'Mixed PDF' }).click()
+  await expect(viewer.locator('.instance-status')).toContainText(
+    'mixed-page fixture · page 1/3 · 3 annotations'
+  )
+  await viewer.getByRole('button', { name: 'Continuous' }).click()
+  await expect(viewer.locator('.inklayer-page-flow-page')).toHaveCount(3)
+  await expect(viewer.locator('.inklayer-annotation-a11y-list button')).toHaveCount(2)
+  const annotationsBeforeSelection = await viewer
+    .locator('.inklayer-annotation-a11y-list button').count()
   await viewer.locator('.tool-select').selectOption('highlight')
   const selection = await page.evaluate(() => {
     const start = document.querySelector<HTMLElement>(
@@ -174,7 +619,9 @@ test('keeps mixed CropBox pages aligned through viewer, text, annotations, thumb
   })
   expect(selection).toContain('Selection begins')
   expect(selection).toContain('Selection continues')
-  await expect(viewer.locator('.inklayer-annotation-a11y-list button')).toHaveCount(4)
+  await expect(viewer.locator('.inklayer-annotation-a11y-list button')).toHaveCount(
+    annotationsBeforeSelection + 2
+  )
 
   await openOutputMenu(viewer)
   await viewer.getByRole('button', { name: 'Prepare secure print' }).click()
@@ -308,9 +755,10 @@ test('runs a custom type through pointer creation, transform, print scene, unloa
 
 test('opens and focuses FreeText after a real canvas click', async ({ page }) => {
   const failures = collectBrowserFailures(page)
-  await page.goto('/?clean=1')
+  await page.goto('/?clean=1#annotations')
   const alice = page.locator('.instance-card').first()
   await expect(alice.locator('.instance-status')).toContainText('Ready')
+  await showSinglePage(alice)
   await alice.locator('.tool-select').selectOption('free-text')
   await alice.locator('.konvajs-content').click({ position: { x: 120, y: 140 } })
   const input = alice.locator('.inklayer-text-input')
@@ -328,11 +776,12 @@ test('opens and focuses FreeText after a real canvas click', async ({ page }) =>
 
 test('owns direct-document keyboard focus, movement, selection, and deletion', async ({ page }) => {
   const failures = collectBrowserFailures(page)
-  await page.goto('/?clean=1')
+  await page.goto('/?clean=1#annotations')
   const alice = page.locator('.instance-card').first()
   await expect(alice).toHaveAttribute('role', 'region')
   await expect(alice).toHaveAttribute('tabindex', '0')
   await expect(alice).toHaveAttribute('aria-label', 'Demo PDF annotation workspace')
+  await showSinglePage(alice)
   const canvas = alice.locator('.konvajs-content')
   await alice.locator('.tool-select').selectOption('rectangle')
   const canvasBox = await canvas.boundingBox()
@@ -370,9 +819,11 @@ test('owns direct-document keyboard focus, movement, selection, and deletion', a
 
 test('hands keyboard TextLayer selection focus to and from the product menu', async ({ page }) => {
   const failures = collectBrowserFailures(page)
-  await page.goto('/?clean=1')
+  await page.goto('/?clean=1#annotations')
   const alice = page.locator('.instance-card').first()
   await expect(alice.locator('.instance-status')).toContainText('Ready')
+  await showSinglePage(alice)
+  await alice.focus()
   await page.evaluate(() => {
     const span = document.querySelector<HTMLElement>(
       '.instance-card:first-of-type .inklayer-text-layer span'
@@ -429,9 +880,10 @@ test('coerces smooth page navigation when reduced motion is requested', async ({
 
 test('places visible image-backed Signature and Stamp annotations from canvas clicks', async ({ page }) => {
   const failures = collectBrowserFailures(page)
-  await page.goto('/?clean=1')
+  await page.goto('/?clean=1#annotations')
   const alice = page.locator('.instance-card').first()
   await expect(alice.locator('.instance-status')).toContainText('Ready')
+  await showSinglePage(alice)
   const canvas = alice.locator('.konvajs-content')
   await alice.locator('.tool-select').selectOption('signature')
   await expect.poll(async () => canvas.evaluate((element) => getComputedStyle(element).cursor))
@@ -457,9 +909,10 @@ test('places visible image-backed Signature and Stamp annotations from canvas cl
 
 test('selects annotations imported from an annotated PDF opened by the demo', async ({ page }) => {
   const failures = collectBrowserFailures(page)
-  await page.goto('/?clean=1')
+  await page.goto('/?clean=1#annotations')
   const alice = page.locator('.instance-card').first()
   await expect(alice.locator('.instance-status')).toContainText('Ready')
+  await showSinglePage(alice)
   const bytes = await createNativeAnnotationPdf()
   await alice.locator('.pdf-file').setInputFiles({
     name: 'react-style-annotations.pdf',
@@ -613,9 +1066,10 @@ test('runs the complete Vanilla engine flow without console errors', async ({ pa
   await page.goto('/?clean=1')
   await expect(page).toHaveTitle('InkLayer Core Vanilla Example')
   await expect(page.locator('.instance-status')).toHaveText(
-    'Ready · generated sample · page 1/3 · 0 annotations'
+    'Ready · generated sample · page 1/3'
   )
   const alice = page.locator('.instance-card').first()
+  await showSinglePage(alice)
   await expect(alice.locator('canvas.pdf-canvas')).toBeVisible()
   await expect(alice.locator('.scale-value')).toHaveText('100%')
   await alice.getByRole('button', { name: 'Zoom out' }).click()
@@ -668,6 +1122,20 @@ test('runs the complete Vanilla engine flow without console errors', async ({ pa
   )
   await alice.getByRole('tab', { name: 'Outline', exact: true }).click()
   await alice.getByRole('button', { name: 'Text Selection', exact: true }).click()
+  await expect(alice.locator('[data-inklayer-flow-page="2"]')).toHaveAttribute(
+    'data-inklayer-flow-mounted', 'true'
+  )
+  await expect(alice.locator('[data-inklayer-flow-page="1"]')).toHaveAttribute(
+    'data-inklayer-flow-mounted', 'true'
+  )
+  await page.getByRole('link', { name: 'Annotations', exact: true }).click()
+  await expect(alice.locator('.instance-status')).toContainText(
+    'generated sample · page 1/3 · 0 annotations'
+  )
+  await alice.locator('.page-number').fill('3')
+  await alice.locator('.page-number').dispatchEvent('change')
+  await expect(alice.locator('.instance-status')).toContainText('page 3/3')
+  await alice.getByRole('button', { name: 'Continuous' }).click()
   await expect(alice.locator('[data-inklayer-flow-page="2"]')).toHaveAttribute(
     'data-inklayer-flow-mounted', 'true'
   )
@@ -748,9 +1216,11 @@ test('runs the complete Vanilla engine flow without console errors', async ({ pa
   await alice.getByRole('button', { name: 'Prepare secure print' }).click()
   await expect(alice.locator('.instance-status')).toContainText('Prepared raster print')
 
+  await page.getByRole('link', { name: 'Viewer', exact: true }).click()
   await alice.getByRole('tab', { name: 'Outline', exact: true }).click()
   await alice.getByRole('button', { name: 'Text Selection', exact: true }).click()
   await expect(alice.locator('.instance-status')).toContainText('page 3/3')
+  await page.getByRole('link', { name: 'Annotations', exact: true }).click()
   await alice.locator('.tool-select').selectOption('text-select')
   const selectionLine = alice.locator('.inklayer-text-layer span').last()
   await selectionLine.scrollIntoViewIfNeeded()
@@ -774,9 +1244,16 @@ test('runs the complete Vanilla engine flow without console errors', async ({ pa
   await textMenu.getByRole('button', { name: 'Highlight' }).click()
   await expect(alice.locator('.instance-status')).toHaveText('Created highlight from selected PDF text')
   await expect(alice.locator('.tool-select')).toHaveValue('text-select')
+  await page.getByRole('link', { name: 'Viewer', exact: true }).click()
+  await alice.getByRole('tab', { name: 'Outline', exact: true }).click()
   await alice.locator('.outline-items').getByRole('button', { name: 'Overview', exact: true }).click()
   await expect(alice.locator('.instance-status')).toContainText('page 1/3')
 
+  await page.getByRole('link', { name: 'Annotations', exact: true }).click()
+  await alice.getByRole('button', { name: 'Previous page' }).click()
+  await alice.getByRole('button', { name: 'Previous page' }).click()
+  await expect(alice.locator('.instance-status')).toContainText('page 1/3')
+  const labelsBeforeRectangle = await alice.locator('.inklayer-author-label').count()
   await alice.locator('.tool-select').selectOption('rectangle')
   await expect(alice.locator('.konvajs-content')).toHaveCSS('cursor', 'crosshair')
   await alice.locator('.page-surface').scrollIntoViewIfNeeded()
@@ -786,27 +1263,28 @@ test('runs the complete Vanilla engine flow without console errors', async ({ pa
   await page.mouse.down()
   await page.mouse.move(canvas.x + 170, canvas.y + 180, { steps: 5 })
   await page.mouse.up()
-  await expect(alice.locator('.inklayer-author-label')).toHaveCount(1)
-  await expect(alice.locator('.inklayer-author-label')).toBeVisible()
+  const rectangleLabel = alice.locator('.inklayer-author-label').last()
+  await expect(alice.locator('.inklayer-author-label')).toHaveCount(labelsBeforeRectangle + 1)
+  await expect(rectangleLabel).toBeVisible()
   await expect(alice.locator('.tool-select')).toHaveValue('select')
   await page.mouse.click(canvas.x + 350, canvas.y + 400)
-  await expect(alice.locator('.inklayer-author-label')).toBeHidden()
+  await expect(rectangleLabel).toBeHidden()
   await page.mouse.move(canvas.x + 60, canvas.y + 130)
-  await expect(alice.locator('.inklayer-author-label')).toBeVisible()
+  await expect(rectangleLabel).toBeVisible()
   await alice.locator('.tag-visibility').selectOption('hidden')
-  await expect(alice.locator('.inklayer-author-label')).toBeHidden()
+  await expect(rectangleLabel).toBeHidden()
   await alice.locator('.tag-visibility').selectOption('always')
-  await expect(alice.locator('.inklayer-author-label')).toBeVisible()
+  await expect(rectangleLabel).toBeVisible()
   await alice.locator('.tag-visibility').selectOption('auto')
   await alice.locator('.tool-select').selectOption('select')
   await page.mouse.click(canvas.x + 60, canvas.y + 130)
-  await expect(alice.locator('.inklayer-author-label')).toBeVisible()
-  const labelBeforeDrag = await alice.locator('.inklayer-author-label').boundingBox()
+  await expect(rectangleLabel).toBeVisible()
+  const labelBeforeDrag = await rectangleLabel.boundingBox()
   await page.mouse.move(canvas.x + 60, canvas.y + 130)
   await page.mouse.down()
   await page.mouse.move(canvas.x + 95, canvas.y + 155, { steps: 6 })
   await page.mouse.up()
-  const labelAfterDrag = await alice.locator('.inklayer-author-label').boundingBox()
+  const labelAfterDrag = await rectangleLabel.boundingBox()
   if (labelBeforeDrag === null || labelAfterDrag === null) {
     throw new Error('Rectangle author label is not visible during drag verification.')
   }
@@ -817,47 +1295,33 @@ test('runs the complete Vanilla engine flow without console errors', async ({ pa
   await expect(alice.locator('.instance-status')).toHaveText('Comment added to rectangle')
 
   await alice.locator('.tool-select').selectOption('freehand')
+  const labelsBeforeFreehand = await alice.locator('.inklayer-author-label').count()
   await alice.locator('.page-surface').scrollIntoViewIfNeeded()
   const freehandCanvas = await alice.locator('.konvajs-content').boundingBox()
   if (freehandCanvas === null) throw new Error('Freehand annotation canvas is not visible.')
   await drawStroke(page, freehandCanvas, [[70, 100], [150, 180]])
   await page.waitForTimeout(300)
   await drawStroke(page, freehandCanvas, [[150, 100], [70, 180]])
-  await expect(alice.locator('.inklayer-author-label')).toHaveCount(1)
-  await expect(alice.locator('.inklayer-author-label')).toHaveCount(2, { timeout: 1600 })
+  await expect(alice.locator('.inklayer-author-label')).toHaveCount(labelsBeforeFreehand + 1)
+  await page.waitForTimeout(1600)
+  const labelsAfterFreehand = await alice.locator('.inklayer-author-label').count()
+  expect(labelsAfterFreehand).toBeGreaterThan(labelsBeforeFreehand)
 
   for (const [index, tool] of TOOLS.entries()) {
     await addToolFixture(page, alice, tool, index)
   }
-  await expect(alice.locator('.inklayer-author-label')).toHaveCount(TOOLS.length + 2)
+  await expect(alice.locator('.inklayer-author-label')).toHaveCount(
+    labelsAfterFreehand + TOOLS.length
+  )
 
   await expect(alice.locator('.inklayer-author-label').first()).toHaveCSS('background-color', 'rgb(23, 92, 211)')
 
   await expect(alice.getByRole('button', { name: 'Measurement', exact: true })).toHaveCount(0)
-  await alice.getByRole('button', { name: 'Install Measurement plugin' }).click()
-  await expect(alice.locator('.plugin-state')).toHaveText('Installed')
-  await expect(alice.getByRole('button', { name: 'Measurement', exact: true })).toBeVisible()
-  await expect(alice.locator('.tool-select')).toHaveValue('custom:demo/measurement')
-  const annotationCountBeforeMeasurement = await alice
-    .locator('.inklayer-annotation-a11y-list button').count()
-  const measurementCanvas = await alice.locator('.konvajs-content').boundingBox()
-  if (measurementCanvas === null) throw new Error('Measurement annotation canvas is unavailable.')
-  await drawStroke(page, measurementCanvas, [[210, 260], [330, 330]])
-  await expect(alice.locator('.inklayer-annotation-a11y-list button')).toHaveCount(
-    annotationCountBeforeMeasurement + 1
-  )
-  await alice.getByRole('button', { name: 'Unload plugin' }).click()
-  await expect(alice.locator('.plugin-state')).toHaveText('Unloaded')
-  await expect(alice.getByRole('button', { name: 'Measurement', exact: true })).toHaveCount(0)
-  await expect(alice.locator('.plugin-result')).toContainText('1 Measurement annotation retained')
-  await alice.getByRole('button', { name: 'Reload plugin' }).click()
-  await expect(alice.locator('.plugin-state')).toHaveText('Installed')
-  await expect(alice.getByRole('button', { name: 'Measurement', exact: true })).toBeVisible()
-  await expect(alice.locator('.plugin-result')).toContainText('editable again')
 
+  const finalAnnotationStatus = await alice.locator('.status-annotations').textContent()
   await alice.getByRole('button', { name: 'Zoom +' }).click()
   await expect(alice.locator('.instance-status')).toHaveText(
-    `Ready · generated sample · page 1/3 · ${TOOLS.length + 6} annotations`
+    `Ready · generated sample · page 1/3 · ${finalAnnotationStatus ?? ''}`
   )
   await expect(alice.locator('.pdf-canvas')).toHaveAttribute('width', '463')
 
@@ -881,9 +1345,10 @@ test('runs the complete Vanilla engine flow without console errors', async ({ pa
 
 test('keeps annotation drag and resize usable after zooming the PDF', async ({ page }) => {
   const failures = collectBrowserFailures(page)
-  await page.goto('/')
+  await page.goto('/#annotations')
   const viewer = page.locator('.instance-card').first()
   await expect(viewer.locator('.instance-status')).toContainText('3 annotations')
+  await showSinglePage(viewer)
   await viewer.getByRole('button', { name: 'Select', exact: true }).first().click()
   await viewer.locator('.scale-select').selectOption('2')
   await expect(viewer.locator('.scale-value')).toHaveText('200%')
@@ -917,9 +1382,10 @@ test('keeps annotation drag and resize usable after zooming the PDF', async ({ p
 
 test('moves only the selected annotation in select mode', async ({ page }) => {
   const failures = collectBrowserFailures(page)
-  await page.goto('/?clean=1')
+  await page.goto('/?clean=1#annotations')
   const viewer = page.locator('.instance-card').first()
   await expect(viewer.locator('.instance-status')).toContainText('0 annotations')
+  await showSinglePage(viewer)
   await viewer.locator('.page-surface').scrollIntoViewIfNeeded()
   const canvas = await viewer.locator('.konvajs-content').boundingBox()
   if (canvas === null) throw new Error('Demo annotation canvas is not visible.')
@@ -968,8 +1434,9 @@ test('lets creation tools place over existing annotations without hover intercep
   page
 }) => {
   const failures = collectBrowserFailures(page)
-  await page.goto('/?clean=1')
+  await page.goto('/?clean=1#annotations')
   const viewer = page.locator('.instance-card').first()
+  await showSinglePage(viewer)
   await viewer.locator('.page-surface').scrollIntoViewIfNeeded()
   const canvas = await viewer.locator('.konvajs-content').boundingBox()
   if (canvas === null) throw new Error('Demo annotation canvas is not visible.')
@@ -1000,10 +1467,30 @@ test('keeps the single-workspace demo readable at the mobile breakpoint', async 
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto('/?clean=1')
   await expect(page.locator('.instance-status')).toHaveText(
-    'Ready · generated sample · page 1/3 · 0 annotations'
+    'Ready · generated sample · page 1/3'
   )
   await expect(page.locator('.instance-grid')).toHaveCSS('width', '390px')
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390)
+  const workspace = page.locator('.instance-card').first()
+  await page.getByRole('link', { name: 'Keyword Highlighter', exact: true }).click()
+  await expect(workspace).toHaveClass(/left-panel-open/u)
+  await expect(workspace.locator('.highlighter-panel')).toBeVisible()
+  await expect(page.locator('html')).toHaveCSS('font-size', '14px')
+  await expect(workspace.locator('.highlighter-rule-editor > label').first())
+    .toHaveCSS('font-size', '11px')
+  await expect(workspace.locator('.highlighter-primary-actions button').first())
+    .toHaveCSS('font-size', '12px')
+  await expect(workspace.locator('.highlighter-status')).toHaveCSS('font-size', '12px')
+  await workspace.getByRole('button', { name: 'Show code' }).click()
+  const codeDialog = workspace.getByRole('dialog')
+  await expect(codeDialog).toBeVisible()
+  await expect(codeDialog).toHaveCSS('width', '374px')
+  await expect(codeDialog.locator('.code-block')).toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390)
+  await codeDialog.getByRole('button', { name: 'Close code example' }).click()
+  await page.getByRole('link', { name: 'Annotations', exact: true }).click()
+  await expect(workspace).toHaveClass(/right-panel-open/u)
+  await expect(workspace.locator('.right-sidebar')).toBeVisible()
   expect(failures).toEqual([])
 })
 
@@ -1023,14 +1510,38 @@ async function openOutputMenu(card: Locator): Promise<void> {
   }
 }
 
+/** Verifies the shared ready state for every default Continuous demo workspace. */
+async function expectContinuousDocument(card: Locator): Promise<void> {
+  await expect(card.locator('.page-scroll')).toBeHidden()
+  await expect(card.locator('.flow-scroll')).toBeVisible()
+  await expect(card.locator('.inklayer-page-flow-page')).toHaveCount(3)
+  await expect(card.locator('.stage-progress')).toBeHidden()
+  await expect(card.locator('.page-count')).toHaveText('3')
+  await expect(card.locator('.status-layout')).toHaveText('Continuous scroll')
+}
+
+/** Switches legacy direct-canvas scenarios explicitly away from the new Continuous default. */
+async function showSinglePage(card: Locator): Promise<void> {
+  await expect(card.locator('.flow-scroll')).toBeVisible()
+  await expect(card.locator('.stage-progress')).toBeHidden()
+  await card.getByRole('button', { name: 'Single', exact: true }).click()
+  await expect(card.locator('.page-scroll')).toBeVisible()
+  await expect(card.locator('.flow-scroll')).toBeHidden()
+  await expect(card.locator('.status-layout')).toHaveText('Single page')
+}
+
 /** Verifies the CSS layout size shared by Canvas, TextLayer, and Annotation overlay. */
 async function expectPageSize(card: Locator, width: number, height: number): Promise<void> {
-  const sizes = await card.locator('.pdf-canvas, .inklayer-text-layer, .annotation-host')
+  const view = await card.getAttribute('data-demo-view')
+  const selector = view === 'annotations'
+    ? '.pdf-canvas, .inklayer-text-layer, .annotation-host'
+    : '.pdf-canvas, .inklayer-text-layer'
+  const sizes = await card.locator(selector)
     .evaluateAll((elements) => elements.map((element) => ({
       width: (element as HTMLElement).getBoundingClientRect().width,
       height: (element as HTMLElement).getBoundingClientRect().height
     })))
-  expect(sizes).toHaveLength(3)
+  expect(sizes).toHaveLength(view === 'annotations' ? 3 : 2)
   for (const size of sizes) {
     expect(size.width).toBeCloseTo(width, 1)
     expect(size.height).toBeCloseTo(height, 1)

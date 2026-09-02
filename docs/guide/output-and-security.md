@@ -4,6 +4,8 @@ Use the current annotations to export a PDF or Excel workbook, prepare an
 ordinary or password-protected PDF for printing, and control where a document
 watermark appears.
 
+Use the [Watermark demo](https://core.inklayer.dev/demo/#watermark) for the focused interactive example, or the [Redaction demo](https://core.inklayer.dev/demo/#redaction) for image-only sensitive-term output.
+
 > [!TIP] TIP
 > Core generates the output; your application decides whether to download it, upload it, or open the system print dialog.
 
@@ -111,7 +113,39 @@ open the print dialog; do not offer it as a replacement download or export for
 the protected document. A protected vector export requires a trusted backend
 that can decrypt, process, and re-encrypt the document.
 
+## Export a secure redacted PDF
+
+Use reviewed source ranges rather than annotation rectangles:
+
+```ts
+import { buildSecureRedactedPdf, downloadBlob } from '@inklayer-dev/core'
+
+const matches = highlighter.getSnapshot().matches
+  .filter(match => match.reviewState === 'included')
+
+const redacted = await buildSecureRedactedPdf({
+  viewer: core.viewer,
+  ranges: matches.map(match => match.range),
+  pixelRatio: 2,
+  margin: 1
+})
+
+downloadBlob({
+  content: redacted,
+  filename: 'review-redacted.pdf',
+  mimeType: 'application/pdf'
+})
+```
+
+Core first rasterizes each page, then paints opaque black boxes over resolved text geometry. The new PDF embeds only page images and never embeds the source bytes, source text, keyword rules, or match metadata. Consequently, all page text—not only covered text—loses selection, search, copy, and accessibility.
+
+The on-screen Highlighter preview may keep each rule's ordinary translucent color so users can review the underlying text. Preview color does not affect output: printing and `buildSecureRedactedPdf()` always paint accepted ranges as opaque black boxes.
+
+Do not substitute a black Rectangle annotation or an opaque PDF drawing command. Those approaches can leave the original text in the content stream. Core rejects empty ranges and documents that prohibit raster output. It cannot automatically detect sensitive pixels inside images, modify the original file, or erase copies stored elsewhere. Start with [Create your first keyword redaction](./first-keyword-redaction.md), then use [Secure keyword redaction](./keyword-redaction.md) for the production workflow and complete security boundary.
+
 ## Configure a watermark
+
+For a focused setup guide, start with [Document watermarks](./watermarks.md).
 
 ```ts
 import type { PdfWatermarkSpec } from '@inklayer-dev/core'

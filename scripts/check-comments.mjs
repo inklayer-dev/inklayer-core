@@ -11,7 +11,7 @@ import { extname, join, relative, resolve } from 'node:path'
 import ts from 'typescript'
 
 const projectRoot = resolve(import.meta.dirname, '..')
-const sourceRoots = ['src', 'tests', 'scripts', 'examples/vanilla']
+const sourceRoots = ['src', 'tests', 'scripts', 'examples/vanilla', 'examples/framework-consumers']
 const codeExtensions = new Set(['.ts', '.tsx', '.js', '.mjs', '.cjs'])
 
 /**

@@ -15,6 +15,9 @@ Core 负责返回结构化错误，应用负责决定向用户显示什么内容
 | 密码错误 | `passwordRequired` 事件，`reason` 为 `incorrect` | 保持当前密码框，使用活动的 `requestId` 再次提交密码。 |
 | 用户取消密码输入 | 当前加载返回 `PDF_PASSWORD_CANCELLED` | 返回文档选择界面，或者等待用户重新发起加载。 |
 | 应用主动取消加载 | 当前加载返回 `PDF_LOAD_CANCELLED` | 将取消视为正常结果；只在用户要求时重新加载。 |
+| 应用取消 `searchMany()` | 当前批量搜索返回 `PDF_FEATURE_CANCELLED` | 将取消视为正常结果；保留已加载文档，只在用户要求时开始新的搜索。 |
+| 应用取消 `resolveTextRanges()` | 当前几何计算返回 `PDF_FEATURE_CANCELLED` | 将取消视为正常结果；已加载文档及页面文字缓存仍然可用。 |
+| 临时文字高亮层输入无效 | 返回 `PDF_FEATURE_FAILED`，operation 为 `setTextHighlightLayers` 或 `clearTextHighlightLayers` | 修正重复/空白 ID、页面范围、激活索引、可见性或 CSS 颜色；此前保留的图层不会改变。 |
 | 页面、搜索、缩略图或栅格操作失败 | `PDF_FEATURE_FAILED`，通常带有 `operation` 和 `pageIndex` | 修正输入或浏览器资源问题后，只重试对应功能。 |
 | PDF 权限禁止打印 | `PDF_PERMISSION_DENIED` | 禁用打印，并说明该文档不允许打印。 |
 | Core 实例已经销毁 | `ENGINE_DESTROYED` | 创建新实例；已经销毁的实例不能重新启动。 |

@@ -1,7 +1,7 @@
 /**
  * @file Generation-scoped PDF document feature controller.
- * @description Owns outline resolution, normalized full-document search,
- * thumbnail rendering/cache, cancellation, and platform surface cleanup.
+ * @description Owns outline resolution, literal and isolated regex search,
+ * text geometry, thumbnail rendering/cache, cancellation, and surface cleanup.
  * @remarks It exposes no product panels and becomes invalid when its document
  * generation is replaced or destroyed.
  */
@@ -11,7 +11,8 @@ import type {
   PDFPageProxy,
   RefProxy,
   RenderTask,
-  TextItem
+  TextItem,
+  TextStyle
 } from 'pdfjs-dist/types/src/display/api'
 import { InkLayerError } from '../domain/errors'
 import type {
@@ -19,14 +20,29 @@ import type {
   PdfOutlineItem,
   PdfPageRaster,
   PdfPageRasterOptions,
+  PdfResolvedTextRange,
+  PdfResolveTextRangesOptions,
+  PdfSearchManyInputQuery,
   PdfSearchMatch,
+  PdfSearchManyOptions,
+  PdfSearchManyProgress,
+  PdfSearchManyQueryResult,
+  PdfSearchManyResult,
   PdfSearchOptions,
   PdfSearchResult,
   PdfThumbnail,
   PdfThumbnailOptions,
   PdfThumbnailSurface,
-  PdfThumbnailSurfaceProvider
+  PdfThumbnailSurfaceProvider,
+  PdfTextRange,
+  PdfTextSelectionRect
 } from './types'
+import {
+  createBrowserRegexMatcher,
+  type RegexMatcherFactory,
+  type RegexMatcherSession
+} from './regex-matcher'
+import type { RegexMatcherQueryResult } from './regex-matcher-protocol'
 
 interface RawOutlineItem {
   title: string
@@ -38,22 +54,62 @@ interface RawOutlineItem {
   items: readonly unknown[]
 }
 
+interface PreparedSearchManyQueryBase {
+  readonly id: string
+  readonly query: string
+  readonly maxResults: number
+  readonly matches: PdfSearchMatch[]
+  truncated: boolean
+}
+
+interface PreparedTextSearchManyQuery extends PreparedSearchManyQueryBase {
+  readonly kind: 'text'
+  readonly needle: string
+  readonly matchCase: boolean
+  readonly matchDiacritics: boolean
+  readonly wholeWord: boolean
+}
+
+interface PreparedRegexSearchManyQuery extends PreparedSearchManyQueryBase {
+  readonly kind: 'regex'
+  readonly source: string
+  readonly flags: string
+}
+
+type PreparedSearchManyQuery = PreparedTextSearchManyQuery | PreparedRegexSearchManyQuery
+
+interface PageTextSpan {
+  readonly start: number
+  readonly end: number
+  readonly item: TextItem
+  readonly style: TextStyle | undefined
+}
+
+interface PageTextData {
+  readonly page: PDFPageProxy
+  readonly text: string
+  readonly spans: readonly PageTextSpan[]
+}
+
 /** Owns asynchronous document sub-features for one loaded generation. */
 export class PdfDocumentFeatures {
   private readonly document: PDFDocumentProxy
   private readonly surfaceProvider: PdfThumbnailSurfaceProvider
+  private readonly regexMatcherFactory: RegexMatcherFactory
   private readonly controller = new AbortController()
-  private readonly textCache = new Map<number, Promise<string>>()
+  private readonly textCache = new Map<number, Promise<PageTextData>>()
   private readonly thumbnailCache = new Map<string, Promise<PdfThumbnail>>()
   private readonly renderTasks = new Set<RenderTask>()
 
   /** Creates a controller around one live PDF.js document. */
   public constructor(
     document: PDFDocumentProxy,
-    surfaceProvider: PdfThumbnailSurfaceProvider | undefined
+    surfaceProvider: PdfThumbnailSurfaceProvider | undefined,
+    regexMatcherFactory: RegexMatcherFactory = createBrowserRegexMatcher
   ) {
     this.document = document
     this.surfaceProvider = surfaceProvider ?? createBrowserThumbnailSurfaceProvider()
+    this.regexMatcherFactory = regexMatcherFactory
   }
 
   /** Resolves and sanitizes the document outline tree. */
@@ -110,12 +166,7 @@ export class PdfDocumentFeatures {
     this.assertActive('search')
     const normalizedQuery = query.trim()
     if (normalizedQuery.length === 0) return { query: '', matches: [], truncated: false }
-    const maxResults = options.maxResults ?? 1_000
-    if (!Number.isSafeInteger(maxResults) || maxResults <= 0 || maxResults > 100_000) {
-      throw new InkLayerError('PDF_FEATURE_FAILED', 'Search result limit is invalid.', {
-        operation: 'search'
-      })
-    }
+    const maxResults = validateSearchResultLimit(options.maxResults, 'search')
     const matchCase = options.matchCase ?? false
     const matchDiacritics = options.matchDiacritics ?? false
     const needle = normalizeSearchValue(normalizedQuery, matchCase, matchDiacritics).text
@@ -145,6 +196,7 @@ export class PdfDocumentFeatures {
             matchIndex: pageMatchIndex,
             start: sourceStart,
             length: sourceLength,
+            text: pageText.slice(sourceStart, sourceStart + sourceLength),
             preview: createSearchPreview(pageText, sourceStart, sourceLength)
           })
           pageMatchIndex += 1
@@ -156,6 +208,136 @@ export class PdfDocumentFeatures {
       return { query: normalizedQuery, matches, truncated: false }
     } catch (cause) {
       throw this.normalizeFeatureError(cause, 'search')
+    }
+  }
+
+  /** Searches ordered queries while extracting each document page at most once. */
+  public async searchMany(
+    queries: readonly PdfSearchManyInputQuery[],
+    options: PdfSearchManyOptions = {}
+  ): Promise<PdfSearchManyResult> {
+    this.assertSearchManyActive(options.signal)
+    const prepared = prepareSearchManyQueries(queries)
+    const maxTotalResults = validateSearchManyTotalLimit(options.maxTotalResults)
+    if (prepared.every((query) => !isPreparedQueryActive(query))) {
+      return createSearchManyResult(prepared, false)
+    }
+    const hasRegex = prepared.some((query) => query.kind === 'regex')
+    let regexMatcher: RegexMatcherSession | null = null
+    let regexAbort: AbortController | null = null
+    let removeRegexAbort = (): void => undefined
+    const totalPages = this.document.numPages
+    let totalResults = 0
+    let batchTruncated = false
+    try {
+      if (hasRegex) {
+        regexMatcher = this.regexMatcherFactory()
+        const composed = composeSearchManyAbort(this.controller.signal, options.signal)
+        regexAbort = composed.controller
+        removeRegexAbort = composed.cleanup
+      }
+      reportSearchManyProgress(options.onProgress, 0, totalPages)
+      for (let pageIndex = 0; pageIndex < totalPages; pageIndex += 1) {
+        this.assertSearchManyActive(options.signal)
+        const pageText = await waitForSearchMany(
+          this.getPageText(pageIndex),
+          this.controller.signal,
+          options.signal
+        )
+        this.assertSearchManyActive(options.signal)
+        const normalizedPages = new Map<string, NormalizedSearchValue>()
+        const regexResults = regexMatcher === null || regexAbort === null
+          ? new Map<string, RegexMatcherQueryResult>()
+          : new Map((await regexMatcher.matchPage(
+              pageText,
+              prepared.flatMap((query) => query.kind !== 'regex'
+                || query.truncated || query.matches.length >= query.maxResults
+                ? []
+                : [{
+                    id: query.id,
+                    source: query.source,
+                    flags: query.flags,
+                    maxResults: query.maxResults - query.matches.length
+                  }]),
+              regexAbort.signal
+            )).map((result) => [result.id, result]))
+        this.assertSearchManyActive(options.signal)
+        for (const query of prepared) {
+          if (!isPreparedQueryActive(query)) continue
+          const pageMatches = query.kind === 'text'
+            ? findLiteralPageMatches(query, pageText, normalizedPages)
+            : regexResults.get(query.id)?.matches ?? []
+          for (const [pageMatchIndex, match] of pageMatches.entries()) {
+            this.assertSearchManyActive(options.signal)
+            query.matches.push(createBatchSearchMatch(
+              pageText,
+              pageIndex,
+              pageMatchIndex,
+              match.start,
+              match.length
+            ))
+            totalResults += 1
+            if (totalResults >= maxTotalResults) {
+              batchTruncated = true
+              if (query.matches.length >= query.maxResults) query.truncated = true
+              break
+            }
+            if (query.matches.length >= query.maxResults) {
+              query.truncated = true
+              break
+            }
+          }
+          if (batchTruncated) break
+        }
+        reportSearchManyProgress(options.onProgress, pageIndex + 1, totalPages)
+        if (batchTruncated
+          || prepared.every((query) => !isPreparedQueryActive(query))) break
+      }
+      this.assertSearchManyActive(options.signal)
+      return createSearchManyResult(prepared, batchTruncated)
+    } catch (cause) {
+      if (cause instanceof InkLayerError) throw cause
+      throw this.normalizeFeatureError(cause, 'searchMany')
+    } finally {
+      removeRegexAbort()
+      regexMatcher?.destroy()
+    }
+  }
+
+  /** Resolves UTF-16 page-text ranges without requiring a mounted TextLayer. */
+  public async resolveTextRanges(
+    ranges: readonly PdfTextRange[],
+    options: PdfResolveTextRangesOptions = {}
+  ): Promise<readonly PdfResolvedTextRange[]> {
+    this.assertTextRangeActive(options.signal)
+    const prepared = validateTextRanges(ranges, this.document.numPages)
+    const pages = new Map<number, {
+      readonly data: PageTextData
+      readonly viewport: ReturnType<PDFPageProxy['getViewport']>
+    }>()
+    const resolved: PdfResolvedTextRange[] = []
+    const measureText = createBrowserTextMeasurer()
+    try {
+      for (const range of prepared) {
+        this.assertTextRangeActive(options.signal)
+        let page = pages.get(range.pageIndex)
+        if (page === undefined) {
+          const data = await waitForTextRanges(
+            this.getPageTextData(range.pageIndex),
+            this.controller.signal,
+            options.signal
+          )
+          this.assertTextRangeActive(options.signal)
+          page = { data, viewport: data.page.getViewport({ scale: 1 }) }
+          pages.set(range.pageIndex, page)
+        }
+        resolved.push(resolveTextRange(range, page.data, page.viewport, measureText))
+      }
+      this.assertTextRangeActive(options.signal)
+      return resolved
+    } catch (cause) {
+      if (cause instanceof InkLayerError) throw cause
+      throw this.normalizeFeatureError(cause, 'resolveTextRanges')
     }
   }
 
@@ -271,9 +453,14 @@ export class PdfDocumentFeatures {
 
   /** Returns cached normalized text for one zero-based page. */
   private async getPageText(pageIndex: number): Promise<string> {
+    return (await this.getPageTextData(pageIndex)).text
+  }
+
+  /** Returns cached source text, item offsets, and the owning PDF.js page. */
+  private async getPageTextData(pageIndex: number): Promise<PageTextData> {
     const cached = this.textCache.get(pageIndex)
     if (cached !== undefined) return await cached
-    const pending = this.extractPageText(pageIndex)
+    const pending = this.extractPageTextData(pageIndex)
     this.textCache.set(pageIndex, pending)
     try {
       return await pending
@@ -284,15 +471,27 @@ export class PdfDocumentFeatures {
   }
 
   /** Extracts one page's text with stable line separators. */
-  private async extractPageText(pageIndex: number): Promise<string> {
+  private async extractPageTextData(pageIndex: number): Promise<PageTextData> {
     validatePageIndex(pageIndex, this.document.numPages)
     const page = await this.document.getPage(pageIndex + 1)
     this.assertActive('search')
     const content = await page.getTextContent()
     this.assertActive('search')
-    return content.items.map((item) => isTextItem(item)
-      ? `${item.str}${item.hasEOL ? '\n' : ''}`
-      : '').join('')
+    const text: string[] = []
+    const spans: PageTextSpan[] = []
+    let offset = 0
+    for (const item of content.items) {
+      if (!isTextItem(item)) continue
+      const start = offset
+      text.push(item.str)
+      offset += item.str.length
+      spans.push({ start, end: offset, item, style: content.styles[item.fontName] })
+      if (item.hasEOL) {
+        text.push('\n')
+        offset += 1
+      }
+    }
+    return { page, text: text.join(''), spans }
   }
 
   /** Performs one uncached page render and PNG encoding. */
@@ -338,6 +537,20 @@ export class PdfDocumentFeatures {
     }
   }
 
+  /** Rejects caller, document-generation, and destruction cancellation uniformly. */
+  private assertSearchManyActive(signal: AbortSignal | undefined): void {
+    if (this.controller.signal.aborted || signal?.aborted === true) {
+      throw searchManyCancelled()
+    }
+  }
+
+  /** Rejects caller, document-generation, and destruction cancellation uniformly. */
+  private assertTextRangeActive(signal: AbortSignal | undefined): void {
+    if (this.controller.signal.aborted || signal?.aborted === true) {
+      throw textRangesCancelled()
+    }
+  }
+
   /** Converts unknown feature failures into one structured Core error. */
   private normalizeFeatureError(
     cause: unknown,
@@ -351,6 +564,528 @@ export class PdfDocumentFeatures {
       cause
     })
   }
+}
+
+const MAX_SEARCH_QUERY_ID_LENGTH = 512
+const MAX_SEARCH_MANY_QUERIES = 10_000
+const MAX_REGEX_SOURCE_LENGTH = 16_384
+const DEFAULT_SEARCH_RESULT_LIMIT = 1_000
+const MAX_SEARCH_RESULT_LIMIT = 100_000
+const DEFAULT_SEARCH_MANY_TOTAL_LIMIT = 100_000
+const MAX_SEARCH_MANY_TOTAL_LIMIT = 1_000_000
+
+/** Validates and detaches source ranges before any page work starts. */
+function validateTextRanges(
+  ranges: readonly PdfTextRange[],
+  pageCount: number
+): PdfTextRange[] {
+  if (!Array.isArray(ranges)) {
+    throw textRangeFailure('PDF text ranges must be an array.')
+  }
+  return ranges.map((range) => {
+    if (typeof range !== 'object' || range === null
+      || !Number.isSafeInteger(range.pageIndex)
+      || !Number.isSafeInteger(range.start)
+      || !Number.isSafeInteger(range.length)
+      || range.pageIndex < 0 || range.pageIndex >= pageCount
+      || range.start < 0 || range.length <= 0
+      || !Number.isSafeInteger(range.start + range.length)) {
+      throw textRangeFailure(
+        'PDF text range is invalid.',
+        typeof range === 'object' && range !== null && Number.isSafeInteger(range.pageIndex)
+          ? range.pageIndex
+          : undefined
+      )
+    }
+    return { pageIndex: range.pageIndex, start: range.start, length: range.length }
+  })
+}
+
+/** Resolves one validated range against exact extracted-text item boundaries. */
+function resolveTextRange(
+  range: PdfTextRange,
+  page: PageTextData,
+  viewport: ReturnType<PDFPageProxy['getViewport']>,
+  measureText: TextMeasurer | null
+): PdfResolvedTextRange {
+  const end = range.start + range.length
+  if (end > page.text.length
+    || !isUtf16Boundary(page.text, range.start)
+    || !isUtf16Boundary(page.text, end)) {
+    throw textRangeFailure(
+      'PDF text range is outside the extracted page text or splits a surrogate pair.',
+      range.pageIndex
+    )
+  }
+  const rects: PdfTextSelectionRect[] = []
+  for (const span of page.spans) {
+    if (span.end <= range.start) continue
+    if (span.start >= end) break
+    const localStart = Math.max(range.start, span.start) - span.start
+    const localEnd = Math.min(end, span.end) - span.start
+    if (localEnd <= localStart) continue
+    rects.push(resolveTextItemRect(
+      span.item,
+      localStart,
+      localEnd,
+      viewport,
+      range.pageIndex,
+      span.style,
+      measureText
+    ))
+  }
+  if (rects.length === 0) {
+    throw textRangeFailure(
+      'PDF text range contains no text item geometry.',
+      range.pageIndex
+    )
+  }
+  return {
+    pageIndex: range.pageIndex,
+    start: range.start,
+    length: range.length,
+    text: page.text.slice(range.start, end),
+    rects
+  }
+}
+
+/** Projects one selected TextItem slice through the scale-one page viewport. */
+function resolveTextItemRect(
+  item: TextItem,
+  start: number,
+  end: number,
+  viewport: ReturnType<PDFPageProxy['getViewport']>,
+  pageIndex: number,
+  style: TextStyle | undefined,
+  measureText: TextMeasurer | null
+): PdfTextSelectionRect {
+  const itemTransform = finiteMatrix(item.transform)
+  const viewportTransform = finiteMatrix(viewport.transform)
+  if (itemTransform === null || viewportTransform === null
+    || !Number.isFinite(item.width) || item.width <= 0
+    || !Number.isFinite(item.height) || item.height <= 0
+    || item.str.length === 0 || start < 0 || end > item.str.length || end <= start
+    || !isUtf16Boundary(item.str, start) || !isUtf16Boundary(item.str, end)) {
+    throw textRangeFailure('PDF text item has no exact usable geometry.', pageIndex)
+  }
+  const transform = multiplyMatrices(viewportTransform, itemTransform)
+  const directionLength = Math.hypot(transform[0], transform[1])
+  const userUnit = typeof viewport.userUnit === 'number' && Number.isFinite(viewport.userUnit)
+    ? Math.abs(viewport.userUnit)
+    : 1
+  const advanceLength = item.width * userUnit
+  if (directionLength <= 0 || advanceLength <= 0) {
+    throw textRangeFailure('PDF text item has degenerate advance geometry.', pageIndex)
+  }
+  const directionX = transform[0] / directionLength
+  const directionY = transform[1] / directionLength
+  let [startRatio, endRatio] = resolveTextAdvanceRatios(
+    item.str,
+    start,
+    end,
+    style,
+    measureText
+  )
+  if (item.dir === 'rtl') {
+    const logicalStartRatio = startRatio
+    startRatio = 1 - endRatio
+    endRatio = 1 - logicalStartRatio
+  }
+  const startX = transform[4] + (directionX * advanceLength * startRatio)
+  const startY = transform[5] + (directionY * advanceLength * startRatio)
+  const endX = transform[4] + (directionX * advanceLength * endRatio)
+  const endY = transform[5] + (directionY * advanceLength * endRatio)
+  const points: Array<readonly [number, number]> = [
+    [startX, startY],
+    [endX, endY],
+    [endX + transform[2], endY + transform[3]],
+    [startX + transform[2], startY + transform[3]]
+  ]
+  const xs = points.map(([x]) => x)
+  const ys = points.map(([, y]) => y)
+  const left = Math.max(0, Math.min(...xs))
+  const top = Math.max(0, Math.min(...ys))
+  const right = Math.min(viewport.width, Math.max(...xs))
+  const bottom = Math.min(viewport.height, Math.max(...ys))
+  if (![left, top, right, bottom].every(Number.isFinite)
+    || right - left <= 0 || bottom - top <= 0) {
+    throw textRangeFailure('PDF text item geometry falls outside the page viewport.', pageIndex)
+  }
+  return { x: left, y: top, width: right - left, height: bottom - top }
+}
+
+type TextMeasurer = (value: string, fontFamily: string) => number | null
+
+/** Uses the browser's loaded PDF.js font to retain proportional glyph advances. */
+function createBrowserTextMeasurer(): TextMeasurer | null {
+  if (typeof document === 'undefined') return null
+  try {
+    const context = document.createElement('canvas').getContext('2d')
+    if (context === null) return null
+    return (value, fontFamily) => {
+      try {
+        context.font = `100px ${fontFamily}`
+        const width = context.measureText(value).width
+        return Number.isFinite(width) && width >= 0 ? width : null
+      } catch {
+        return null
+      }
+    }
+  } catch {
+    return null
+  }
+}
+
+/** Resolves substring advances, with a deterministic linear fallback off-browser. */
+function resolveTextAdvanceRatios(
+  value: string,
+  start: number,
+  end: number,
+  style: TextStyle | undefined,
+  measureText: TextMeasurer | null
+): [number, number] {
+  const fallback: [number, number] = [start / value.length, end / value.length]
+  if (measureText === null || style === undefined || style.vertical) return fallback
+  const total = measureText(value, style.fontFamily)
+  const startWidth = measureText(value.slice(0, start), style.fontFamily)
+  const endWidth = measureText(value.slice(0, end), style.fontFamily)
+  if (total === null || startWidth === null || endWidth === null || total <= 0
+    || startWidth < 0 || endWidth <= startWidth || endWidth > total) return fallback
+  return [startWidth / total, endWidth / total]
+}
+
+/** Multiplies two PDF-style affine matrices. */
+function multiplyMatrices(
+  first: readonly [number, number, number, number, number, number],
+  second: readonly [number, number, number, number, number, number]
+): [number, number, number, number, number, number] {
+  return [
+    (first[0] * second[0]) + (first[2] * second[1]),
+    (first[1] * second[0]) + (first[3] * second[1]),
+    (first[0] * second[2]) + (first[2] * second[3]),
+    (first[1] * second[2]) + (first[3] * second[3]),
+    (first[0] * second[4]) + (first[2] * second[5]) + first[4],
+    (first[1] * second[4]) + (first[3] * second[5]) + first[5]
+  ]
+}
+
+/** Returns one finite six-value affine matrix or null. */
+function finiteMatrix(value: readonly unknown[]): [number, number, number, number, number, number] | null {
+  if (!Array.isArray(value) || value.length !== 6 || !value.every(Number.isFinite)) return null
+  return value as [number, number, number, number, number, number]
+}
+
+/** Prevents caller ranges from bisecting one UTF-16 surrogate pair. */
+function isUtf16Boundary(value: string, offset: number): boolean {
+  if (offset <= 0 || offset >= value.length) return true
+  const previous = value.charCodeAt(offset - 1)
+  const next = value.charCodeAt(offset)
+  return !(previous >= 0xD800 && previous <= 0xDBFF && next >= 0xDC00 && next <= 0xDFFF)
+}
+
+/** Creates one structured exact-range validation or projection failure. */
+function textRangeFailure(message: string, pageIndex?: number): InkLayerError {
+  return new InkLayerError('PDF_FEATURE_FAILED', message, {
+    operation: 'resolveTextRanges',
+    ...(pageIndex === undefined ? {} : { pageIndex })
+  })
+}
+
+interface SourceSearchMatch {
+  readonly start: number
+  readonly length: number
+}
+
+/** Returns whether one prepared query can still contribute results. */
+function isPreparedQueryActive(query: PreparedSearchManyQuery): boolean {
+  return !query.truncated && query.matches.length < query.maxResults
+    && (query.kind === 'regex' || query.needle.length > 0)
+}
+
+/** Finds one literal query on a page while reusing normalization variants. */
+function findLiteralPageMatches(
+  query: PreparedTextSearchManyQuery,
+  pageText: string,
+  normalizedPages: Map<string, NormalizedSearchValue>
+): SourceSearchMatch[] {
+  const normalizationKey = `${String(query.matchCase)}:${String(query.matchDiacritics)}`
+  let normalizedPage = normalizedPages.get(normalizationKey)
+  if (normalizedPage === undefined) {
+    normalizedPage = normalizeSearchValue(pageText, query.matchCase, query.matchDiacritics)
+    normalizedPages.set(normalizationKey, normalizedPage)
+  }
+  const matches: SourceSearchMatch[] = []
+  let cursor = 0
+  while (cursor <= normalizedPage.text.length - query.needle.length) {
+    const start = normalizedPage.text.indexOf(query.needle, cursor)
+    if (start < 0) break
+    cursor = start + query.needle.length
+    if (query.wholeWord && !isWholeWord(normalizedPage.text, start, query.needle.length)) continue
+    const sourceStart = normalizedPage.starts[start] ?? start
+    const sourceEnd = normalizedPage.ends[start + query.needle.length - 1]
+      ?? sourceStart + query.needle.length
+    matches.push({ start: sourceStart, length: sourceEnd - sourceStart })
+    if (query.matches.length + matches.length >= query.maxResults) break
+  }
+  return matches
+}
+
+/** Projects one source match into the public batch-search result shape. */
+function createBatchSearchMatch(
+  pageText: string,
+  pageIndex: number,
+  matchIndex: number,
+  start: number,
+  length: number
+): PdfSearchMatch {
+  return {
+    pageIndex,
+    matchIndex,
+    start,
+    length,
+    text: pageText.slice(start, start + length),
+    preview: createSearchPreview(pageText, start, length)
+  }
+}
+
+/** Validates and prepares detached mutable accumulators for batch search. */
+function prepareSearchManyQueries(
+  queries: readonly PdfSearchManyInputQuery[]
+): PreparedSearchManyQuery[] {
+  if (!Array.isArray(queries)) {
+    throw new InkLayerError('PDF_FEATURE_FAILED', 'Batch search queries must be an array.', {
+      operation: 'searchMany'
+    })
+  }
+  if (queries.length > MAX_SEARCH_MANY_QUERIES) {
+    throw new InkLayerError('PDF_FEATURE_FAILED', 'Batch search contains too many queries.', {
+      operation: 'searchMany'
+    })
+  }
+  const ids = new Set<string>()
+  return queries.map((input) => {
+    if (typeof input !== 'object' || input === null
+      || typeof input.id !== 'string' || input.id.trim().length === 0
+      || input.id.length > MAX_SEARCH_QUERY_ID_LENGTH) {
+      throw new InkLayerError('PDF_FEATURE_FAILED', 'Batch search query is invalid.', {
+        operation: 'searchMany'
+      })
+    }
+    if (ids.has(input.id)) {
+      throw new InkLayerError('PDF_FEATURE_FAILED', 'Batch search query identifiers must be unique.', {
+        operation: 'searchMany'
+      })
+    }
+    ids.add(input.id)
+    if ('kind' in input) {
+      if (input.kind !== 'regex' || typeof input.source !== 'string'
+        || input.source.trim().length === 0 || input.source.length > MAX_REGEX_SOURCE_LENGTH) {
+        throw searchManyFailure('Batch regular-expression query is invalid.')
+      }
+      const flags = normalizeRegexFlags(input.options?.flags)
+      validateRegexSyntax(input.source, flags)
+      return {
+        id: input.id,
+        kind: 'regex',
+        query: input.source,
+        source: input.source,
+        flags,
+        maxResults: validateSearchResultLimit(input.options?.maxResults, 'searchMany'),
+        matches: [],
+        truncated: false
+      }
+    }
+    if (typeof input.query !== 'string') {
+      throw searchManyFailure('Batch search query is invalid.')
+    }
+    const query = input.query.trim()
+    const matchCase = input.options?.matchCase ?? false
+    const matchDiacritics = input.options?.matchDiacritics ?? false
+    const maxResults = validateSearchResultLimit(
+      input.options?.maxResults,
+      'searchMany'
+    )
+    return {
+      id: input.id,
+      kind: 'text',
+      query,
+      needle: query.length === 0
+        ? ''
+        : normalizeSearchValue(query, matchCase, matchDiacritics).text,
+      matchCase,
+      matchDiacritics,
+      wholeWord: input.options?.wholeWord ?? false,
+      maxResults,
+      matches: [],
+      truncated: false
+    }
+  })
+}
+
+/** Forwards document and caller cancellation into one Worker-owned signal. */
+function composeSearchManyAbort(
+  documentSignal: AbortSignal,
+  callerSignal: AbortSignal | undefined
+): { readonly controller: AbortController; readonly cleanup: () => void } {
+  const controller = new AbortController()
+  const cancel = (): void => controller.abort()
+  documentSignal.addEventListener('abort', cancel, { once: true })
+  callerSignal?.addEventListener('abort', cancel, { once: true })
+  if (documentSignal.aborted || callerSignal?.aborted === true) controller.abort()
+  return {
+    controller,
+    cleanup: () => {
+      documentSignal.removeEventListener('abort', cancel)
+      callerSignal?.removeEventListener('abort', cancel)
+    }
+  }
+}
+
+/** Canonicalizes the supported serializable regex flags. */
+function normalizeRegexFlags(value: string | undefined): string {
+  const flags = value ?? ''
+  if (typeof flags !== 'string' || !/^[imsu]*$/u.test(flags)
+    || new Set(flags).size !== flags.length) {
+    throw searchManyFailure('Batch regular-expression flags are invalid.')
+  }
+  return [...flags].sort((left, right) => 'imsu'.indexOf(left) - 'imsu'.indexOf(right)).join('')
+}
+
+/** Compiles one pattern during atomic preflight without executing it. */
+function validateRegexSyntax(source: string, flags: string): void {
+  try {
+    void new RegExp(source, flags)
+  } catch (cause) {
+    throw new InkLayerError(
+      'PDF_FEATURE_FAILED',
+      'Batch regular-expression syntax is invalid.',
+      { operation: 'searchMany', cause }
+    )
+  }
+}
+
+/** Validates the optional batch-wide retained-match limit. */
+function validateSearchManyTotalLimit(value: number | undefined): number {
+  const limit = value ?? DEFAULT_SEARCH_MANY_TOTAL_LIMIT
+  if (!Number.isSafeInteger(limit) || limit <= 0 || limit > MAX_SEARCH_MANY_TOTAL_LIMIT) {
+    throw new InkLayerError('PDF_FEATURE_FAILED', 'Batch search result limit is invalid.', {
+      operation: 'searchMany'
+    })
+  }
+  return limit
+}
+
+/** Validates one ordinary or batched per-query retained-match limit. */
+function validateSearchResultLimit(value: number | undefined, operation: string): number {
+  const limit = value ?? DEFAULT_SEARCH_RESULT_LIMIT
+  if (!Number.isSafeInteger(limit) || limit <= 0 || limit > MAX_SEARCH_RESULT_LIMIT) {
+    throw new InkLayerError('PDF_FEATURE_FAILED', 'Search result limit is invalid.', {
+      operation
+    })
+  }
+  return limit
+}
+
+/** Creates a fully detached immutable-shaped result from private accumulators. */
+function createSearchManyResult(
+  queries: readonly PreparedSearchManyQuery[],
+  truncated: boolean
+): PdfSearchManyResult {
+  const results: PdfSearchManyQueryResult[] = queries.map((query) => ({
+    id: query.id,
+    query: query.query,
+    matches: query.matches.map((match) => ({ ...match })),
+    truncated: query.truncated
+  }))
+  return { queries: results, truncated }
+}
+
+/** Reports one detached monotonic progress value. */
+function reportSearchManyProgress(
+  listener: ((progress: PdfSearchManyProgress) => void) | undefined,
+  completedPages: number,
+  totalPages: number
+): void {
+  listener?.({
+    completedPages,
+    totalPages,
+    percentage: totalPages === 0 ? 100 : Math.round((completedPages / totalPages) * 100)
+  })
+}
+
+/** Awaits one shared extraction promise while permitting prompt caller cancellation. */
+async function waitForSearchMany<T>(
+  work: Promise<T>,
+  documentSignal: AbortSignal,
+  callerSignal: AbortSignal | undefined
+): Promise<T> {
+  if (documentSignal.aborted || callerSignal?.aborted === true) throw searchManyCancelled()
+  return await new Promise<T>((resolve, reject) => {
+    const cancel = (): void => {
+      cleanup()
+      reject(searchManyCancelled())
+    }
+    const cleanup = (): void => {
+      documentSignal.removeEventListener('abort', cancel)
+      callerSignal?.removeEventListener('abort', cancel)
+    }
+    documentSignal.addEventListener('abort', cancel, { once: true })
+    callerSignal?.addEventListener('abort', cancel, { once: true })
+    void work.then((value) => {
+      cleanup()
+      resolve(value)
+    }, (cause: unknown) => {
+      cleanup()
+      reject(cause)
+    })
+  })
+}
+
+/** Awaits shared page data while permitting prompt range-resolution cancellation. */
+async function waitForTextRanges<T>(
+  work: Promise<T>,
+  documentSignal: AbortSignal,
+  callerSignal: AbortSignal | undefined
+): Promise<T> {
+  if (documentSignal.aborted || callerSignal?.aborted === true) throw textRangesCancelled()
+  return await new Promise<T>((resolve, reject) => {
+    const cancel = (): void => {
+      cleanup()
+      reject(textRangesCancelled())
+    }
+    const cleanup = (): void => {
+      documentSignal.removeEventListener('abort', cancel)
+      callerSignal?.removeEventListener('abort', cancel)
+    }
+    documentSignal.addEventListener('abort', cancel, { once: true })
+    callerSignal?.addEventListener('abort', cancel, { once: true })
+    void work.then((value) => {
+      cleanup()
+      resolve(value)
+    }, (cause: unknown) => {
+      cleanup()
+      reject(cause)
+    })
+  })
+}
+
+/** Returns the stable cancellation error shared by every batch-search exit. */
+function searchManyCancelled(): InkLayerError {
+  return new InkLayerError('PDF_FEATURE_CANCELLED', 'PDF batch search was cancelled.', {
+    operation: 'searchMany'
+  })
+}
+
+/** Returns one structured batch-query validation failure. */
+function searchManyFailure(message: string): InkLayerError {
+  return new InkLayerError('PDF_FEATURE_FAILED', message, { operation: 'searchMany' })
+}
+
+/** Returns the stable cancellation error for text-range geometry work. */
+function textRangesCancelled(): InkLayerError {
+  return new InkLayerError('PDF_FEATURE_CANCELLED', 'PDF text range resolution was cancelled.', {
+    operation: 'resolveTextRanges'
+  })
 }
 
 /** Creates the default browser canvas allocation and PNG encoding port. */

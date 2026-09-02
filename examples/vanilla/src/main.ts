@@ -8,6 +8,7 @@ import type { PDFDocumentProxy } from 'pdfjs-dist'
 import passwordPdfUrl from '../../../tests/fixtures/pdf/pr6531_1.pdf?url'
 
 import {
+  buildSecureRedactedPdf,
   buildSecureRasterPrintPdf,
   createAnnotationEngine,
   createBrowserThumbnailSurfaceProvider,
@@ -37,14 +38,37 @@ import {
   importPdfJsAnnotationsWithMetadata,
   type ImportPdfJsAnnotationsWithMetadataResult
 } from '@inklayer-dev/core/import/pdfjs'
+import {
+  createKeywordHighlighter,
+  type KeywordHighlighter,
+  type KeywordHighlighterSnapshot
+} from '@inklayer-dev/core/highlighter'
 import '@inklayer-dev/core/style'
 import './demo.css'
 import { createLongDocumentPdf, createMixedPagePdf, createSamplePdf } from './sample-pdf'
+import {
+  DEMO_CUSTOM_ANNOTATIONS,
+  DEMO_ISSUE_MARKER_TYPE,
+  DEMO_MEASUREMENT_TYPE,
+  DEMO_REVIEW_AREA_TYPE
+} from './annotation-plugins'
+import { DEMO_CODE_EXAMPLES } from './ui/demo-code-examples'
 import { appMarkup, instanceMarkup } from './ui/demo-shell'
 import { toolIcon } from './ui/tool-catalog'
+import { HighlighterPanel } from './ui/highlighter-panel'
+import { StampSignPanel } from './ui/stamp-sign-panel'
 import { WorkspaceView } from './ui/workspace-view'
 
-const DEMO_MEASUREMENT_TYPE = 'custom:demo/measurement' as const
+const DEMO_VIEWS = [
+  'viewer', 'annotations', 'stamp-sign', 'highlighter', 'redaction', 'watermark',
+  'custom-annotations'
+] as const
+type DemoView = typeof DEMO_VIEWS[number]
+
+/** Returns whether one route owns an interactive Annotation Engine surface. */
+function isAnnotationDemo(view: DemoView): boolean {
+  return view === 'annotations' || view === 'stamp-sign' || view === 'custom-annotations'
+}
 
 const root = document.querySelector<HTMLElement>('#app')
 if (root === null) throw new Error('Vanilla example root was not found.')
@@ -53,8 +77,11 @@ root.innerHTML = appMarkup()
 
 const grid = requireElement<HTMLElement>(root, '#instance-grid')
 const destroyAll = requireElement<HTMLButtonElement>(root, '#destroy-all')
+const demoRouteLinks = [...root.querySelectorAll<HTMLAnchorElement>('[data-demo-route]')]
 const samplePdf = createSamplePdf()
 let instances: DemoInstance[] = []
+let activeDemoView: DemoView = readDemoView()
+let demoActivationGeneration = 0
 
 /** Product-owned presentation of one structured recovery outcome. */
 interface RecoveryOutcome {
@@ -67,6 +94,8 @@ interface RecoveryOutcome {
 
 /** Owns one complete demo Viewer and Annotation Engine lifecycle. */
 class DemoInstance {
+  public readonly demoView: DemoView
+  private readonly parent: HTMLElement
   private readonly host: HTMLElement
   private readonly canvas: HTMLCanvasElement
   private readonly textLayerHost: HTMLDivElement
@@ -85,6 +114,10 @@ class DemoInstance {
   private textSelectionFocusReturn: HTMLElement | null = null
   private viewer: PdfViewerEngine
   private annotations: AnnotationEngine
+  private readonly highlighter: KeywordHighlighter
+  private readonly highlighterPanel: HighlighterPanel
+  private readonly stampSignPanel: StampSignPanel | null
+  private readonly unsubscribeHighlighter: () => void
   private document: PDFDocumentProxy | null = null
   private currentPageIndex = 0
   private scaleValue: PdfViewerScale = 1
@@ -94,6 +127,7 @@ class DemoInstance {
   private unsubscribeViewer: () => void
   private unsubscribeAnnotations: () => void
   private pageFlow: PdfPageFlowController | null = null
+  private prefersContinuous: boolean
   private source: PdfSource = { data: samplePdf }
   private sourcePdf = samplePdf
   private sourceName = 'generated sample'
@@ -106,13 +140,18 @@ class DemoInstance {
   private gestureScale = 1
   private pendingGestureScale: number | null = null
   private gestureScaleCommit: Promise<void> | null = null
-  private customMeasurementDisposer: (() => void) | null = null
+  private readonly customAnnotationDisposers: Array<() => void> = []
+  private copyCodeResetTimer: ReturnType<typeof setTimeout> | null = null
   private readonly nativeImports = new Map<number, ImportPdfJsAnnotationsWithMetadataResult>()
 
   /** Creates DOM and Core instances for one isolated card. */
-  public constructor(parent: HTMLElement, label: string, accent: string) {
+  public constructor(parent: HTMLElement, label: string, accent: string, demoView: DemoView) {
+    this.parent = parent
+    this.demoView = demoView
+    this.prefersContinuous = true
     this.host = document.createElement('article')
     this.host.className = 'instance-card'
+    this.host.dataset['demoView'] = demoView
     this.host.style.setProperty('--inklayer-author-label-background', accent)
     this.host.innerHTML = instanceMarkup(label)
     parent.append(this.host)
@@ -165,8 +204,50 @@ class DemoInstance {
     })
     this.annotations.setImageAsset('signature', createDemoSignature(label, accent))
     this.annotations.setImageAsset('stamp', createDemoStamp())
-    this.annotations.setTool('text-select')
+    this.annotations.setTool(demoView === 'annotations' ? 'text-select' : 'select')
     this.annotations.setAuthorLabelVisibility('auto')
+    this.highlighter = createKeywordHighlighter({
+      viewer: {
+        getSnapshot: () => this.viewer.getSnapshot(),
+        subscribe: (listener) => this.viewer.subscribe(listener),
+        searchMany: (queries, options) => this.viewer.searchMany(queries, options),
+        resolveTextRanges: (ranges, options) => this.viewer.resolveTextRanges(ranges, options),
+        setTextHighlightLayers: (layers) => this.viewer.setTextHighlightLayers(layers),
+        clearTextHighlightLayers: (ids) => this.viewer.clearTextHighlightLayers(ids),
+        goToPage: (pageIndex) => {
+          void this.showPage(pageIndex).catch((cause: unknown) => this.reportError(cause))
+        }
+      },
+      annotations: {
+        getAnnotations: () => this.annotations.getAnnotations(),
+        createTextMarkupsFromRanges: (type, inputs, options) =>
+          this.annotations.createTextMarkupsFromRanges(type, inputs, options)
+      }
+    })
+    this.highlighterPanel = new HighlighterPanel(
+      requireElement(this.host, '.highlighter-panel'),
+      this.highlighter,
+      (cause) => this.reportError(cause),
+      demoView === 'redaction' ? { mode: 'redaction' } : {}
+    )
+    this.stampSignPanel = demoView === 'stamp-sign'
+      ? new StampSignPanel({
+          root: requireElement(this.host, '.stamp-sign-panel'),
+          annotations: this.annotations,
+          getPageCount: () => this.document?.numPages ?? 0,
+          getCurrentPageIndex: () => this.currentPageIndex,
+          getPageSize: async (pageIndex) => await this.getPageSize(pageIndex),
+          showPage: async (pageIndex) => await this.showPage(pageIndex),
+          onStatus: (message) => this.setStatus(message),
+          onError: (cause) => this.reportError(cause)
+        })
+      : null
+    this.unsubscribeHighlighter = this.highlighter.subscribe((snapshot) => {
+      this.updateRedactionOutputActions(snapshot)
+    })
+    this.updateRedactionOutputActions(this.highlighter.getSnapshot())
+    if (demoView === 'custom-annotations') this.installCustomAnnotationTypes()
+    this.configureDemoView()
     this.updateAppearanceControls()
     this.unsubscribeAnnotations = this.annotations.subscribe((event) => {
       this.pushEvent(`annotation · ${event.type}`)
@@ -176,6 +257,7 @@ class DemoInstance {
       if (event.type === 'annotationAdded' || event.type === 'annotationUpdated'
         || event.type === 'annotationDeleted' || event.type === 'selectionChanged') {
         this.renderAnnotationList()
+        this.stampSignPanel?.syncSelection(this.selectedAnnotation())
       }
       if (event.type === 'toolChanged') {
         this.toolSelect.value = event.tool
@@ -230,11 +312,104 @@ class DemoInstance {
     }
   }
 
+  /** Attaches only the selected isolated workspace to the public demo shell. */
+  public setActive(active: boolean): void {
+    if (!active) {
+      this.closeMobilePanels()
+      this.host.remove()
+      return
+    }
+    if (this.host.parentElement !== this.parent) this.parent.append(this.host)
+    this.configureDemoView()
+  }
+
+  /** Configures the controls owned by this instance's one fixed capability. */
+  private configureDemoView(): void {
+    const view = this.demoView
+    this.closeMobilePanels()
+    if (view === 'viewer') this.activatePanel('side', 'pages')
+    if (view === 'annotations' || view === 'stamp-sign' || view === 'watermark'
+      || view === 'custom-annotations') {
+      this.activatePanel('right', 'tools')
+    }
+    if (view === 'highlighter' || view === 'redaction') this.activatePanel('side', 'highlighter')
+    if (window.matchMedia('(max-width: 960px)').matches) {
+      if (view === 'annotations' || view === 'stamp-sign' || view === 'watermark'
+        || view === 'custom-annotations') {
+        this.host.classList.add('right-panel-open')
+      }
+      if (view === 'highlighter' || view === 'redaction') this.host.classList.add('left-panel-open')
+    }
+    const subtitle = requireElement<HTMLElement>(this.host, '.workspace-title > div > span')
+    subtitle.textContent = view === 'viewer'
+      ? 'Viewing, navigation, search and page flow'
+      : view === 'annotations'
+        ? 'Create, style, review and export annotations'
+        : view === 'stamp-sign'
+          ? 'Place visual stamps and signatures once or across page ranges'
+        : view === 'highlighter'
+          ? 'Prepared rules, temporary previews and permanent highlights'
+          : view === 'redaction'
+            ? 'Review matches and export an image-only redacted PDF'
+            : view === 'watermark'
+              ? 'Apply one watermark policy across viewer, print and export'
+            : 'Application-owned annotation types with semantic data'
+    const leftToggle = requireElement<HTMLButtonElement>(
+      this.host, '.mobile-panel-toggle[data-panel="left"]'
+    )
+    const keywordWorkflow = view === 'highlighter' || view === 'redaction'
+    const leftLabel = keywordWorkflow ? 'Open keyword rules' : 'Open document navigation'
+    leftToggle.setAttribute('aria-label', leftLabel)
+    requireElement<HTMLElement>(leftToggle, '.control-label').textContent =
+      keywordWorkflow ? 'Rules' : 'Navigate'
+    requireElement<HTMLElement>(this.host, '.left-sidebar').setAttribute(
+      'aria-label', view === 'redaction'
+        ? 'Keyword Redaction'
+        : view === 'highlighter' ? 'Keyword Highlighter' : 'Document navigation'
+    )
+    const rightSidebar = requireElement<HTMLElement>(this.host, '.right-sidebar')
+    rightSidebar.setAttribute('aria-label', view === 'stamp-sign'
+      ? 'Stamp and signature workspace'
+      : view === 'watermark' ? 'Watermark workspace' : 'Annotation workspace')
+    const rightTabs = this.host.querySelectorAll<HTMLButtonElement>('[data-right-tab]')
+    const toolsTab = rightTabs[0]
+    const annotationsTab = rightTabs[1]
+    if (toolsTab !== undefined) {
+      toolsTab.textContent = view === 'stamp-sign'
+        ? 'Stamp & Sign'
+        : view === 'watermark' ? 'Watermark' : 'Tools'
+    }
+    if (annotationsTab !== undefined) {
+      annotationsTab.textContent = view === 'stamp-sign' ? 'Placed' : 'Annotations'
+    }
+    const rightToggle = requireElement<HTMLButtonElement>(
+      this.host, '.mobile-panel-toggle[data-panel="right"]'
+    )
+    rightToggle.textContent = view === 'stamp-sign'
+      ? 'Stamp & Sign'
+      : view === 'watermark' ? 'Watermark' : 'Tools'
+    rightToggle.setAttribute('aria-label', view === 'stamp-sign'
+      ? 'Open stamp and signature tools'
+      : view === 'watermark' ? 'Open watermark controls' : 'Open annotation tools')
+    const exportPdfTitle = requireElement<HTMLElement>(this.host, '.export-pdf strong')
+    const exportPdfDescription = requireElement<HTMLElement>(this.host, '.export-pdf span')
+    exportPdfTitle.textContent = view === 'stamp-sign'
+      ? 'Stamped PDF'
+      : view === 'highlighter'
+        ? 'Highlighted PDF'
+        : view === 'watermark' ? 'Watermarked PDF' : 'Annotated PDF'
+    exportPdfDescription.textContent = view === 'stamp-sign'
+      ? 'Stamp and signature appearances'
+      : view === 'highlighter'
+        ? 'Searchable text with editable highlights'
+        : view === 'watermark' ? 'Source PDF with the current watermark' : 'Native, editable annotations'
+  }
+
   /** Loads or replaces the sample document, then renders its current page. */
   public async load(reload = false): Promise<void> {
     this.setStatus('Loading PDF…')
     if (reload || this.document === null) {
-      const wasContinuous = this.pageFlow !== null
+      const shouldUseContinuous = this.pageFlow !== null || this.prefersContinuous
       this.pageFlow?.destroy()
       this.pageFlow = null
       const handle = await this.viewer.load(this.source)
@@ -242,9 +417,21 @@ class DemoInstance {
       if ('url' in this.source) this.sourcePdf = new Uint8Array(await handle.document.getData())
       this.currentPageIndex = Math.min(this.currentPageIndex, handle.numPages - 1)
       await this.loadDocumentControls()
-      if (wasContinuous) return await this.showContinuous()
+      if (shouldUseContinuous) {
+        if (this.demoView === 'annotations') await this.importAllNativeAnnotations()
+        await this.showContinuous()
+      }
+      else await this.renderCurrentPage()
+    } else {
+      await this.renderCurrentPage()
     }
-    await this.renderCurrentPage()
+    if (this.demoView === 'highlighter' || this.demoView === 'redaction') {
+      try {
+        await this.highlighterPanel.scanPreparedRules()
+      } catch (cause) {
+        this.reportError(cause)
+      }
+    }
   }
 
   /** Seeds the public showcase while the deterministic test harness stays empty. */
@@ -273,6 +460,41 @@ class DemoInstance {
     this.setStatus(`Ready · ${this.sourceName} · page 1/${this.document?.numPages ?? 0} · 3 annotations`)
   }
 
+  /** Seeds one example of each application-owned custom annotation. */
+  public seedCustomShowcase(): void {
+    if (this.annotations.repository.getAll().length > 0) return
+    this.annotations.createAnnotation({
+      type: DEMO_MEASUREMENT_TYPE,
+      pageIndex: 0,
+      bounds: { x: 36, y: 110, width: 142, height: 54 },
+      content: { text: 'Measurement box' },
+      typeData: { schemaVersion: 1, payload: { width: 142, height: 54, unit: 'pt' } }
+    })
+    this.annotations.createAnnotation({
+      type: DEMO_REVIEW_AREA_TYPE,
+      pageIndex: 0,
+      bounds: { x: 204, y: 110, width: 168, height: 70 },
+      content: { text: 'High-risk review area' },
+      typeData: {
+        schemaVersion: 1,
+        payload: { category: 'legal-risk', severity: 'high', status: 'pending' }
+      }
+    })
+    const issue = this.annotations.createAnnotation({
+      type: DEMO_ISSUE_MARKER_TYPE,
+      pageIndex: 0,
+      bounds: { x: 388, y: 108, width: 24, height: 24 },
+      content: { text: 'Missing signature' },
+      typeData: {
+        schemaVersion: 1,
+        payload: { code: 'MISSING_SIGNATURE', severity: 'warning', resolved: false }
+      }
+    })
+    this.annotations.setSelection({ ids: [issue.id], primaryId: issue.id })
+    this.renderAnnotationList()
+    this.setStatus('Ready · 3 application-owned custom annotations')
+  }
+
   /** Renders canvas, TextLayer, native annotations, and Core annotation overlay. */
   private async renderCurrentPage(): Promise<void> {
     const document = this.document
@@ -281,25 +503,7 @@ class DemoInstance {
     const viewport = page.getViewport({ scale: this.scale })
     const context = this.canvas.getContext('2d')
     if (context === null) throw new Error('Canvas 2D context is unavailable.')
-    const view = page.view
-    const [xMin, yMin, xMax, yMax] = normalizePageView(view)
-    let imported = this.nativeImports.get(this.currentPageIndex)
-    if (imported === undefined) {
-      imported = await importPdfJsAnnotationsWithMetadata([{
-        pageIndex: this.currentPageIndex,
-        pageBox: {
-          xMin, yMin, xMax, yMax,
-          rotation: normalizeRotation(page.rotate)
-        },
-        annotations: await page.getAnnotations()
-      }], this.sourcePdf)
-      this.nativeImports.set(this.currentPageIndex, imported)
-    }
-    hideImportedPdfJsAnnotations(
-      document.annotationStorage,
-      imported.supportedIds,
-      new Map(imported.annotations.map((annotation) => [annotation.id, annotation.pageIndex]))
-    )
+    if (this.demoView === 'annotations') await this.importNativeAnnotations(this.currentPageIndex)
     this.renderTask?.cancel()
     this.canvas.width = Math.ceil(viewport.width)
     this.canvas.height = Math.ceil(viewport.height)
@@ -312,39 +516,78 @@ class DemoInstance {
     this.renderTask = page.render({ canvas: this.canvas, canvasContext: context, viewport })
     await this.renderTask.promise
     this.viewer.drawWatermark({ canvas: this.canvas, pageIndex: this.currentPageIndex })
-    for (const annotation of imported.annotations) {
-      if (this.annotations.repository.getById(annotation.id) === undefined) {
-        this.annotations.repository.add(annotation)
-      }
-    }
     await this.viewer.attachTextLayer({
       pageIndex: this.currentPageIndex,
       container: this.textLayerHost,
       scale: this.scale,
       rotation: normalizeRotation(page.rotate)
     })
-    await this.annotations.attachPage({
-      pageIndex: this.currentPageIndex,
-      container: this.annotationHost,
-      width: viewport.width / this.scale,
-      height: viewport.height / this.scale,
-      scale: this.scale
-    })
+    if (isAnnotationDemo(this.demoView)) {
+      await this.annotations.attachPage({
+        pageIndex: this.currentPageIndex,
+        container: this.annotationHost,
+        width: viewport.width / this.scale,
+        height: viewport.height / this.scale,
+        scale: this.scale
+      })
+    }
     this.updateScaleControls()
-    requireElement<HTMLElement>(this.host, '.stage-progress').hidden = true
-    requireElement<HTMLOutputElement>(this.host, '.page-count').value = String(document.numPages)
-    requireElement<HTMLInputElement>(this.host, '.page-number').value = String(this.currentPageIndex + 1)
-    requireElement<HTMLElement>(this.host, '.status-page').textContent = `Page ${this.currentPageIndex + 1} of ${document.numPages}`
-    this.updateActiveThumbnail()
+    this.syncDocumentUi()
     this.setStatus(`Ready · ${this.sourceName} · page ${this.currentPageIndex + 1}/${document.numPages} · ${this.annotations.repository.getAll().length} annotations`)
+  }
+
+  /** Imports one page's supported native PDF annotations into the editable repository. */
+  private async importNativeAnnotations(pageIndex: number): Promise<void> {
+    const document = this.document
+    if (document === null || this.nativeImports.has(pageIndex)) return
+    const page = await document.getPage(pageIndex + 1)
+    const [xMin, yMin, xMax, yMax] = normalizePageView(page.view)
+    const imported = await importPdfJsAnnotationsWithMetadata([{
+      pageIndex,
+      pageBox: { xMin, yMin, xMax, yMax, rotation: normalizeRotation(page.rotate) },
+      annotations: await page.getAnnotations()
+    }], this.sourcePdf)
+    this.nativeImports.set(pageIndex, imported)
+    hideImportedPdfJsAnnotations(
+      document.annotationStorage,
+      imported.supportedIds,
+      new Map(imported.annotations.map((annotation) => [annotation.id, annotation.pageIndex]))
+    )
+    for (const annotation of imported.annotations) {
+      if (this.annotations.repository.getById(annotation.id) === undefined) {
+        this.annotations.repository.add(annotation)
+      }
+    }
+  }
+
+  /** Preserves native annotation editing when the document starts in Continuous view. */
+  private async importAllNativeAnnotations(): Promise<void> {
+    const pageCount = this.document?.numPages ?? 0
+    for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
+      await this.importNativeAnnotations(pageIndex)
+    }
+  }
+
+  /** Finalizes shared document chrome for either single-page or Continuous rendering. */
+  private syncDocumentUi(): void {
+    const document = this.document
+    if (document === null) return
+    requireElement<HTMLElement>(this.host, '.stage-progress').hidden = true
+    this.loadProgress.hidden = true
+    requireElement<HTMLOutputElement>(this.host, '.page-count').value = String(document.numPages)
+    requireElement<HTMLInputElement>(this.host, '.page-number').value = String(
+      this.currentPageIndex + 1
+    )
+    requireElement<HTMLElement>(this.host, '.status-page').textContent =
+      `Page ${this.currentPageIndex + 1} of ${document.numPages}`
+    this.updateActiveThumbnail()
   }
 
   /** Releases all resources and removes this instance card. */
   public async destroy(): Promise<void> {
     this.pageFlow?.destroy()
     this.pageFlow = null
-    this.customMeasurementDisposer?.()
-    this.customMeasurementDisposer = null
+    for (const dispose of this.customAnnotationDisposers.splice(0)) dispose()
     this.renderTask?.cancel()
     this.renderTask = null
     this.unsubscribeViewer()
@@ -354,8 +597,13 @@ class DemoInstance {
     this.resizeObserver = null
     this.singlePageGesture?.destroy()
     this.singlePageGesture = null
+    this.highlighterPanel.destroy()
+    this.unsubscribeHighlighter()
+    this.highlighter.destroy()
     this.annotations.destroy()
     await this.viewer.destroy()
+    if (this.copyCodeResetTimer !== null) clearTimeout(this.copyCodeResetTimer)
+    this.copyCodeResetTimer = null
     this.host.remove()
   }
 
@@ -421,6 +669,18 @@ class DemoInstance {
     await this.renderCurrentPage()
   }
 
+  /** Returns one rotation-aware unscaled page size for product-owned batch placement. */
+  private async getPageSize(pageIndex: number): Promise<{ width: number; height: number }> {
+    const document = this.document
+    if (document === null || !Number.isSafeInteger(pageIndex)
+      || pageIndex < 0 || pageIndex >= document.numPages) {
+      throw new Error('Stamp & Sign page is unavailable.')
+    }
+    const page = await document.getPage(pageIndex + 1)
+    const viewport = page.getViewport({ scale: 1 })
+    return { width: viewport.width, height: viewport.height }
+  }
+
   /** Runs Core search and renders only the product-owned result controls. */
   private async runSearch(): Promise<void> {
     const input = requireElement<HTMLInputElement>(this.host, '.search-input')
@@ -443,6 +703,10 @@ class DemoInstance {
 
   /** Presents product UI for one retained Core text selection. */
   private handleTextSelectionChange(selection: PdfActiveTextSelection | null): void {
+    if (this.demoView !== 'annotations') {
+      this.textSelectionMenu.hidden = true
+      return
+    }
     if (selection === null) {
       this.textSelectionMenu.hidden = true
       if (this.textSelectionMenu.contains(this.host.ownerDocument.activeElement)) {
@@ -573,6 +837,9 @@ class DemoInstance {
     requireElement<HTMLButtonElement>(this.host, '.prepare-print').addEventListener('click', () => {
       void this.prepareRasterPrint().catch((cause: unknown) => this.reportError(cause))
     })
+    requireElement<HTMLButtonElement>(this.host, '.export-redacted').addEventListener('click', () => {
+      void this.exportRedactedPdf().catch((cause: unknown) => this.reportError(cause))
+    })
     requireElement<HTMLButtonElement>(this.host, '.print').addEventListener('click', () => {
       void this.printRaster().catch((cause: unknown) => this.reportError(cause))
     })
@@ -642,6 +909,59 @@ class DemoInstance {
 
   /** Connects the product workspace chrome without leaking it into Core. */
   private bindWorkspaceShell(): void {
+    const codeExample = DEMO_CODE_EXAMPLES[this.demoView]
+    const codeDialog = requireElement<HTMLDialogElement>(this.host, '.code-dialog')
+    const codeToggle = requireElement<HTMLButtonElement>(this.host, '.show-code')
+    const codeCopy = requireElement<HTMLButtonElement>(codeDialog, '.code-copy')
+    const codeBlock = requireElement<HTMLElement>(codeDialog, '.code-block code')
+    const codeVariants = requireElement<HTMLElement>(codeDialog, '.code-variants')
+    let selectedSource = codeExample.source
+    requireElement<HTMLElement>(codeDialog, '.code-title').textContent = codeExample.title
+    requireElement<HTMLElement>(codeDialog, '.code-summary').textContent = codeExample.summary
+    requireElement<HTMLElement>(codeDialog, '.code-requirement').textContent =
+      codeExample.requirement
+    codeBlock.textContent = selectedSource
+    requireElement<HTMLAnchorElement>(codeDialog, '.code-guide').href = codeExample.guideUrl
+    requireElement<HTMLAnchorElement>(codeDialog, '.code-source').href = codeExample.sourceUrl
+    if (codeExample.variants !== undefined) {
+      codeVariants.hidden = false
+      for (const [index, variant] of codeExample.variants.entries()) {
+        const button = documentFor(this.host).createElement('button')
+        button.type = 'button'
+        button.role = 'tab'
+        button.textContent = variant.label
+        button.setAttribute('aria-selected', String(index === 0))
+        button.addEventListener('click', () => {
+          selectedSource = variant.source
+          codeBlock.textContent = selectedSource
+          for (const peer of codeVariants.querySelectorAll('[role="tab"]')) {
+            peer.setAttribute('aria-selected', String(peer === button))
+          }
+          codeBlock.parentElement?.scrollTo({ top: 0 })
+        })
+        codeVariants.append(button)
+      }
+    }
+    codeToggle.addEventListener('click', () => codeDialog.showModal())
+    requireElement<HTMLButtonElement>(codeDialog, '.code-close').addEventListener(
+      'click', () => codeDialog.close()
+    )
+    codeDialog.addEventListener('click', (event) => {
+      if (event.target === codeDialog) codeDialog.close()
+    })
+    codeCopy.addEventListener('click', () => {
+      void copyText(selectedSource, codeDialog.ownerDocument).then(() => {
+        codeCopy.textContent = 'Copied'
+        codeCopy.dataset['copied'] = 'true'
+        if (this.copyCodeResetTimer !== null) clearTimeout(this.copyCodeResetTimer)
+        this.copyCodeResetTimer = setTimeout(() => {
+          codeCopy.textContent = 'Copy code'
+          delete codeCopy.dataset['copied']
+          this.copyCodeResetTimer = null
+        }, 1_800)
+      }).catch((cause: unknown) => this.reportError(cause))
+    })
+
     for (const button of this.host.querySelectorAll<HTMLButtonElement>('[data-side-tab]')) {
       button.addEventListener('click', () => this.activatePanel('side', button.dataset['sideTab'] ?? 'pages'))
     }
@@ -708,113 +1028,67 @@ class DemoInstance {
 
     const watermarkEnabled = requireElement<HTMLInputElement>(this.host, '.watermark-enabled')
     const watermarkText = requireElement<HTMLInputElement>(this.host, '.watermark-text')
+    const watermarkLayout = requireElement<HTMLSelectElement>(this.host, '.watermark-layout')
+    const watermarkOpacity = requireElement<HTMLInputElement>(this.host, '.watermark-opacity')
+    const watermarkRotation = requireElement<HTMLInputElement>(this.host, '.watermark-rotation')
+    const watermarkViewer = requireElement<HTMLInputElement>(this.host, '.watermark-target-viewer')
+    const watermarkPrint = requireElement<HTMLInputElement>(this.host, '.watermark-target-print')
+    const watermarkExport = requireElement<HTMLInputElement>(this.host, '.watermark-target-export')
+    const updateWatermarkOutputs = (): void => {
+      requireElement<HTMLOutputElement>(this.host, '.watermark-opacity-value').value =
+        `${Math.round(Number(watermarkOpacity.value) * 100)}%`
+      requireElement<HTMLOutputElement>(this.host, '.watermark-rotation-value').value =
+        `${watermarkRotation.value}°`
+    }
     const updateWatermark = (): void => {
       this.viewer.setWatermark(watermarkEnabled.checked ? {
         text: watermarkText.value.trim() || 'InkLayer Core',
-        layout: 'repeated', opacity: 0.1, rotation: -28,
-        targets: { viewer: true, print: true, export: true, thumbnails: false }
+        layout: watermarkLayout.value === 'center' ? 'center' : 'repeated',
+        opacity: Number(watermarkOpacity.value),
+        rotation: Number(watermarkRotation.value),
+        targets: {
+          viewer: watermarkViewer.checked,
+          print: watermarkPrint.checked,
+          export: watermarkExport.checked,
+          thumbnails: false
+        }
       } : null)
       void this.load(true).catch((cause: unknown) => this.reportError(cause))
     }
-    watermarkEnabled.addEventListener('change', updateWatermark)
-    watermarkText.addEventListener('change', updateWatermark)
+    watermarkOpacity.addEventListener('input', updateWatermarkOutputs)
+    watermarkRotation.addEventListener('input', updateWatermarkOutputs)
+    for (const control of [
+      watermarkEnabled, watermarkText, watermarkLayout, watermarkOpacity, watermarkRotation,
+      watermarkViewer, watermarkPrint, watermarkExport
+    ]) control.addEventListener('change', updateWatermark)
+    updateWatermarkOutputs()
     requireElement<HTMLInputElement>(this.host, '.owner-only').addEventListener('change', (event) => {
       const enabled = (event.currentTarget as HTMLInputElement).checked
       this.annotations.setPermissions(enabled ? { mode: 'owner-only' } : { mode: 'unrestricted' })
       this.pushEvent(`capability · permissions ${enabled ? 'owner-only' : 'unrestricted'}`)
       this.setStatus(`Annotation permissions: ${enabled ? 'owner-only' : 'unrestricted'}`)
     })
-    requireElement<HTMLButtonElement>(this.host, '.plugin-install').addEventListener('click', () => {
-      void this.installMeasurementPlugin(false).catch((cause: unknown) => this.reportError(cause))
-    })
-    requireElement<HTMLButtonElement>(this.host, '.plugin-unload').addEventListener('click', () => {
-      this.unloadMeasurementPlugin()
-    })
-    requireElement<HTMLButtonElement>(this.host, '.plugin-reload').addEventListener('click', () => {
-      void this.installMeasurementPlugin(true).catch((cause: unknown) => this.reportError(cause))
-    })
+    this.toolSelect.value = this.annotations.getTool()
     this.syncToolButtons()
   }
 
-  /** Registers the sample Definition and exposes it as a real drawing tool. */
-  private async installMeasurementPlugin(restored: boolean): Promise<void> {
-    if (this.customMeasurementDisposer !== null) return
-    const plugin = await import('./annotation-plugins/measurement')
-    this.customMeasurementDisposer = this.annotations.annotationTypes.register(
-      plugin.createDemoMeasurementDefinition()
-    )
-    this.mountMeasurementTool()
-    this.updateMeasurementPluginUi(
-      'installed',
-      restored
-        ? 'Definition restored. Existing Measurement annotations are editable again.'
-        : 'Definition registered. Measurement is now an active drawing tool.'
-    )
-    this.toolSelect.value = DEMO_MEASUREMENT_TYPE
-    this.toolSelect.dispatchEvent(new Event('change', { bubbles: true }))
-    this.pushEvent(`annotation type · ${restored ? 'restored' : 'registered'} Measurement`)
-    this.setStatus(restored
-      ? 'Measurement plugin restored · retained annotations recovered'
-      : 'Measurement plugin installed · draw a box on the PDF')
-  }
-
-  /** Unregisters behavior while deliberately retaining persisted custom annotations. */
-  private unloadMeasurementPlugin(): void {
-    if (this.customMeasurementDisposer === null) return
-    const retained = this.annotations.repository.getAll()
-      .filter((annotation) => annotation.type === DEMO_MEASUREMENT_TYPE).length
-    this.customMeasurementDisposer()
-    this.customMeasurementDisposer = null
-    this.unmountMeasurementTool()
-    this.updateMeasurementPluginUi(
-      'unloaded',
-      `${retained} Measurement annotation${retained === 1 ? '' : 's'} retained in safe fallback mode.`
-    )
-    this.pushEvent('annotation type · unloaded Measurement; canonical data retained')
-    this.setStatus(`Measurement plugin unloaded · ${retained} retained in fallback mode`)
-  }
-
-  /** Adds the plugin-owned control to both visible and accessible tool selectors. */
-  private mountMeasurementTool(): void {
-    if (this.host.querySelector('[data-plugin-tool="measurement"]') !== null) return
+  /** Registers every application Definition and mounts a custom-only palette. */
+  private installCustomAnnotationTypes(): void {
+    for (const item of DEMO_CUSTOM_ANNOTATIONS) {
+      this.customAnnotationDisposers.push(
+        this.annotations.annotationTypes.register(item.createDefinition())
+      )
+    }
     const group = documentFor(this.host).createElement('section')
-    group.className = 'tool-group plugin-tool-group'
-    group.dataset['pluginTool'] = 'measurement'
-    group.innerHTML = `<h3>Plugin · newly registered</h3><div class="tool-grid"><button class="tool-button" type="button" data-tool="${DEMO_MEASUREMENT_TYPE}" aria-label="Measurement" title="Measurement">${toolIcon('rectangle')}<span>Measurement</span></button></div>`
+    group.className = 'tool-group custom-tool-group'
+    group.innerHTML = `<h3>Application Definitions</h3><div class="tool-grid">${DEMO_CUSTOM_ANNOTATIONS.map((item) => `<button class="tool-button" type="button" data-tool="${item.type}" aria-label="${item.label}" title="${item.description}">${toolIcon(item.iconTool)}<span>${item.label}</span></button>`).join('')}</div>`
     requireElement<HTMLElement>(this.host, '.tool-palette').append(group)
-    const option = documentFor(this.host).createElement('option')
-    option.value = DEMO_MEASUREMENT_TYPE
-    option.textContent = 'Measurement (plugin)'
-    option.dataset['pluginTool'] = 'measurement'
-    this.toolSelect.append(option)
-    requireElement<HTMLButtonElement>(group, '[data-tool]').addEventListener('click', () => {
-      this.toolSelect.value = DEMO_MEASUREMENT_TYPE
-      this.toolSelect.dispatchEvent(new Event('change', { bubbles: true }))
-      if (window.matchMedia('(max-width: 960px)').matches) this.closeMobilePanels()
-    })
-  }
-
-  /** Removes only product controls; persisted annotations remain in the repository. */
-  private unmountMeasurementTool(): void {
-    this.host.querySelector('.plugin-tool-group[data-plugin-tool="measurement"]')?.remove()
-    this.toolSelect.querySelector('option[data-plugin-tool="measurement"]')?.remove()
-    this.syncToolButtons()
-  }
-
-  /** Makes the current registry lifecycle state explicit in the visible plugin card. */
-  private updateMeasurementPluginUi(
-    state: 'installed' | 'unloaded',
-    message: string
-  ): void {
-    const card = requireElement<HTMLElement>(this.host, '.plugin-showcase')
-    card.dataset['state'] = state
-    requireElement<HTMLElement>(card, '.plugin-state').textContent = state === 'installed'
-      ? 'Installed'
-      : 'Unloaded'
-    requireElement<HTMLOutputElement>(card, '.plugin-result').value = message
-    requireElement<HTMLButtonElement>(card, '.plugin-install').hidden = true
-    requireElement<HTMLButtonElement>(card, '.plugin-unload').hidden = state !== 'installed'
-    requireElement<HTMLButtonElement>(card, '.plugin-reload').hidden = state !== 'unloaded'
+    for (const item of DEMO_CUSTOM_ANNOTATIONS) {
+      const option = documentFor(this.host).createElement('option')
+      option.value = item.type
+      option.textContent = item.label
+      this.toolSelect.append(option)
+    }
   }
 
   /** Switches one sidebar tab while preserving accessible selected state. */
@@ -977,6 +1251,7 @@ class DemoInstance {
 
   /** Switches from the single-page surface to Core-owned virtual page flow. */
   private async showContinuous(): Promise<void> {
+    this.prefersContinuous = true
     if (this.pageFlow !== null) return
     this.viewer.detachTextLayer(this.currentPageIndex)
     this.annotations.detachPage(this.currentPageIndex)
@@ -985,11 +1260,12 @@ class DemoInstance {
     flowHost.hidden = false
     this.pageFlow = await createPdfPageFlow({
       viewer: this.viewer,
-      annotations: this.annotations,
+      ...(isAnnotationDemo(this.demoView) ? { annotations: this.annotations } : {}),
       container: flowHost,
       scale: this.scaleValue,
       onCurrentPageChanged: (pageIndex) => {
         this.currentPageIndex = pageIndex
+        this.syncDocumentUi()
         this.setStatus(`Continuous · page ${pageIndex + 1}/${this.document?.numPages ?? 0}`)
       },
       onScaleChanged: (state) => {
@@ -1004,11 +1280,15 @@ class DemoInstance {
     this.updateScaleControls()
     this.pageFlow.scrollToPage(this.currentPageIndex)
     this.updateLayoutControls(true)
-    this.setStatus(`Continuous · page ${this.currentPageIndex + 1}/${this.document?.numPages ?? 0}`)
+    this.syncDocumentUi()
+    this.setStatus(
+      `Ready · ${this.sourceName} · page ${this.currentPageIndex + 1}/${this.document?.numPages ?? 0} · ${this.annotations.repository.getAll().length} annotations`
+    )
   }
 
   /** Returns to the compact single-page debugger without reloading the PDF. */
   private async showSingle(): Promise<void> {
+    this.prefersContinuous = false
     if (this.pageFlow === null) return
     const scaleState = this.pageFlow.getScale()
     this.scaleValue = scaleState.value
@@ -1024,15 +1304,112 @@ class DemoInstance {
 
   /** Builds a real raster print artifact through the ready Viewer and repository. */
   private async prepareRasterPrint(): Promise<Uint8Array> {
+    if (this.demoView === 'redaction') {
+      const bytes = await this.buildReviewedRedaction()
+      this.setStatus(`Prepared secure redacted print · ${bytes.byteLength} bytes`)
+      return bytes
+    }
     this.setStatus('Preparing raster print…')
-    const bytes = await buildSecureRasterPrintPdf({
+    const previewAnnotations = this.demoView === 'highlighter'
+      ? await this.createHighlighterPrintAnnotations()
+      : null
+    try {
+      const bytes = await buildSecureRasterPrintPdf({
+        viewer: this.viewer,
+        ...(isAnnotationDemo(this.demoView) ? { annotations: this.annotations } : {}),
+        ...(previewAnnotations === null ? {} : { annotations: previewAnnotations }),
+        pixelRatio: 1.5,
+        onProgress: (complete, total) => this.setStatus(`Preparing print ${complete}/${total}`)
+      })
+      const included = this.highlighter.getSnapshot().includedCount
+      this.setStatus(this.demoView === 'highlighter'
+        ? `Prepared raster print · ${included} keyword highlights · ${bytes.byteLength} bytes`
+        : `Prepared raster print · ${bytes.byteLength} bytes`)
+      return bytes
+    } finally {
+      previewAnnotations?.destroy()
+    }
+  }
+
+  /** Builds and downloads an image-only PDF from the currently included matches. */
+  private async exportRedactedPdf(): Promise<void> {
+    const button = requireElement<HTMLButtonElement>(this.host, '.export-redacted')
+    const desktopLabel = requireElement<HTMLElement>(button, '.export-redacted-label')
+    const mobileLabel = requireElement<HTMLElement>(button, '.export-redacted-label-mobile')
+    button.disabled = true
+    button.dataset['busy'] = 'true'
+    desktopLabel.textContent = 'Exporting…'
+    mobileLabel.textContent = 'Exporting…'
+    const snapshot = this.highlighter.getSnapshot()
+    const included = snapshot.matches.filter((match) => match.reviewState === 'included')
+    try {
+      const bytes = await this.buildReviewedRedaction()
+      downloadBlob({
+        content: bytes,
+        filename: 'inklayer-redacted.pdf',
+        mimeType: 'application/pdf'
+      })
+      this.setStatus(
+        `Exported redacted copy · ${included.length} ranges · ${bytes.byteLength} bytes`
+      )
+    } finally {
+      delete button.dataset['busy']
+      desktopLabel.textContent = 'Export redacted copy'
+      mobileLabel.textContent = 'Export redacted'
+      this.updateRedactionOutputActions(this.highlighter.getSnapshot())
+    }
+  }
+
+  /** Keeps top-level print and export actions aligned with current review state. */
+  private updateRedactionOutputActions(snapshot: KeywordHighlighterSnapshot): void {
+    if (this.demoView !== 'redaction') return
+    const ready = snapshot.status === 'ready' && snapshot.includedCount > 0
+    const exportButton = requireElement<HTMLButtonElement>(this.host, '.export-redacted')
+    if (exportButton.dataset['busy'] !== 'true') exportButton.disabled = !ready
+    requireElement<HTMLButtonElement>(this.host, '.print').disabled = !ready
+  }
+
+  /** Converts included Highlighter source ranges through Core's secure raster boundary. */
+  private async buildReviewedRedaction(): Promise<Uint8Array> {
+    const included = this.highlighter.getSnapshot().matches
+      .filter((match) => match.reviewState === 'included')
+    this.setStatus('Preparing secure redaction…')
+    return await buildSecureRedactedPdf({
       viewer: this.viewer,
-      annotations: this.annotations,
+      ranges: included.map((match) => match.range),
       pixelRatio: 1.5,
-      onProgress: (complete, total) => this.setStatus(`Preparing print ${complete}/${total}`)
+      margin: 1,
+      onProgress: (complete, total) => this.setStatus(`Redacting ${complete}/${total}`)
     })
-    this.setStatus(`Prepared raster print · ${bytes.byteLength} bytes`)
-    return bytes
+  }
+
+  /** Builds print-only annotations from the current included Highlighter preview. */
+  private async createHighlighterPrintAnnotations(): Promise<AnnotationEngine | null> {
+    const snapshot = this.highlighter.getSnapshot()
+    const matches = snapshot.matches.filter((match) => match.reviewState === 'included')
+    if (matches.length === 0) return null
+    const resolved = await this.viewer.resolveTextRanges(matches.map((match) => match.range))
+    const root = documentFor(this.host).createElement('div')
+    const printAnnotations = createAnnotationEngine({ root })
+    try {
+      for (const rule of snapshot.rules) {
+        const inputs = matches.flatMap((match, index) => {
+          const range = resolved[index]
+          return match.ruleId !== rule.id || range === undefined
+            ? []
+            : [{ id: `highlighter-print-${match.id}`, range }]
+        })
+        if (inputs.length > 0) {
+          printAnnotations.createTextMarkupsFromRanges('highlight', inputs, {
+            appearance: { fill: { color: rule.color, opacity: 0.42 } }
+          })
+        }
+      }
+      return printAnnotations
+    } catch (cause) {
+      printAnnotations.destroy()
+      throw cause
+    }
   }
 
   /** Builds the protected-document-safe artifact and opens the system print dialog. */
@@ -1235,12 +1612,36 @@ class DemoInstance {
   private async exportPdf(): Promise<void> {
     const { buildAnnotatedPdf } = await import('@inklayer-dev/core/export/pdf')
     const watermark = this.viewer.getWatermark()
-    const bytes = await buildAnnotatedPdf(this.sourcePdf, this.annotations.repository.getAll(), {
-      annotationTypes: this.annotations.annotationTypes,
-      ...(watermark === null ? {} : { watermark })
-    })
-    downloadBlob({ content: bytes, filename: 'inklayer-annotations.pdf', mimeType: 'application/pdf' })
-    this.setStatus(`Exported PDF · ${bytes.byteLength} bytes`)
+    const highlighted = this.demoView === 'highlighter'
+      ? await this.createHighlighterPrintAnnotations()
+      : null
+    try {
+      if (this.demoView === 'highlighter' && highlighted === null) {
+        this.setStatus('No included keyword matches to export.')
+        return
+      }
+      const source = highlighted ?? this.annotations
+      const bytes = await buildAnnotatedPdf(this.sourcePdf, source.repository.getAll(), {
+        annotationTypes: source.annotationTypes,
+        ...(watermark === null ? {} : { watermark })
+      })
+      const filename = this.demoView === 'stamp-sign'
+        ? 'inklayer-stamped.pdf'
+        : this.demoView === 'highlighter'
+          ? 'inklayer-highlighted.pdf'
+          : this.demoView === 'watermark'
+            ? 'inklayer-watermarked.pdf'
+            : 'inklayer-annotations.pdf'
+      downloadBlob({ content: bytes, filename, mimeType: 'application/pdf' })
+      const description = this.demoView === 'stamp-sign'
+        ? 'stamped '
+        : this.demoView === 'highlighter'
+          ? 'highlighted '
+          : this.demoView === 'watermark' ? 'watermarked ' : ''
+      this.setStatus(`Exported ${description}PDF · ${bytes.byteLength} bytes`)
+    } finally {
+      highlighted?.destroy()
+    }
   }
 
   /** Exports and downloads annotation workbook bytes. */
@@ -1316,7 +1717,9 @@ class DemoInstance {
   /** Updates the accessible status region. */
   private setStatus(message: string): void {
     this.status.dataset['state'] = 'ok'
-    this.status.textContent = message
+    this.status.textContent = isAnnotationDemo(this.demoView)
+      ? message
+      : message.replace(/ · \d+ annotations$/u, '')
     const count = this.annotations.repository.getAll().length
     requireElement<HTMLElement>(this.host, '.status-annotations').textContent = `${count} annotations`
   }
@@ -1411,6 +1814,25 @@ function documentFor(element: HTMLElement): Document {
   return element.ownerDocument
 }
 
+/** Copies code with the modern API and a selection fallback for restricted browsers. */
+async function copyText(value: string, ownerDocument: Document): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(value)
+    return
+  } catch {
+    const textarea = ownerDocument.createElement('textarea')
+    textarea.value = value
+    textarea.setAttribute('readonly', '')
+    textarea.style.position = 'fixed'
+    textarea.style.opacity = '0'
+    ownerDocument.body.append(textarea)
+    textarea.select()
+    const copied = ownerDocument.execCommand('copy')
+    textarea.remove()
+    if (!copied) throw new Error('The code example could not be copied in this browser.')
+  }
+}
+
 /** Flattens a document outline while preserving visible document order. */
 function flattenOutline(items: readonly PdfOutlineItem[]): readonly PdfOutlineItem[] {
   return items.flatMap((item) => [item, ...flattenOutline(item.items)])
@@ -1478,14 +1900,65 @@ function createDemoStamp() {
 
 /** Mounts the public single-workspace demo and loads its PDF. */
 async function mountInstances(): Promise<void> {
-  instances = [
-    new DemoInstance(grid, 'Demo', '#175cd3')
-  ]
-  await Promise.all(instances.map(async (instance) => instance.load()))
-  if (new URL(window.location.href).searchParams.get('clean') !== '1') {
-    instances[0]?.seedShowcase()
-  }
+  instances = []
+  await activateDemoInstance(activeDemoView)
 }
+
+/** Lazily creates and restores one isolated capability workspace. */
+async function activateDemoInstance(view: DemoView): Promise<void> {
+  const generation = ++demoActivationGeneration
+  for (const instance of instances) instance.setActive(false)
+  let instance = instances.find((candidate) => candidate.demoView === view)
+  if (instance === undefined) {
+    instance = new DemoInstance(grid, 'Demo', '#175cd3', view)
+    instances.push(instance)
+    instance.setActive(true)
+    await instance.load()
+    if (new URL(window.location.href).searchParams.get('clean') !== '1') {
+      if (view === 'annotations') instance.seedShowcase()
+      if (view === 'custom-annotations') instance.seedCustomShowcase()
+    }
+  }
+  if (generation !== demoActivationGeneration) {
+    if (activeDemoView !== instance.demoView) instance.setActive(false)
+    return
+  }
+  for (const candidate of instances) candidate.setActive(candidate === instance)
+}
+
+/** Reads one supported deep-link hash, defaulting invalid or empty routes to Viewer. */
+function readDemoView(): DemoView {
+  const candidate = window.location.hash.slice(1)
+  return DEMO_VIEWS.includes(candidate as DemoView) ? candidate as DemoView : 'viewer'
+}
+
+/** Synchronizes top-level navigation, shared workspace visibility, and browser history state. */
+function applyDemoView(view: DemoView): void {
+  activeDemoView = view
+  for (const link of demoRouteLinks) {
+    const active = link.dataset['demoRoute'] === view
+    if (active) link.setAttribute('aria-current', 'page')
+    else link.removeAttribute('aria-current')
+  }
+  if (instances.length > 0) void activateDemoInstance(view)
+}
+
+for (const link of demoRouteLinks) {
+  link.addEventListener('click', (event) => {
+    const view = link.dataset['demoRoute']
+    if (!DEMO_VIEWS.includes(view as DemoView)) return
+    event.preventDefault()
+    if (activeDemoView === view) return
+    if (window.location.hash !== `#${view}`) history.pushState(null, '', `#${view}`)
+    applyDemoView(view as DemoView)
+  })
+}
+window.addEventListener('hashchange', () => applyDemoView(readDemoView()))
+window.addEventListener('popstate', () => applyDemoView(readDemoView()))
+if (window.location.hash !== `#${activeDemoView}`) {
+  history.replaceState(null, '', `#${activeDemoView}`)
+}
+applyDemoView(activeDemoView)
 
 destroyAll.addEventListener('click', () => {
   void Promise.all(instances.map(async (instance) => instance.destroy()))
