@@ -1349,10 +1349,18 @@ test('keeps annotation drag and resize usable after zooming the PDF', async ({ p
   const viewer = page.locator('.instance-card').first()
   await expect(viewer.locator('.instance-status')).toContainText('3 annotations')
   await showSinglePage(viewer)
-  await viewer.getByRole('button', { name: 'Select', exact: true }).first().click()
   await viewer.locator('.scale-select').selectOption('2')
   await expect(viewer.locator('.scale-value')).toHaveText('200%')
-  await viewer.locator('.page-surface').scrollIntoViewIfNeeded()
+  await expect(viewer.locator('.pdf-canvas')).toHaveAttribute('width', '840')
+  await expect(viewer.locator('.konvajs-content')).toHaveCSS('width', '840px')
+  await viewer.getByRole('button', { name: 'Select', exact: true }).first().click()
+  await expect(viewer.locator('.tool-select')).toHaveValue('select')
+  const pageScroll = viewer.locator('.page-scroll')
+  await pageScroll.evaluate((element) => {
+    element.scrollTop = 0
+    element.scrollLeft = 0
+  })
+  await expect.poll(async () => await pageScroll.evaluate((element) => element.scrollTop)).toBe(0)
 
   const canvas = await viewer.locator('.konvajs-content').boundingBox()
   const label = viewer.locator('.inklayer-author-label:not([hidden])')
