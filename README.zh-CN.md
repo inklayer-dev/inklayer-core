@@ -6,9 +6,9 @@
 
 [![npm](https://img.shields.io/npm/v/%40inklayer-dev%2Fcore)](https://www.npmjs.com/package/@inklayer-dev/core) [![Core CI](https://github.com/inklayer-dev/inklayer-core/actions/workflows/ci.yml/badge.svg)](https://github.com/inklayer-dev/inklayer-core/actions/workflows/ci.yml) [![license](https://img.shields.io/npm/l/%40inklayer-dev%2Fcore)](https://github.com/inklayer-dev/inklayer-core/blob/main/LICENSE)
 
-InkLayer Core 是面向 Web 的无头、框架无关 PDF 交互引擎。你可以用它在 React、Vue、其他任意框架或原生 TypeScript 中构建自定义文档查看器、批注系统、搜索与关键词高亮体验和审阅工作流，同时由应用完整掌控界面与产品流程。
+InkLayer Core 是面向 Web 的无头、框架无关 PDF 交互引擎。你可以用它在 React、Vue、其他任意框架或原生 TypeScript 中构建自定义文档查看器、批注系统、规则驱动的关键词审阅与安全脱敏工作流，同时由应用完整掌控界面与产品流程。
 
-[快速开始](https://core.inklayer.dev/zh/guide/getting-started) · [关键词高亮](https://core.inklayer.dev/zh/guide/highlighter) · [在线示例](https://core.inklayer.dev/demo/#viewer) · [文档](https://core.inklayer.dev/zh/)
+[快速开始](https://core.inklayer.dev/zh/guide/getting-started) · [在线示例](https://core.inklayer.dev/demo/#viewer) · [文档](https://core.inklayer.dev/zh/)
 
 ## 最简单的查看器
 
@@ -68,13 +68,23 @@ Core 已包含版本匹配的 PDF.js Worker。普通 Vite 和 Webpack 应用不�
 
 - 从 URL 或本地字节加载 PDF，支持 HTTP Range 分段请求、密码、进度、取消和重试。
 - 使用单页、连续或对页布局显示文档，并提供虚拟渲染、缩放、导航、缩略图和目录能力。
-- 搜索 PDF 文字、高亮结果，并把真实的文字选择转换成文字批注。
+- 搜索 PDF 文字，并把真实的文字选择转换成文字批注。
+- 一次扫描预设的普通文字和正则规则，按规则分色预览、逐条复核命中，并把确认结果批量转换成永久高亮。
+- 审阅时保留敏感词的彩色可读预览，仅在打印或导出时生成安全脱敏的图片型 PDF，使源文字无法被选择或复制。
 - 创建和编辑 16 种内置批注，包括文字标记、图形、手写、便签、图章和签名。
 - 管理可序列化的批注数据，包括作者、评论、引用、外观和客户端权限规则。
 - 添加水印，并生成打印 PDF、带批注 PDF、用于安全打印的栅格 PDF 或批注工作簿。
 - 运行多个相互隔离的实例，报告结构化错误，可靠释放资源，并在 SSR 环境中安全导入。
 
 [创建第一个批注 →](https://core.inklayer.dev/zh/guide/first-annotation)
+
+## 从关键词规则到安全输出
+
+[关键词高亮](https://core.inklayer.dev/zh/guide/highlighter)直接接收应用准备好的文字和正则规则，例如合同条款、禁用词、账号或日期。Core 会统一扫描、按规则生成临时高亮，并提供不可变的审核状态；结果列表、筛选方式和操作控件仍由你的应用决定。确认后的命中还可以转成标准 PDF Highlight 批注，无需自行处理文字几何定位。
+
+[安全关键词脱敏](https://core.inklayer.dev/zh/guide/keyword-redaction)复用审核后的命中，但把页面预览和最终输出分开。审阅时仍显示普通的 Highlighter 颜色；只有打印或导出时，才在新的图片型 PDF 中生成不透明遮挡。输出文件不包含源文字对象，因此无法通过选中黑块并复制来恢复下方内容。作为安全性的取舍，导出版中的全部文字、链接、表单和矢量内容都会被扁平化。
+
+[体验关键词高亮](https://core.inklayer.dev/demo/#highlighter) · [体验安全脱敏](https://core.inklayer.dev/demo/#redaction)
 
 ## Core 负责文档能力，应用负责界面
 

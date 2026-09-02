@@ -6,9 +6,9 @@
 
 [![npm](https://img.shields.io/npm/v/%40inklayer-dev%2Fcore)](https://www.npmjs.com/package/@inklayer-dev/core) [![Core CI](https://github.com/inklayer-dev/inklayer-core/actions/workflows/ci.yml/badge.svg)](https://github.com/inklayer-dev/inklayer-core/actions/workflows/ci.yml) [![license](https://img.shields.io/npm/l/%40inklayer-dev%2Fcore)](https://github.com/inklayer-dev/inklayer-core/blob/main/LICENSE)
 
-InkLayer Core is a headless, framework-agnostic PDF interaction engine for the web. Use it to build custom document viewers, annotation systems, search and keyword-highlighting experiences, and review workflows with React, Vue, any other framework, or vanilla TypeScript—while your application retains full control of the UI and product workflow.
+InkLayer Core is a headless, framework-agnostic PDF interaction engine for the web. Use it to build custom document viewers, annotation systems, rule-driven keyword review and secure redaction workflows with React, Vue, any other framework, or vanilla TypeScript—while your application retains full control of the UI and product workflow.
 
-[Getting started](https://core.inklayer.dev/guide/getting-started) · [Keyword Highlighter](https://core.inklayer.dev/guide/highlighter) · [Live demo](https://core.inklayer.dev/demo/#viewer) · [Documentation](https://core.inklayer.dev/)
+[Getting started](https://core.inklayer.dev/guide/getting-started) · [Live demo](https://core.inklayer.dev/demo/#viewer) · [Documentation](https://core.inklayer.dev/)
 
 ## Minimal Viewer
 
@@ -68,13 +68,23 @@ Core ships with a version-matched PDF.js Worker. Ordinary Vite and Webpack appli
 
 - Load PDFs from URLs or local bytes, including HTTP Range requests, passwords, progress, cancellation, and retry.
 - Display single, continuous, or facing pages with virtual rendering, zoom, navigation, thumbnails, and outlines.
-- Search PDF text, highlight results, and turn real text selections into markup annotations.
+- Search PDF text and turn real text selections into markup annotations.
+- Scan prepared literal and regular-expression rules in one batch, preview color-coded matches, review individual occurrences, and turn accepted results into permanent highlights.
+- Keep sensitive terms readable during review, then print or export a securely redacted, image-only PDF whose source text cannot be selected or copied.
 - Create and edit 16 built-in annotation types, including text markup, shapes, freehand drawing, notes, stamps, and signatures.
 - Manage serializable annotation data with authors, comments, references, appearance, and client-side permission rules.
 - Add watermarks and generate printable PDFs, annotated PDFs, secure raster print output, or annotation workbooks.
 - Run multiple isolated instances, report structured errors, release resources deterministically, and import packages safely during SSR.
 
 [Create your first annotation →](https://core.inklayer.dev/guide/first-annotation)
+
+## From keyword rules to safe output
+
+The [Keyword Highlighter](https://core.inklayer.dev/guide/highlighter) accepts application-owned terms and regular expressions—for example contract clauses, prohibited wording, account numbers, or dates. It scans them together, renders temporary highlights by rule, and exposes an immutable review state for your own result list, filters, and controls. Accepted matches can become standard PDF Highlight annotations without reimplementing text geometry.
+
+[Secure keyword redaction](https://core.inklayer.dev/guide/keyword-redaction) reuses those reviewed matches but keeps preview and output separate. Reviewers see the normal Highlighter colors on screen; only Print or Export produces opaque coverings in a new image-only PDF. The generated file contains no source text objects, so covered content cannot be recovered by selecting the black area and copying the text underneath. This security path intentionally flattens all text, links, forms, and vector content in the exported copy.
+
+[Try keyword highlighting](https://core.inklayer.dev/demo/#highlighter) · [Try secure redaction](https://core.inklayer.dev/demo/#redaction)
 
 ## Core handles documents; your application handles UI
 
