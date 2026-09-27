@@ -36,7 +36,9 @@ export type {
   AnnotationImageTool,
   AnnotationInteractionTheme,
   AnnotationKeyboardOptions,
-  AnnotationPageAttachment
+  AnnotationPageAttachment,
+  AnnotationViewportAnchor,
+  AnnotationViewportRect
 } from './contracts'
 export {
   parseAndValidateKonvaSnapshot,

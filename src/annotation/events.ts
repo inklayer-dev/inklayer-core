@@ -45,6 +45,10 @@ export interface AnnotationEngineWarning {
 /** Complete Annotation Engine event union. */
 export type AnnotationEngineEvent =
   | {
+    /** Attached geometry may have changed; query after the current frame. */
+    type: 'viewportAnchorsChanged'
+  }
+  | {
     /** Event discriminator. */
     type: 'annotationAdded'
     /** Added canonical annotation. */

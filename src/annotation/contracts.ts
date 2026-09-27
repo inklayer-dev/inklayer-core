@@ -2,6 +2,30 @@
 
 import type { Annotation } from '../domain/annotation'
 
+/** Axis-aligned browser viewport rectangle in CSS pixels. */
+export interface AnnotationViewportRect {
+  /** Distance from the viewport's left edge. */
+  readonly left: number
+  /** Distance from the viewport's top edge. */
+  readonly top: number
+  /** Rendered width, independent of device pixel ratio. */
+  readonly width: number
+  /** Rendered height, independent of device pixel ratio. */
+  readonly height: number
+}
+
+/** Detached read-only geometry for positioning framework-owned annotation UI. */
+export interface AnnotationViewportAnchor {
+  /** Canonical annotation identifier. */
+  readonly annotationId: string
+  /** Zero-based page index. */
+  readonly pageIndex: number
+  /** Canonical mark bounds, excluding labels and selection handles. */
+  readonly bounds: AnnotationViewportRect
+  /** Attached page overlay bounds in the same coordinate system. */
+  readonly pageBounds: AnnotationViewportRect
+}
+
 /** Configuration used to attach one PDF page overlay. */
 export interface AnnotationPageAttachment {
   /** Zero-based page index. */

@@ -61,6 +61,8 @@ const output = await buildAnnotatedPdf(sourceBytes, annotations, {
 
 The demo's **Print** action uses the `print` target. Its **Export** action uses the `export` target and downloads `inklayer-watermarked.pdf`.
 
+For text outside WinAnsi, pass `watermarkFontBytes`. Core subsets custom fonts by default. If the supplied font cannot be subset reliably, set `watermarkFontSubset: false`; the complete font is then embedded and the PDF can become substantially larger.
+
 ## Security boundary
 
 Watermarks discourage casual redistribution and can identify a user or review copy. They do not encrypt the PDF, prevent editing, prove authenticity, or replace access control and certificate-backed digital signatures.

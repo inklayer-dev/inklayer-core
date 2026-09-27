@@ -14,6 +14,7 @@ import {
   degrees,
   type PDFObject
 } from 'pdf-lib'
+import { readFile } from 'node:fs/promises'
 import { describe, expect, it } from 'vitest'
 
 import type { Annotation, AnnotationType } from '../../../src/domain/annotation'
@@ -294,6 +295,31 @@ describe('buildAnnotatedPdf', () => {
       }
     }))
     expect(exportWatermarked.getPage(0).node.get(PDFName.of('Contents'))).toBeDefined()
+  })
+
+  it('lets applications retain a complete custom watermark font when subsetting is incompatible', async () => {
+    const source = await createSourcePdf()
+    const font = new Uint8Array(await readFile(new URL(
+      '../../../node_modules/pdfjs-dist/standard_fonts/LiberationSans-Regular.ttf',
+      import.meta.url
+    )))
+    const options = {
+      watermark: {
+        text: 'Confidential',
+        layout: 'center' as const,
+        targets: { export: true }
+      },
+      watermarkFontBytes: font
+    }
+    const subset = await buildAnnotatedPdf(source, [], options)
+    const complete = await buildAnnotatedPdf(source, [], {
+      ...options,
+      watermarkFontSubset: false
+    })
+
+    expect(complete.byteLength).toBeGreaterThan(subset.byteLength + 50_000)
+    const document = await PDFDocument.load(complete)
+    expect(document.getPage(0).node.get(PDFName.of('Contents'))).toBeDefined()
   })
 })
 

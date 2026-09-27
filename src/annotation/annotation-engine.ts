@@ -69,6 +69,7 @@ import type {
   AnnotationImageTool,
   AnnotationInteractionTheme,
   AnnotationKeyboardOptions,
+  AnnotationViewportAnchor,
   AnnotationPageAttachment
 } from './contracts'
 import {
@@ -192,6 +193,8 @@ export interface AnnotationEngine {
   attachPage(attachment: AnnotationPageAttachment): Promise<void>
   /** Detaches one page renderer. */
   detachPage(pageIndex: number): void
+  /** Queries attached mark geometry in viewport CSS pixels; null when unavailable. */
+  getViewportAnchor(annotationId: string): AnnotationViewportAnchor | null
   /** Returns the current transient or persisted tool. */
   getTool(): AnnotationTool
   /** Returns the effective interactive creation lifecycle for one persisted tool. */
@@ -493,6 +496,7 @@ class AnnotationEngineImpl implements AnnotationEngine {
     this.assertActive('attachPage')
     await this.painter.attachPage(attachment)
     this.pageAttachments.set(attachment.pageIndex, { ...attachment })
+    this.emit({ type: 'viewportAnchorsChanged' })
   }
 
   /** Detaches one page renderer. */
@@ -500,6 +504,30 @@ class AnnotationEngineImpl implements AnnotationEngine {
     this.assertActive('detachPage')
     this.painter.detachPage(pageIndex)
     this.pageAttachments.delete(pageIndex)
+    this.emit({ type: 'viewportAnchorsChanged' })
+  }
+
+  /** Returns fresh canonical mark geometry without changing selection or rendering. */
+  public getViewportAnchor(annotationId: string): AnnotationViewportAnchor | null {
+    if (this.destroyed || this.invalidSnapshotIds.has(annotationId)) return null
+    const annotation = this.repository.getById(annotationId)
+    if (annotation === undefined) return null
+    const page = this.pageAttachments.get(annotation.pageIndex)
+    if (page === undefined || !page.container.isConnected) return null
+    const rect = page.container.getBoundingClientRect()
+    if (rect.width <= 0 || rect.height <= 0 || page.width <= 0 || page.height <= 0) return null
+    const sx = rect.width / page.width
+    const sy = rect.height / page.height
+    return {
+      annotationId, pageIndex: annotation.pageIndex,
+      pageBounds: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+      bounds: {
+        left: rect.left + annotation.bounds.x * sx,
+        top: rect.top + annotation.bounds.y * sy,
+        width: annotation.bounds.width * sx,
+        height: annotation.bounds.height * sy
+      }
+    }
   }
 
   /** Renders one attached annotation page for print/export composition. */
@@ -1393,6 +1421,7 @@ class AnnotationEngineImpl implements AnnotationEngine {
       case 'destroy':
         break
     }
+    if (event.type !== 'selection' && event.type !== 'destroy') this.emit({ type: 'viewportAnchorsChanged' })
   }
 
   /** Validates existing snapshots according to the configured load strategy. */
@@ -1895,6 +1924,8 @@ function structurallyEqual(first: unknown, second: unknown): boolean {
 /** Clones engine event containers before listener delivery. */
 function cloneEngineEvent(event: AnnotationEngineEvent): AnnotationEngineEvent {
   switch (event.type) {
+    case 'viewportAnchorsChanged':
+      return { type: 'viewportAnchorsChanged' }
     case 'annotationAdded':
       return { type: 'annotationAdded', annotation: cloneAnnotation(event.annotation) }
     case 'annotationUpdated':

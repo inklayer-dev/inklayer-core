@@ -486,8 +486,10 @@ describe('Annotation Engine tools', () => {
     })
     engine.deleteAnnotation(annotation.id)
     expect(events).toEqual([
-      'toolChanged', 'annotationAdded', 'annotationUpdated', 'selectionChanged',
-      'annotationUpdated', 'annotationDeleted', 'selectionChanged'
+      'toolChanged', 'annotationAdded', 'viewportAnchorsChanged',
+      'annotationUpdated', 'viewportAnchorsChanged', 'selectionChanged',
+      'annotationUpdated', 'viewportAnchorsChanged', 'annotationDeleted',
+      'viewportAnchorsChanged', 'selectionChanged'
     ])
     engine.destroy()
   })

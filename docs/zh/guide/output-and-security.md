@@ -154,11 +154,12 @@ const watermarkFontBytes = new Uint8Array(await response.arrayBuffer())
 const pdfBytes = await buildAnnotatedPdf(sourceBytes, annotations, {
   watermark,
   watermarkFontBytes,
+  watermarkFontSubset: false,
   annotationTypes: core.annotationTypes
 })
 ```
 
-`buildPrintablePdf()` 同样支持 `watermarkFontBytes`。页面水印和栅格打印水印由浏览器绘制，使用浏览器可用的字体。水印只能降低文档被随意传播的风险，不能代替防篡改或访问控制；敏感文档的权限策略仍应由可信后端执行。
+`buildPrintablePdf()` 同样支持 `watermarkFontBytes`。自定义字体默认会被子集化；只有当所选字体不能可靠子集化时才设置 `watermarkFontSubset: false`，因为嵌入完整字体会明显增加输出体积。页面水印和栅格打印水印由浏览器绘制，使用浏览器可用的字体。水印只能降低文档被随意传播的风险，不能代替防篡改或访问控制；敏感文档的权限策略仍应由可信后端执行。
 
 ## 将批注导出为 Excel
 

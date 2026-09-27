@@ -96,6 +96,8 @@ export interface PdfExportOptions {
   watermark?: PdfWatermarkSpec
   /** Custom TrueType/OpenType bytes required for non-WinAnsi watermark text. */
   watermarkFontBytes?: Uint8Array
+  /** Whether to subset a custom watermark font; defaults to true. */
+  watermarkFontSubset?: boolean
   /** Selects which watermark target flag applies; defaults to export. */
   watermarkTarget?: 'print' | 'export'
   /** Instance Registry required to render and export custom annotation types. */
@@ -230,7 +232,9 @@ async function writeDocumentWatermark(
       font = await document.embedFont(StandardFonts.Helvetica)
     } else {
       document.registerFontkit(fontkit)
-      font = await document.embedFont(options.watermarkFontBytes, { subset: true })
+      font = await document.embedFont(options.watermarkFontBytes, {
+        subset: options.watermarkFontSubset ?? true
+      })
     }
     const color = parsePdfWatermarkColor(spec.color ?? '#334155')
     for (const page of document.getPages()) drawPdfPageWatermark(page, font, spec, color)

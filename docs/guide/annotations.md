@@ -1,5 +1,21 @@
 # Annotation tools and appearance
 
+## Positioning annotation UI
+
+`annotations.getViewportAnchor(id)` returns detached `bounds` and `pageBounds`
+in browser viewport CSS pixels, plus `annotationId` and `pageIndex`. Bounds use
+the canonical mark extent, excluding author tags, handles, and shadows. Page
+coordinates already follow the attached page orientation. CSS translation and
+axis-aligned scaling are supported; CSS rotation/skew of the page container is
+not supported. The query does not change document or selection state.
+
+Missing annotations, detached/zero-sized pages, and destroyed engines return `null`.
+Subscribe to `viewportAnchorsChanged` for mount, detach, and repository geometry
+invalidation; also listen to scrolling and resizing on your own viewport. Batch
+queries in an animation frame. The event contains no document text or geometry.
+Remove your listeners and cancel pending frames on teardown. Offscreen attached
+pages can return bounds outside the viewport; the application decides visibility.
+
 This page is a reference for the built-in annotation types, tool switching,
 creation modes, and appearance settings. To create an annotation through a
 complete UI interaction first, follow [Create your first annotation](./first-annotation.md).

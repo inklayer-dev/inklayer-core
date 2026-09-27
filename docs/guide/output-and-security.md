@@ -185,11 +185,15 @@ const watermarkFontBytes = new Uint8Array(await response.arrayBuffer())
 const pdfBytes = await buildAnnotatedPdf(sourceBytes, annotations, {
   watermark,
   watermarkFontBytes,
+  watermarkFontSubset: false,
   annotationTypes: core.annotationTypes
 })
 ```
 
 The same `watermarkFontBytes` option is supported by `buildPrintablePdf()`.
+Custom fonts are subset by default. Use `watermarkFontSubset: false` only when
+the selected font cannot be subset reliably; embedding the complete font can
+substantially increase the output size.
 Viewer and raster-print watermarks are drawn by the browser and use its
 available fonts instead. Watermarks discourage casual redistribution, but they
 are not tamper-resistant access control; enforce sensitive-document policy on a

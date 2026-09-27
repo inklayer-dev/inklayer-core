@@ -54,7 +54,9 @@ export type {
   AnnotationImageTool,
   AnnotationInteractionTheme,
   AnnotationKeyboardOptions,
-  AnnotationPageAttachment
+  AnnotationPageAttachment,
+  AnnotationViewportAnchor,
+  AnnotationViewportRect
 } from './annotation/contracts'
 export type { AnnotationHoverSource, AnnotationSelectionSource } from './annotation/events'
 export {

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "packageVersion": "0.3.0",
+  "packageVersion": "0.3.1",
   "packageEntries": [
     ".",
     "./viewer",
@@ -15,16 +15,16 @@
   ],
   "entries": {
     ".": {
-      "exportCount": 240,
-      "signatureHash": "abbd439e06debc3e3d9dc12a134da2dd989f7d974e1b452973256962099dec68"
+      "exportCount": 242,
+      "signatureHash": "8407ea578439e318eb1d2ab71155563e7559152939d25d60f4712a69b5eef32b"
     },
     "./viewer": {
       "exportCount": 61,
       "signatureHash": "12589bc053f45f5fcee32c81afcd8ceaedde4f9cc7c9bb58196a22816d287b4a"
     },
     "./annotation": {
-      "exportCount": 58,
-      "signatureHash": "1e21b6fc9e652be9309f78f28fdc8a60182d15eb5ea697ccd4010a3460131eb7"
+      "exportCount": 60,
+      "signatureHash": "cebc12ddba6b68d8f187a294a768288cfd82482ef1b827268558b30c2e0854e0"
     },
     "./capabilities": {
       "exportCount": 26,
@@ -44,7 +44,7 @@
     },
     "./export/pdf": {
       "exportCount": 5,
-      "signatureHash": "e5afd83992e13ec0f82f6142a4c18e8f55c25cdda922ba47da03cd13fc91c9c1"
+      "signatureHash": "b6419612cc32f41386d27e1e75aaf42957b9e86b05b64d2453bd9877627a8fa0"
     },
     "./export/excel": {
       "exportCount": 4,

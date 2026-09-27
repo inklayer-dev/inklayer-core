@@ -61,6 +61,8 @@ const output = await buildAnnotatedPdf(sourceBytes, annotations, {
 
 示例中的 **Print** 使用 `print` 目标；**Export** 使用 `export` 目标，并下载 `inklayer-watermarked.pdf`。
 
+WinAnsi 之外的文字需要传入 `watermarkFontBytes`。Core 默认对子集化自定义字体；如果字体无法被可靠子集化，可设置 `watermarkFontSubset: false`。此时会嵌入完整字体，PDF 文件可能明显增大。
+
 ## 安全边界
 
 水印可以降低随意传播的概率，也可以标识用户或审核副本，但它不会加密 PDF、阻止编辑、证明文件真实性，也不能替代访问控制和证书数字签名。

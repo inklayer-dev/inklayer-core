@@ -1,5 +1,11 @@
 # 批注工具与外观
 
+## 定位批注旁的界面
+
+`annotations.getViewportAnchor(id)` 返回批注的 `bounds`、所在页的 `pageBounds`、批注 ID 和页码。矩形采用浏览器视口 CSS 像素，批注矩形不包含作者标签、选中手柄或阴影。查询不改变选中状态、历史或滚动；未挂载、零尺寸、已删除或销毁时返回 `null`。
+
+监听 `viewportAnchorsChanged` 获知挂载、卸载和批注数据变化；滚动与窗口大小变化由调用方监听自己的容器，合并到动画帧后重新查询。页面外但仍挂载的批注可返回视口以外的坐标，由调用方判断可见性。页面自身旋转遵循挂载坐标；不支持用 CSS 对页面容器额外旋转或倾斜。销毁界面时取消订阅和待执行的动画帧。
+
 本页是批注工具和外观设置的参考，汇总全部内置类型、工具切换方式、创建模式和外观能力。想先完成一次实际操作，请阅读[创建第一个批注](./first-annotation.md)；需要增加新的批注类型，请先阅读[创建第一个自定义批注](./first-custom-annotation.md)，再继续查看[自定义批注类型](./custom-annotation-type.md)。独立的[自定义批注示例](https://core.inklayer.dev/demo/#custom-annotations)不会混入内置绘图工具。
 
 需要体验完整内置工具、外观控制、Repository 列表、打印和导出流程时，打开[批注示例](https://core.inklayer.dev/demo/#annotations)。
