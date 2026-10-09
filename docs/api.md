@@ -197,6 +197,7 @@ Use `core.annotations`, or create the low-level engine with `createAnnotationEng
 | `createTextMarkupsFromRanges()` | Batch-create missing stable-ID text markups from resolved ranges |
 | `requestFreeText()` / `requestEditText()` | Open the configured text input provider |
 | `updateContent()` / `updateAppearance()` / `transformAnnotation()` | Edit an existing annotation |
+| `updateAnnotationBounds()` | Resize an attached annotation while Core synchronizes renderer state and page constraints |
 | `addComment()` / `updateComment()` / `deleteComment()` | Manage comments and replies |
 | `deleteAnnotation()` / `undoLastDeletion()` | Delete or restore the most recent deletion |
 | `setSelection()` / `setHoveredAnnotation()` | Synchronize application UI with Canvas state |

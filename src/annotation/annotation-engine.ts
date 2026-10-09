@@ -75,6 +75,7 @@ import type {
 import {
   buildBuiltInRendererState,
   restyleBuiltInRendererState,
+  updateBuiltInRendererBounds,
   updateBuiltInRendererContent
 } from './built-in-runtime'
 import type { AnnotationCreationMode, AnnotationTool } from './tools'
@@ -247,6 +248,8 @@ export interface AnnotationEngine {
   updateAppearance(id: string, appearance: AnnotationAppearanceInput): Annotation
   /** Applies exact validated renderer state after a transform. */
   transformAnnotation(id: string, input: TransformAnnotationInput): Annotation
+  /** Updates canonical bounds while Core owns renderer synchronization. */
+  updateAnnotationBounds(id: string, bounds: AnnotationBounds): Annotation
   /** Appends one permission-checked canonical comment. */
   addComment(annotationId: string, comment: AnnotationComment): Annotation
   /** Updates one comment under comment-author permissions. */
@@ -1099,6 +1102,52 @@ class AnnotationEngineImpl implements AnnotationEngine {
     }))
   }
 
+  /** Updates canonical bounds while retaining renderer ownership and page constraints. */
+  public updateAnnotationBounds(id: string, bounds: AnnotationBounds): Annotation {
+    this.assertActive('updateAnnotationBounds')
+    const current = this.requireAnnotation(id, 'updateAnnotationBounds')
+    this.requirePermission('annotation.transform', current)
+    validateBounds(bounds)
+    if (bounds.width <= 0 || bounds.height <= 0) {
+      throw annotationBoundsError(current, 'Annotation bounds must have positive dimensions.')
+    }
+    if (current.bounds.width <= 0 || current.bounds.height <= 0) {
+      throw annotationBoundsError(current, 'Annotation current bounds cannot be resized.')
+    }
+    const definition = this.annotationTypes.require(current, 'updateAnnotationBounds')
+    if (!definition.capabilities.transform.resize) {
+      throw annotationBoundsError(current, 'Annotation type does not support resizing.')
+    }
+    const attachment = this.pageAttachments.get(current.pageIndex)
+    if (attachment === undefined || !attachment.container.isConnected) {
+      throw annotationBoundsError(current, 'Annotation page is not attached.')
+    }
+    const minimum = 8 / (attachment.scale ?? 1)
+    if (bounds.width < minimum || bounds.height < minimum
+      || bounds.x < 0 || bounds.y < 0
+      || bounds.x + bounds.width > attachment.width
+      || bounds.y + bounds.height > attachment.height) {
+      throw annotationBoundsError(current, 'Annotation bounds fall outside the transformable page area.')
+    }
+    if (structurallyEqual(current.bounds, bounds)) return cloneAnnotation(current)
+    const uniform = this.getTypeInteraction(current).transformMode === 'uniform'
+    if (uniform && Math.abs(bounds.width / current.bounds.width
+      - bounds.height / current.bounds.height) > 1e-6) {
+      throw annotationBoundsError(current, 'Annotation bounds must preserve aspect ratio.')
+    }
+    if ('render' in definition.renderer) {
+      return this.transformAnnotation(id, {
+        bounds,
+        serialized: current.rendererState.serialized
+      })
+    }
+    const type = requireBuiltInType(definition, current.type, 'updateAnnotationBounds')
+    const rendererState = updateBuiltInRendererBounds(
+      definition, current.rendererState, type, current.bounds, bounds, uniform
+    )
+    return this.transformAnnotation(id, { bounds, serialized: rendererState.serialized })
+  }
+
   /** Appends one canonical comment without changing renderer state. */
   public addComment(annotationId: string, comment: AnnotationComment): Annotation {
     this.assertActive('addComment')
@@ -1676,6 +1725,15 @@ function validateBounds(bounds: AnnotationBounds): void {
       operation: 'validateBounds'
     })
   }
+}
+
+/** Creates a contextual failure for the renderer-neutral bounds command. */
+function annotationBoundsError(annotation: Annotation, message: string): InkLayerError {
+  return new InkLayerError('ANNOTATION_INVALID', message, {
+    operation: 'updateAnnotationBounds',
+    annotationId: annotation.id,
+    pageIndex: annotation.pageIndex
+  })
 }
 
 /** Validates tool-specific creation input before snapshot construction. */

@@ -194,6 +194,7 @@ highlighter.destroy()
 | `createTextMarkupsFromRanges()` | 根据已解析范围批量创建尚不存在的稳定 ID 文字批注 |
 | `requestFreeText()` / `requestEditText()` | 打开已配置的文字输入界面 |
 | `updateContent()` / `updateAppearance()` / `transformAnnotation()` | 编辑已有批注 |
+| `updateAnnotationBounds()` | 调整已挂载批注的尺寸，并由 Core 同步渲染状态与页面边界 |
 | `addComment()` / `updateComment()` / `deleteComment()` | 管理评论和回复 |
 | `deleteAnnotation()` / `undoLastDeletion()` | 删除批注或恢复最近一次删除 |
 | `setSelection()` / `setHoveredAnnotation()` | 同步应用界面与画布状态 |
