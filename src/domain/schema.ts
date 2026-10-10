@@ -7,7 +7,7 @@
  */
 
 /** Current local package implementation version. */
-export const CORE_VERSION = '0.3.1' as const
+export const CORE_VERSION = '0.3.2' as const
 
 /** Canonical annotation schema version defined by the Core v1 contract. */
 export const ANNOTATION_SCHEMA_VERSION = 1 as const
